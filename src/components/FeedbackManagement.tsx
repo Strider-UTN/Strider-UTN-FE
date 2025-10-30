@@ -1,23 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import React, { useState } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar } from './ui/calendar';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { CoachRetroalimentacionSystem } from './CoachFeedbackSystem';
 import { SessionRetroalimentacionModal } from './SessionFeedbackModal';
 import { SessionComparisonView } from './SessionComparisonView';
 import { 
-  Calendar as CalendarIcon, 
   MessageSquare, 
-  BarChart3, 
   Users, 
-  TrendingUp,
   Filter,
-  Download,
-  ChevronLeft,
-  ChevronRight
+  Eye,
+  Edit3
 } from 'lucide-react';
 
 // Tipos de datos mock
@@ -97,12 +91,13 @@ interface AthleteWeekData {
 }
 
 export function FeedbackManagement() {
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
-  const [selectedWeek, setSelectedWeek] = useState(1);
   const [selectedMacrocycle, setSelectedMacrocycle] = useState('2024');
-  const [selectedAthlete, setSelectedAthlete] = useState('1');
+  const [selectedAthlete, setSelectedAthlete] = useState('all');
   const [selectedSede, setSelectedSede] = useState('all');
-  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [viewingEvaluation, setViewingEvaluation] = useState<string | null>(null);
+  const [activeView, setActiveView] = useState<'pending' | 'evaluated'>('pending');
+  const [evaluatingAthlete, setEvaluatingAthlete] = useState<string | null>(null);
+  const [isEditMode, setIsEditMode] = useState(false);
   const [selectedSession, setSelectedSession] = useState<{
     plan: SessionPlan;
     actual?: SessionActual;
@@ -381,18 +376,190 @@ export function FeedbackManagement() {
     }
   };
 
-  const formatWeekDates = (weekNumber: number) => {
-    const startDate = new Date(2024, 0, 1); // 1 enero 2024
-    const weekStart = new Date(startDate.getTime() + (weekNumber - 1) * 7 * 24 * 60 * 60 * 1000);
-    const weekEnd = new Date(weekStart.getTime() + 6 * 24 * 60 * 60 * 1000);
-    
-    return {
-      start: weekStart.toISOString().split('T')[0],
-      end: weekEnd.toISOString().split('T')[0]
-    };
+  const handleViewEvaluation = (athleteId: string) => {
+    setViewingEvaluation(athleteId);
   };
 
-  const weekDates = formatWeekDates(selectedWeek);
+  const handleEvaluateAthlete = (athleteId: string, editMode: boolean = false) => {
+    setEvaluatingAthlete(athleteId);
+    setIsEditMode(editMode);
+  };
+
+  // Datos mock para evaluaciones históricas con microciclos completos
+  const getHistoricalEvaluationData = (athleteId: string) => {
+    const evaluationData = {
+      'evaluated-1': {
+        athlete: {
+          id: 'evaluated-1',
+          name: 'María González',
+          vo2max: 58,
+          sede: 'Club Atletismo Madrid'
+        },
+        microcycle: {
+          id: 'micro-maria-week3',
+          weekNumber: 3,
+          startDate: '2024-01-15',
+          endDate: '2024-01-21',
+          focus: 'Resistencia aeróbica',
+          intensity: 'media' as const,
+          volume: 45,
+          microcycleFeedback: {
+            overallRating: 'excellent' as const,
+            summary: 'Excelente semana de entrenamiento. María mostró gran consistencia en todas las sesiones y mantuvo un alto nivel de intensidad cuando era requerido. Su capacidad de recuperación ha mejorado notablemente.',
+            recommendations: 'Continuar con el volumen actual. En la próxima semana podemos introducir intervalos más largos a ritmo umbral.',
+            createdAt: '2024-01-22T10:30:00.000Z'
+          },
+          sessions: [
+            {
+              plan: {
+                id: 'session-maria-1',
+                name: 'Resistencia Base',
+                date: '2024-01-15',
+                type: 'Fondo' as const,
+                plannedDistance: 12.0,
+                plannedDuration: 65,
+                plannedIntensity: 6.5,
+                plannedPace: '5:25',
+                notes: 'Trote continuo en zona aeróbica'
+              },
+              actual: {
+                id: 'actual-maria-1',
+                sessionId: 'session-maria-1',
+                actualDistance: 12.2,
+                actualDuration: 64,
+                actualPace: '5:15',
+                perceivedExertion: 6,
+                heartRate: { avg: 152, max: 168 },
+                sensations: 'Excelente sensación durante todo el entrenamiento',
+                notes: 'Me sentí muy bien, las piernas respondieron bien',
+                completed: true,
+                completedAt: '2024-01-15T08:30:00.000Z',
+                injuries: []
+              },
+              coachFeedback: {
+                id: 'feedback-session-maria-1',
+                sessionId: 'session-maria-1',
+                microcycleId: 'micro-maria-week3',
+                rating: 'excellent' as const,
+                feedbackText: 'Excelente ejecución. Ritmo perfecto para el objetivo aeróbico.',
+                recommendations: 'Mantener esta consistencia',
+                createdAt: '2024-01-16T09:00:00.000Z'
+              }
+            },
+            {
+              plan: {
+                id: 'session-maria-2',
+                name: 'Intervalos 4x1000m',
+                date: '2024-01-17',
+                type: 'Intervalos' as const,
+                plannedDistance: 8.0,
+                plannedDuration: 45,
+                plannedIntensity: 8.5,
+                plannedPace: '4:30',
+                notes: '4x1000m a ritmo 5K con 2min recuperación'
+              },
+              actual: {
+                id: 'actual-maria-2',
+                sessionId: 'session-maria-2',
+                actualDistance: 8.1,
+                actualDuration: 46,
+                actualPace: '4:28',
+                perceivedExertion: 8,
+                heartRate: { avg: 175, max: 188 },
+                sensations: 'Los intervalos fueron exigentes pero los completé todos bien',
+                notes: 'Intervalos ejecutados perfectamente, recuperaciones respetadas',
+                completed: true,
+                completedAt: '2024-01-17T07:30:00.000Z',
+                injuries: []
+              },
+              coachFeedback: {
+                id: 'feedback-session-maria-2',
+                sessionId: 'session-maria-2',
+                microcycleId: 'micro-maria-week3',
+                rating: 'excellent' as const,
+                feedbackText: 'Intervalos ejecutados con precisión. Ritmos consistentes.',
+                recommendations: 'Preparada para intervalos más largos',
+                createdAt: '2024-01-18T08:30:00.000Z'
+              }
+            }
+          ]
+        }
+      }
+    };
+
+    return evaluationData[athleteId as keyof typeof evaluationData] || null;
+  };
+
+  // Datos mock de atletas pendientes de evaluación
+  const mockPendingAthletes = [
+    {
+      id: '1',
+      name: 'Juan Pérez',
+      sede: 'Sede Madrid Centro',
+      weekNumber: 4,
+      startDate: '2024-01-22',
+      endDate: '2024-01-28',
+      completedSessions: 5,
+      totalSessions: 6,
+      injuryCount: 1
+    },
+    {
+      id: '2',
+      name: 'María García',
+      sede: 'Sede Madrid Norte',
+      weekNumber: 4,
+      startDate: '2024-01-22',
+      endDate: '2024-01-28',
+      completedSessions: 6,
+      totalSessions: 6,
+      injuryCount: 0
+    },
+    {
+      id: '3',
+      name: 'Carlos Ruiz',
+      sede: 'Sede Madrid Sur',
+      weekNumber: 4,
+      startDate: '2024-01-22',
+      endDate: '2024-01-28',
+      completedSessions: 3,
+      totalSessions: 6,
+      injuryCount: 1
+    }
+  ];
+
+  // Datos mock de atletas evaluados
+  const mockEvaluatedAthletes = [
+    {
+      id: 'evaluated-1',
+      name: 'María González',
+      lastEvaluation: '2024-01-15',
+      overallRating: 'excellent' as const,
+      completedSessions: 6,
+      totalSessions: 6,
+      weekNumber: 3,
+      sede: 'Club Atletismo Madrid'
+    },
+    {
+      id: 'evaluated-2', 
+      name: 'Carlos Ruiz',
+      lastEvaluation: '2024-01-12',
+      overallRating: 'good' as const,
+      completedSessions: 5,
+      totalSessions: 6,
+      weekNumber: 2,
+      sede: 'Runners Valencia'
+    },
+    {
+      id: 'evaluated-3',
+      name: 'Ana Torres',
+      lastEvaluation: '2024-01-10',
+      overallRating: 'needs_improvement' as const,
+      completedSessions: 4,
+      totalSessions: 6,
+      weekNumber: 2,
+      sede: 'Club Atletismo Madrid'
+    }
+  ];
 
   const navigateWeek = (direction: 'prev' | 'next') => {
     if (direction === 'prev' && selectedWeek > 1) {
@@ -408,10 +575,42 @@ export function FeedbackManagement() {
     // toast.success('Feedback guardado exitosamente');
   };
 
-  const handleOpenSessionFeedback = (sessionPlan: SessionPlan, sessionActual?: SessionActual) => {
-    const athlete = mockAthleteData.find(a => 
+  const handleOpenSessionFeedback = (sessionPlan: any, sessionActual?: any) => {
+    console.log('Opening session feedback for:', sessionPlan.id, 'Viewing evaluation:', viewingEvaluation, 'Evaluating athlete:', evaluatingAthlete);
+    
+    // Si estamos viendo una evaluación histórica, usar esos datos directamente
+    if (viewingEvaluation) {
+      const evaluationData = getHistoricalEvaluationData(viewingEvaluation);
+      if (evaluationData) {
+        // Buscar la sesión en los datos de evaluación para obtener el feedback existente
+        const sessionWithFeedback = evaluationData.microcycle.sessions.find(
+          s => s.plan.id === sessionPlan.id
+        );
+        
+        console.log('Found session with feedback:', sessionWithFeedback);
+        
+        setFeedbackSession({
+          plan: sessionPlan,
+          actual: sessionActual,
+          athleteName: evaluationData.athlete.name,
+          existingFeedback: sessionWithFeedback?.coachFeedback
+        });
+        return;
+      }
+    }
+    
+    // Intentar encontrar el atleta en mockAthleteData
+    let athlete = mockAthleteData.find(a => 
       a.sessions.some(s => s.plan.id === sessionPlan.id)
     );
+    
+    // Si no se encuentra y estamos evaluando un atleta, usar esos datos
+    if (!athlete && evaluatingAthlete) {
+      const athleteData = mockAthleteData.find(a => a.athleteId === evaluatingAthlete);
+      if (athleteData) {
+        athlete = athleteData;
+      }
+    }
     
     if (athlete) {
       setFeedbackSession({
@@ -420,6 +619,8 @@ export function FeedbackManagement() {
         athleteName: athlete.athleteName,
         existingFeedback: undefined // Se podría cargar feedback existente aquí
       });
+    } else {
+      console.log('No athlete found for session:', sessionPlan.id);
     }
   };
 
@@ -430,74 +631,242 @@ export function FeedbackManagement() {
     setFeedbackSession(null);
   };
 
-  // Efecto para resetear el atleta seleccionado cuando cambia la sede
-  useEffect(() => {
-    if (selectedSede !== 'all') {
-      const athletesInSede = mockAthleteData.filter(a => a.sede === selectedSede);
-      if (athletesInSede.length > 0 && !athletesInSede.find(a => a.athleteId === selectedAthlete)) {
-        setSelectedAthlete(athletesInSede[0].athleteId);
+  // Filtrar atletas pendientes por sede y atleta
+  const filteredPendingAthletes = mockPendingAthletes.filter(athlete => {
+    const matchesSede = selectedSede === 'all' || athlete.sede === selectedSede;
+    const matchesAthlete = selectedAthlete === 'all' || athlete.id === selectedAthlete;
+    return matchesSede && matchesAthlete;
+  });
+
+  // Filtrar atletas evaluados por sede y atleta
+  const filteredEvaluatedAthletes = mockEvaluatedAthletes.filter(athlete => {
+    const matchesSede = selectedSede === 'all' || athlete.sede === selectedSede;
+    const matchesAthlete = selectedAthlete === 'all' || athlete.id === selectedAthlete;
+    return matchesSede && matchesAthlete;
+  });
+
+  // Lista completa de atletas para el selector
+  const allAthletes = [...mockPendingAthletes, ...mockEvaluatedAthletes];
+  const uniqueAthletes = Array.from(new Map(allAthletes.map(a => [a.id, a])).values());
+
+  // Si estamos evaluando un atleta (pendiente o editando evaluado), mostrar el componente de retroalimentación
+  if (evaluatingAthlete) {
+    // Primero intentar buscar en atletas pendientes
+    let athleteData = mockAthleteData.find(a => a.athleteId === evaluatingAthlete);
+    let pendingAthlete = mockPendingAthletes.find(a => a.id === evaluatingAthlete);
+    
+    // Si no está en pendientes y estamos en modo edición, buscar en evaluados
+    let existingEvaluationData = null;
+    if (isEditMode && !pendingAthlete) {
+      existingEvaluationData = getHistoricalEvaluationData(evaluatingAthlete);
+      if (existingEvaluationData) {
+        // Usar los datos de la evaluación existente
+        athleteData = {
+          athleteId: existingEvaluationData.athlete.id,
+          athleteName: existingEvaluationData.athlete.name,
+          sede: existingEvaluationData.athlete.sede || '',
+          sessions: existingEvaluationData.microcycle.sessions.map(s => ({
+            plan: s.plan,
+            actual: s.actual || undefined
+          })),
+          weeklyStats: {
+            plannedVolume: existingEvaluationData.microcycle.volume,
+            actualVolume: existingEvaluationData.microcycle.volume,
+            completionRate: 80,
+            avgIntensityCompliance: 85,
+            avgPerceivedExertion: 7.5,
+            injuryCount: 0
+          }
+        };
+        pendingAthlete = {
+          id: existingEvaluationData.athlete.id,
+          name: existingEvaluationData.athlete.name,
+          startDate: existingEvaluationData.microcycle.startDate,
+          endDate: existingEvaluationData.microcycle.endDate,
+          weekNumber: existingEvaluationData.microcycle.weekNumber,
+          completedSessions: 5,
+          totalSessions: 6,
+          injuryCount: 0,
+          sede: existingEvaluationData.athlete.sede || ''
+        };
       }
     }
-  }, [selectedSede, selectedAthlete]);
+    
+    if (athleteData && pendingAthlete) {
+      const microcycleData = existingEvaluationData ? existingEvaluationData.microcycle : {
+        id: `microcycle-${pendingAthlete.weekNumber}`,
+        weekNumber: pendingAthlete.weekNumber,
+        startDate: pendingAthlete.startDate,
+        endDate: pendingAthlete.endDate,
+        focus: 'Desarrollo Aeróbico',
+        intensity: 'media' as const,
+        volume: athleteData.weeklyStats.plannedVolume,
+        sessions: athleteData.sessions.map(session => ({
+          plan: {
+            ...session.plan,
+            plannedIntensity: session.plan.plannedIntensity / 10
+          },
+          actual: session.actual ? {
+            ...session.actual,
+            notes: session.actual.comments,
+            completedAt: session.actual.completed ? new Date().toISOString() : ''
+          } : null,
+          coachFeedback: undefined
+        }))
+      };
 
-  // Filtrar atletas por sede
-  const filteredAthleteData = mockAthleteData.filter(athlete => 
-    selectedSede === 'all' || athlete.sede === selectedSede
-  );
+      return (
+        <>
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEvaluatingAthlete(null);
+                  setIsEditMode(false);
+                }}
+                className="flex items-center gap-2"
+              >
+                ← Volver a Atletas {isEditMode ? 'Evaluados' : 'Pendientes'}
+              </Button>
+            </div>
 
-  // Convertir datos mock al formato esperado por CoachFeedbackSystem
-  const selectedAthleteData = filteredAthleteData.find(a => a.athleteId === selectedAthlete);
-  
-  const microcycleData = selectedAthleteData ? {
-    id: `microcycle-${selectedWeek}`,
-    weekNumber: selectedWeek,
-    startDate: weekDates.start,
-    endDate: weekDates.end,
-    focus: 'Desarrollo Aeróbico',
-    intensity: 'media' as const,
-    volume: selectedAthleteData.weeklyStats.plannedVolume,
-    sessions: selectedAthleteData.sessions.map(session => ({
-      plan: {
-        ...session.plan,
-        plannedIntensity: session.plan.plannedIntensity / 10 // Convertir de 0-100 a 0-10
-      },
-      actual: session.actual ? {
-        ...session.actual,
-        notes: session.actual.comments, // Mapear comments a notes para compatibilidad
-        completedAt: session.actual.completed ? new Date().toISOString() : ''
-      } : null,
-      coachFeedback: undefined // Se podría cargar feedback existente aquí
-    }))
-  } : null;
+            <div className="space-y-2">
+              <h1>{isEditMode ? 'Editar Evaluación' : 'Evaluación'} - {athleteData.athleteName}</h1>
+              <p className="text-muted-foreground">
+                {athleteData.sede} • Semana {pendingAthlete.weekNumber} • 
+                {new Date(pendingAthlete.startDate).toLocaleDateString('es-ES')} - 
+                {new Date(pendingAthlete.endDate).toLocaleDateString('es-ES')}
+              </p>
+            </div>
+
+            <CoachRetroalimentacionSystem
+              athlete={{
+                id: athleteData.athleteId,
+                name: athleteData.athleteName,
+                vo2max: 65,
+                sede: athleteData.sede
+              }}
+              microcycle={microcycleData}
+              onSaveFeedback={handleSaveFeedback}
+              onOpenSessionFeedback={handleOpenSessionFeedback}
+              isEditMode={isEditMode}
+            />
+          </div>
+
+          {/* Modal de feedback de sesión */}
+          {feedbackSession && (
+            <SessionRetroalimentacionModal
+              isOpen={!!feedbackSession}
+              onClose={() => setFeedbackSession(null)}
+              plannedSession={feedbackSession.plan}
+              actualSession={feedbackSession.actual}
+              existingFeedback={feedbackSession.existingFeedback}
+              athleteName={feedbackSession.athleteName}
+              onSaveFeedback={handleSaveSessionFeedback}
+            />
+          )}
+
+          {/* Modal de comparación detallada */}
+          {selectedSession && (
+            <SessionComparisonView
+              isOpen={!!selectedSession}
+              onClose={() => setSelectedSession(null)}
+              sessionPlan={selectedSession.plan}
+              sessionActual={selectedSession.actual}
+              athleteName={selectedSession.athleteName}
+            />
+          )}
+        </>
+      );
+    }
+  }
+
+  // Si estamos viendo una evaluación histórica, mostrar el componente de retroalimentación
+  if (viewingEvaluation) {
+    const evaluationData = getHistoricalEvaluationData(viewingEvaluation);
+    
+    if (evaluationData) {
+      return (
+        <>
+          <div className="space-y-6">
+            <div className="flex items-center gap-4">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setViewingEvaluation(null)}
+                className="flex items-center gap-2"
+              >
+                ← Volver a Atletas Evaluados
+              </Button>
+            </div>
+
+            <div className="space-y-2">
+              <h1>Evaluación Histórica - {evaluationData.athlete.name}</h1>
+              <p className="text-muted-foreground">
+                {evaluationData.athlete.sede} • Semana {evaluationData.microcycle.weekNumber} • 
+                {new Date(evaluationData.microcycle.startDate).toLocaleDateString('es-ES')} - 
+                {new Date(evaluationData.microcycle.endDate).toLocaleDateString('es-ES')}
+              </p>
+            </div>
+
+            <CoachRetroalimentacionSystem
+              athlete={evaluationData.athlete}
+              microcycle={evaluationData.microcycle}
+              onSaveFeedback={handleSaveFeedback}
+              onOpenSessionFeedback={handleOpenSessionFeedback}
+            />
+          </div>
+
+          {/* Modal de feedback de sesión */}
+          {feedbackSession && (
+            <SessionRetroalimentacionModal
+              isOpen={!!feedbackSession}
+              onClose={() => setFeedbackSession(null)}
+              plannedSession={feedbackSession.plan}
+              actualSession={feedbackSession.actual}
+              existingFeedback={feedbackSession.existingFeedback}
+              athleteName={feedbackSession.athleteName}
+              onSaveFeedback={handleSaveSessionFeedback}
+            />
+          )}
+
+          {/* Modal de comparación detallada */}
+          {selectedSession && (
+            <SessionComparisonView
+              isOpen={!!selectedSession}
+              onClose={() => setSelectedSession(null)}
+              sessionPlan={selectedSession.plan}
+              sessionActual={selectedSession.actual}
+              athleteName={selectedSession.athleteName}
+            />
+          )}
+        </>
+      );
+    }
+  }
 
   return (
     <div className="space-y-6">
-      {/* Header y controles */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1>Retroalimentación de Entrenamientos</h1>
-          <p className="text-muted-foreground">
-            Análisis comparativo entre entrenamientos planificados y realizados
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline">
-            <Download className="w-4 h-4 mr-2" />
-            Exportar Reporte
-          </Button>
-        </div>
+      {/* Header */}
+      <div>
+        <h1>Retroalimentación de Entrenamientos</h1>
+        <p className="text-muted-foreground">
+          Análisis comparativo entre entrenamientos planificados y realizados
+        </p>
       </div>
 
-      {/* Controles de navegación */}
+      {/* Controles de filtrado */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Filter className="w-5 h-5" />
-            Filtros de Período
+            Filtros
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 items-end">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="space-y-2">
               <label className="text-sm font-medium">Macrociclo</label>
               <Select value={selectedMacrocycle} onValueChange={setSelectedMacrocycle}>
@@ -519,7 +888,7 @@ export function FeedbackManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las sedes</SelectItem>
-                  {Array.from(new Set(mockAthleteData.map(a => a.sede))).map((sede) => (
+                  {Array.from(new Set(allAthletes.map(a => a.sede))).map((sede) => (
                     <SelectItem key={sede} value={sede}>
                       {sede}
                     </SelectItem>
@@ -535,134 +904,223 @@ export function FeedbackManagement() {
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {filteredAthleteData.map((athlete) => (
-                    <SelectItem key={athlete.athleteId} value={athlete.athleteId}>
-                      {athlete.athleteName} • {athlete.sede}
+                  <SelectItem value="all">Todos los atletas</SelectItem>
+                  {uniqueAthletes.map((athlete) => (
+                    <SelectItem key={athlete.id} value={athlete.id}>
+                      {athlete.name} • {athlete.sede}
                     </SelectItem>
                   ))}
                 </SelectContent>
               </Select>
             </div>
+          </div>
+        </CardContent>
+      </Card>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Microciclo</label>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigateWeek('prev')}
-                  disabled={selectedWeek <= 1}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <Select 
-                  value={selectedWeek.toString()} 
-                  onValueChange={(value) => setSelectedWeek(parseInt(value))}
-                >
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Array.from({ length: 52 }, (_, i) => (
-                      <SelectItem key={i + 1} value={(i + 1).toString()}>
-                        Semana {i + 1}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => navigateWeek('next')}
-                  disabled={selectedWeek >= 52}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
+      {/* Selector de vista: Pendientes vs Evaluados */}
+      <Card>
+        <CardContent className="p-6">
+          <div className="grid grid-cols-2 gap-4">
+            <button
+              onClick={() => setActiveView('pending')}
+              className={`p-6 rounded-lg border-2 transition-all text-left ${
+                activeView === 'pending'
+                  ? 'border-accent bg-accent/10'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <MessageSquare className={`w-6 h-6 ${activeView === 'pending' ? 'text-accent' : 'text-gray-500'}`} />
+                  <h3 className={`font-semibold ${activeView === 'pending' ? 'text-accent' : 'text-gray-700'}`}>
+                    Atletas Pendientes de Evaluación
+                  </h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Atletas que requieren retroalimentación y evaluación del microciclo
+                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
+                    Pendientes
+                  </Badge>
+                </div>
               </div>
-            </div>
+            </button>
 
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Fecha específica</label>
-              <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="justify-start text-left">
-                    <CalendarIcon className="w-4 h-4 mr-2" />
-                    {selectedDate ? selectedDate.toLocaleDateString('es-ES') : 'Seleccionar fecha'}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-auto p-0" align="start">
-                  <Calendar
-                    mode="single"
-                    selected={selectedDate}
-                    onSelect={(date) => {
-                      setSelectedDate(date || new Date());
-                      setIsCalendarOpen(false);
-                    }}
-                    initialFocus
-                  />
-                </PopoverContent>
-              </Popover>
-            </div>
-
-            <Button className="h-10">
-              <BarChart3 className="w-4 h-4 mr-2" />
-              Actualizar Vista
-            </Button>
+            <button
+              onClick={() => setActiveView('evaluated')}
+              className={`p-6 rounded-lg border-2 transition-all text-left ${
+                activeView === 'evaluated'
+                  ? 'border-accent bg-accent/10'
+                  : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+              }`}
+            >
+              <div className="space-y-2">
+                <div className="flex items-center gap-3">
+                  <Users className={`w-6 h-6 ${activeView === 'evaluated' ? 'text-accent' : 'text-gray-500'}`} />
+                  <h3 className={`font-semibold ${activeView === 'evaluated' ? 'text-accent' : 'text-gray-700'}`}>
+                    Atletas Evaluados
+                  </h3>
+                </div>
+                <p className="text-sm text-muted-foreground">
+                  Atletas con retroalimentación y evaluación completa del microciclo
+                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                    Completados
+                  </Badge>
+                </div>
+              </div>
+            </button>
           </div>
         </CardContent>
       </Card>
 
       {/* Componente principal de retroalimentación */}
-      {selectedAthleteData && microcycleData ? (
-        <div className="space-y-6">
-          {/* Botón de acceso rápido a feedback de sesión */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-semibold">Retroalimentación Detallada</h2>
-              <p className="text-muted-foreground">
-                Proporciona retroalimentación específica por sesión y evalúa el microciclo completo
-              </p>
-            </div>
-            <Button
-              onClick={() => {
-                // Abrir modal para la última sesión completada
-                const lastCompletedSession = selectedAthleteData.sessions.find(s => s.actual?.completed);
-                if (lastCompletedSession) {
-                  handleOpenSessionFeedback(lastCompletedSession.plan, lastCompletedSession.actual);
-                } else {
-                  console.error('No hay sesiones completadas para dar retroalimentación rápida');
-                }
-              }}
-              className="bg-accent hover:bg-accent/90"
-            >
-              <MessageSquare className="w-4 h-4 mr-2" />
-              Retroalimentación Rápida de Sesión
-            </Button>
+      <div className="space-y-6">
+        {/* Vista de Atletas Pendientes */}
+        {activeView === 'pending' && (
+          <div className="space-y-4">
+            {filteredPendingAthletes.length > 0 ? (
+              filteredPendingAthletes.map((athlete) => (
+                <Card key={athlete.id} className="bg-orange-50/30 border-orange-200">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h4 className="font-medium">{athlete.name}</h4>
+                          <Badge variant="outline" className="bg-orange-100 text-orange-800 border-orange-300">
+                            Pendiente de Evaluación
+                          </Badge>
+                          {athlete.injuryCount > 0 && (
+                            <Badge variant="outline" className="bg-red-100 text-red-800 border-red-300">
+                              {athlete.injuryCount} {athlete.injuryCount === 1 ? 'Molestia' : 'Molestias'}
+                            </Badge>
+                          )}
+                        </div>
+                        
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Período:</span>
+                            <p className="font-medium">
+                              Semana {athlete.weekNumber} ({new Date(athlete.startDate).toLocaleDateString('es-ES')} - {new Date(athlete.endDate).toLocaleDateString('es-ES')})
+                            </p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Sesiones completadas:</span>
+                            <p className="font-medium">{athlete.completedSessions}/{athlete.totalSessions}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Tasa de cumplimiento:</span>
+                            <p className="font-medium">{Math.round((athlete.completedSessions / athlete.totalSessions) * 100)}%</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Sede:</span>
+                            <p className="font-medium">{athlete.sede}</p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 ml-4">
+                        <Button 
+                          variant="default"
+                          size="sm"
+                          onClick={() => handleEvaluateAthlete(athlete.id)}
+                          className="bg-accent hover:bg-accent/90"
+                        >
+                          <MessageSquare className="w-4 h-4 mr-2" />
+                          Evaluar Atleta
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <Card>
+                <CardContent className="text-center py-12">
+                  <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium mb-2">No hay atletas pendientes</h3>
+                  <p className="text-muted-foreground">
+                    No se encontraron atletas pendientes de evaluación con los filtros seleccionados.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
+        )}
 
-          <CoachRetroalimentacionSystem
-            athlete={{
-              id: selectedAthleteData.athleteId,
-              name: selectedAthleteData.athleteName,
-              vo2max: 65, // Mock value
-              sede: selectedAthleteData.sede
-            }}
-            microcycle={microcycleData}
-            onSaveFeedback={handleSaveFeedback}
-            onOpenSessionFeedback={handleOpenSessionFeedback}
-          />
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="text-center py-12">
-            <MessageSquare className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-            <h3 className="font-medium mb-2">No hay datos disponibles</h3>
-            <p className="text-muted-foreground">
-              No se encontraron datos para el atleta y semana seleccionados.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+        {/* Vista de Atletas Evaluados */}
+        {activeView === 'evaluated' && (
+          <div className="space-y-4">
+            {filteredEvaluatedAthletes.length > 0 ? (
+              filteredEvaluatedAthletes.map((athlete) => (
+                <Card key={athlete.id} className="bg-muted/20">
+                  <CardContent className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-3 mb-2">
+                          <h4 className="font-medium">{athlete.name}</h4>
+                          <Badge className={`
+                            ${athlete.overallRating === 'excellent' ? 'bg-green-100 text-green-800 border-green-300' :
+                              athlete.overallRating === 'good' ? 'bg-blue-100 text-blue-800 border-blue-300' :
+                              athlete.overallRating === 'needs_improvement' ? 'bg-orange-100 text-orange-800 border-orange-300' :
+                              'bg-red-100 text-red-800 border-red-300'
+                            } flex items-center gap-1`}>
+                            {athlete.overallRating === 'excellent' ? '⭐ Excelente' :
+                             athlete.overallRating === 'good' ? '👍 Bueno' :
+                             athlete.overallRating === 'needs_improvement' ? '⚠️ Mejorar' : '❌ Preocupante'}
+                          </Badge>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Última evaluación:</span>
+                            <p className="font-medium">{new Date(athlete.lastEvaluation).toLocaleDateString('es-ES')}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Semana evaluada:</span>
+                            <p className="font-medium">Semana {athlete.weekNumber}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Sesiones completadas:</span>
+                            <p className="font-medium">{athlete.completedSessions}/{athlete.totalSessions}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Sede:</span>
+                            <p className="font-medium">{athlete.sede}</p>
+                          </div>
+                        </div>
+                      </div>
+                      
+                      <div className="flex items-center gap-2 ml-4">
+                        <Button 
+                          variant="outline" 
+                          size="sm"
+                          onClick={() => handleViewEvaluation(athlete.id)}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          Ver Evaluación
+                        </Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))
+            ) : (
+              <Card>
+                <CardContent className="text-center py-12">
+                  <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium mb-2">No hay atletas evaluados</h3>
+                  <p className="text-muted-foreground">
+                    No se encontraron atletas evaluados con los filtros seleccionados.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Modal de feedback de sesión */}
       {feedbackSession && (

@@ -7,7 +7,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { AthleteProfileModal } from './AthleteProfileModal';
 import { AthleteInviteModal } from './AthleteInviteModal';
+import { AthletePerformanceView } from './AthletePerformanceView';
+import { MedicalClearanceUpload } from './MedicalClearanceUpload';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { Separator } from './ui/separator';
 import { 
   Search, 
   Filter, 
@@ -23,7 +26,10 @@ import {
   UserPlus,
   Send,
   Eye,
-  MessageSquare
+  MessageSquare,
+  Shield,
+  AlertCircle,
+  CheckCircle2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -51,6 +57,21 @@ interface AthleteProfile {
     weeklyVolume: number; // km
     monthlyVolume: number; // km
   };
+  medicalInfo: {
+    healthInsurance: {
+      provider: string;
+      memberNumber: string;
+    };
+    medicalClearance: {
+      hasValidClearance: boolean;
+      lastCheckupDate?: string;
+      expiryDate?: string;
+      isExpired?: boolean;
+      certificateFile?: string;
+      certificateFileName?: string;
+      uploadDate?: string;
+    };
+  };
   status: 'Activo' | 'Lesionado' | 'Descanso' | 'Inactivo';
   joinDate: string;
   lastActivity: string;
@@ -76,6 +97,21 @@ export function IndividualAthletesManagement() {
         weeklyVolume: 85,
         monthlyVolume: 368
       },
+      medicalInfo: {
+        healthInsurance: {
+          provider: 'Sanitas',
+          memberNumber: '123456789'
+        },
+        medicalClearance: {
+          hasValidClearance: true,
+          lastCheckupDate: '2024-08-15',
+          expiryDate: '2025-08-15',
+          isExpired: false,
+          certificateFile: 'https://images.unsplash.com/photo-1584820927498-cfe5211fd8bf?w=800',
+          certificateFileName: 'apto-fisico-juan-perez.jpg',
+          uploadDate: '2024-08-15'
+        }
+      },
       status: 'Activo',
       joinDate: '2024-01-15',
       lastActivity: '2024-12-01'
@@ -97,6 +133,21 @@ export function IndividualAthletesManagement() {
         yearsRunning: 6,
         weeklyVolume: 65,
         monthlyVolume: 281
+      },
+      medicalInfo: {
+        healthInsurance: {
+          provider: 'Adeslas',
+          memberNumber: 'ADS-987654321'
+        },
+        medicalClearance: {
+          hasValidClearance: true,
+          lastCheckupDate: '2024-09-20',
+          expiryDate: '2025-09-20',
+          isExpired: false,
+          certificateFile: 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=800',
+          certificateFileName: 'certificado-maria-garcia.pdf',
+          uploadDate: '2024-09-20'
+        }
       },
       status: 'Activo',
       joinDate: '2024-02-20',
@@ -120,6 +171,21 @@ export function IndividualAthletesManagement() {
         weeklyVolume: 120,
         monthlyVolume: 520
       },
+      medicalInfo: {
+        healthInsurance: {
+          provider: 'DKV Seguros',
+          memberNumber: 'DKV-555888999'
+        },
+        medicalClearance: {
+          hasValidClearance: false,
+          lastCheckupDate: '2024-03-10',
+          expiryDate: '2024-09-10',
+          isExpired: true,
+          certificateFile: undefined,
+          certificateFileName: undefined,
+          uploadDate: undefined
+        }
+      },
       status: 'Lesionado',
       joinDate: '2023-09-10',
       lastActivity: '2024-11-15'
@@ -134,6 +200,10 @@ export function IndividualAthletesManagement() {
 
   const [isAthleteDetailsModalOpen, setIsAthleteDetailsModalOpen] = useState(false);
   const [athleteForDetails, setAthleteForDetails] = useState<AthleteProfile | null>(null);
+  const [showPerformanceView, setShowPerformanceView] = useState(false);
+  const [athleteForPerformance, setAthleteForPerformance] = useState<AthleteProfile | null>(null);
+  const [isMedicalClearanceModalOpen, setIsMedicalClearanceModalOpen] = useState(false);
+  const [athleteForMedicalClearance, setAthleteForMedicalClearance] = useState<AthleteProfile | null>(null);
 
   const filteredAthletes = athletes.filter(athlete => {
     const matchesSearch = athlete.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -171,6 +241,54 @@ export function IndividualAthletesManagement() {
     setIsAthleteDetailsModalOpen(true);
   };
 
+  const handleViewAthletePerformance = (athlete: AthleteProfile) => {
+    setAthleteForPerformance(athlete);
+    setShowPerformanceView(true);
+  };
+
+  const handleBackFromPerformance = () => {
+    setShowPerformanceView(false);
+    setAthleteForPerformance(null);
+  };
+
+  const handleManageMedicalClearance = (athlete: AthleteProfile) => {
+    setAthleteForMedicalClearance(athlete);
+    setIsMedicalClearanceModalOpen(true);
+  };
+
+  const handleSaveMedicalClearance = (clearance: any) => {
+    if (athleteForMedicalClearance) {
+      setAthletes(prev => prev.map(a => 
+        a.id === athleteForMedicalClearance.id 
+          ? { 
+              ...a, 
+              medicalInfo: {
+                ...a.medicalInfo,
+                medicalClearance: {
+                  ...a.medicalInfo.medicalClearance,
+                  ...clearance
+                }
+              }
+            }
+          : a
+      ));
+      
+      // Si hay atleta seleccionado para detalles, actualizar también
+      if (athleteForDetails?.id === athleteForMedicalClearance.id) {
+        setAthleteForDetails({
+          ...athleteForMedicalClearance,
+          medicalInfo: {
+            ...athleteForMedicalClearance.medicalInfo,
+            medicalClearance: {
+              ...athleteForMedicalClearance.medicalInfo.medicalClearance,
+              ...clearance
+            }
+          }
+        });
+      }
+    }
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'Activo': return 'bg-green-100 text-green-800';
@@ -200,8 +318,38 @@ export function IndividualAthletesManagement() {
     return new Date(dateString).toLocaleDateString('es-ES');
   };
 
+  // Si se está mostrando la vista de rendimiento, renderizar AthletePerformanceView
+  if (showPerformanceView && athleteForPerformance) {
+    return (
+      <AthletePerformanceView
+        athlete={{
+          id: athleteForPerformance.id,
+          name: athleteForPerformance.name,
+          email: athleteForPerformance.email,
+          userType: 'athlete' as const,
+          realName: athleteForPerformance.name
+        }}
+        onBack={handleBackFromPerformance}
+        userType="coach"
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
+      {/* Medical Clearance Modal */}
+      {athleteForMedicalClearance && (
+        <MedicalClearanceUpload
+          isOpen={isMedicalClearanceModalOpen}
+          onClose={() => {
+            setIsMedicalClearanceModalOpen(false);
+            setAthleteForMedicalClearance(null);
+          }}
+          athleteName={athleteForMedicalClearance.name}
+          currentClearance={athleteForMedicalClearance.medicalInfo.medicalClearance}
+          onSave={handleSaveMedicalClearance}
+        />
+      )}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
@@ -273,20 +421,19 @@ export function IndividualAthletesManagement() {
                     </Avatar>
 
                     <div className="flex-1 space-y-3">
-                      <div className="flex items-start justify-between">
-                        <div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-3">
                           <h3 className="font-medium">{athlete.name}</h3>
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground mt-1">
-                            <Mail className="w-3 h-3" />
-                            <span>{athlete.email}</span>
-                            <Phone className="w-3 h-3 ml-2" />
-                            <span>{athlete.phone}</span>
-                          </div>
+                          <Badge className={`${getStatusColor(athlete.status)}`}>
+                            {athlete.status}
+                          </Badge>
                         </div>
-                        
-                        <Badge className={getStatusColor(athlete.status)}>
-                          {athlete.status}
-                        </Badge>
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                          <Mail className="w-3 h-3" />
+                          <span>{athlete.email}</span>
+                          <Phone className="w-3 h-3 ml-2" />
+                          <span>{athlete.phone}</span>
+                        </div>
                       </div>
 
                       {/* Información esencial simplificada */}
@@ -314,57 +461,21 @@ export function IndividualAthletesManagement() {
                     <Button
                       variant="ghost"
                       size="sm"
+                      onClick={() => handleViewAthletePerformance(athlete)}
+                      className="text-accent hover:text-accent hover:bg-accent/10"
+                    >
+                      <Activity className="w-4 h-4 mr-1" />
+                      Rendimiento
+                    </Button>
+                    
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={() => handleViewAthleteDetails(athlete)}
                       className="text-primary hover:text-primary/80"
                     >
                       Ver Detalles
                     </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        // Aquí se podría abrir directamente el modal de feedback
-                        // o navegar a la sección de retroalimentación con ese atleta
-                        console.log('Abrir feedback para', athlete.name);
-                      }}
-                      className="text-accent hover:text-accent/80"
-                    >
-                      <MessageSquare className="w-4 h-4 mr-1" />
-                      Feedback
-                    </Button>
-                    
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleEditAthlete(athlete)}
-                    >
-                      <Edit className="w-4 h-4 mr-1" />
-                      Editar
-                    </Button>
-                    
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          <MoreVertical className="w-4 h-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => handleViewAthleteDetails(athlete)}>
-                          Ver Detalles Completos
-                        </DropdownMenuItem>
-                        <DropdownMenuItem onClick={() => handleEditAthlete(athlete)}>
-                          <Edit className="w-4 h-4 mr-2" />
-                          Editar Perfil
-                        </DropdownMenuItem>
-                        <DropdownMenuItem 
-                          className="text-red-600"
-                          onClick={() => handleDeleteAthlete(athlete.id)}
-                        >
-                          Eliminar Atleta
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
                   </div>
                 </div>
               </CardContent>
@@ -540,24 +651,103 @@ export function IndividualAthletesManagement() {
                 </Card>
               </div>
 
-              {/* Fechas importantes */}
-              <Card>
-                <CardHeader className="pb-3">
-                  <CardTitle className="text-base">Historial</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Fecha de registro:</span>
-                      <span className="font-medium">{formatDate(athleteForDetails.joinDate)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Última actividad:</span>
-                      <span className="font-medium">{formatDate(athleteForDetails.lastActivity)}</span>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
+              <Separator />
+
+              {/* Información Médica */}
+              <div>
+                <h3 className="text-lg font-semibold mb-4">Información Médica</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-blue-500" />
+                        Obra Social
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Proveedor:</span>
+                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.provider}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">N° de Afiliado:</span>
+                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.memberNumber}</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        {athleteForDetails.medicalInfo.medicalClearance.hasValidClearance ? (
+                          <CheckCircle2 className="w-4 h-4 text-green-500" />
+                        ) : (
+                          <AlertCircle className="w-4 h-4 text-red-500" />
+                        )}
+                        Apto Físico
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Estado:</span>
+                        <Badge className={
+                          athleteForDetails.medicalInfo.medicalClearance.hasValidClearance
+                            ? 'bg-green-100 text-green-800'
+                            : 'bg-red-100 text-red-800'
+                        }>
+                          {athleteForDetails.medicalInfo.medicalClearance.hasValidClearance ? 'Vigente' : 'No Vigente'}
+                        </Badge>
+                      </div>
+                      {athleteForDetails.medicalInfo.medicalClearance.certificateFile && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Certificado:</span>
+                          <span className="font-medium text-xs">
+                            {athleteForDetails.medicalInfo.medicalClearance.certificateFileName || 'Subido'}
+                          </span>
+                        </div>
+                      )}
+                      {athleteForDetails.medicalInfo.medicalClearance.uploadDate && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Fecha de carga:</span>
+                          <span className="font-medium">
+                            {formatDate(athleteForDetails.medicalInfo.medicalClearance.uploadDate)}
+                          </span>
+                        </div>
+                      )}
+                      <Button
+                        className="w-full mt-3"
+                        variant="outline"
+                        onClick={() => handleManageMedicalClearance(athleteForDetails)}
+                      >
+                        {athleteForDetails.medicalInfo.medicalClearance.certificateFile 
+                          ? 'Ver/Actualizar Certificado'
+                          : 'Subir Certificado'
+                        }
+                      </Button>
+                      {athleteForDetails.medicalInfo.medicalClearance.lastCheckupDate && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Último control:</span>
+                          <span className="font-medium">
+                            {formatDate(athleteForDetails.medicalInfo.medicalClearance.lastCheckupDate)}
+                          </span>
+                        </div>
+                      )}
+                      {athleteForDetails.medicalInfo.medicalClearance.expiryDate && (
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Vencimiento:</span>
+                          <span className={`font-medium ${
+                            athleteForDetails.medicalInfo.medicalClearance.isExpired 
+                              ? 'text-red-600' 
+                              : 'text-green-600'
+                          }`}>
+                            {formatDate(athleteForDetails.medicalInfo.medicalClearance.expiryDate)}
+                          </span>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
             </div>
           )}
         </DialogContent>

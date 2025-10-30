@@ -15,8 +15,10 @@ interface PerformanceData {
   distance: number;
   pace: number; // in minutes per km
   heartRate: number;
+  maxHeartRate: number;
   elevation: number;
   duration: number; // in minutes
+  load: number;
 }
 
 // Datos simulados de Garmin
@@ -43,14 +45,22 @@ const generateMockData = (period: TimePeriod): PerformanceData[] => {
     
     const basePace = 4.0 + Math.random() * 2.0; // 4:00 - 6:00 min/km
     const duration = baseDistance > 0 ? baseDistance * basePace : 0;
+    const avgHR = baseDistance > 0 ? 140 + Math.random() * 40 : 0;
+    const maxHR = avgHR > 0 ? avgHR + 15 + Math.random() * 15 : 0;
+    
+    // Calcular carga: distancia × factor de intensidad (basado en FC)
+    const intensityFactor = avgHR > 0 ? (avgHR - 120) / 80 : 0;
+    const load = baseDistance > 0 ? baseDistance * (0.5 + intensityFactor) : 0;
     
     data.push({
       date: date.toISOString().split('T')[0],
       distance: Math.round(baseDistance * 100) / 100,
       pace: Math.round(basePace * 100) / 100,
-      heartRate: baseDistance > 0 ? 140 + Math.random() * 40 : 0, // 140-180 bpm
+      heartRate: Math.round(avgHR),
+      maxHeartRate: Math.round(maxHR),
       elevation: Math.random() * 500, // 0-500m
-      duration: Math.round(duration)
+      duration: Math.round(duration),
+      load: Math.round(load * 10) / 10
     });
   }
   
@@ -69,11 +79,11 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
   const data = generateMockData(timePeriod);
   
   // Calcular métricas agregadas
+  const validData = data.filter(d => d.distance > 0);
   const totalDistance = data.reduce((sum, d) => sum + d.distance, 0);
-  const trainingDays = data.filter(d => d.distance > 0).length;
-  const totalDuration = data.reduce((sum, d) => sum + d.duration, 0);
-  const avgPace = data.filter(d => d.pace > 0).reduce((sum, d) => sum + d.pace, 0) / data.filter(d => d.pace > 0).length;
-  const avgHeartRate = data.filter(d => d.heartRate > 0).reduce((sum, d) => sum + d.heartRate, 0) / data.filter(d => d.heartRate > 0).length;
+  const trainingDays = validData.length;
+  const avgLoad = validData.length > 0 ? validData.reduce((sum, d) => sum + d.load, 0) / validData.length : 0;
+  const avgMaxHeartRate = validData.length > 0 ? validData.reduce((sum, d) => sum + d.maxHeartRate, 0) / validData.length : 0;
   
   // Conversiones de unidades
   const convertDistance = (km: number) => {
@@ -111,6 +121,16 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
     '3m': 'Últimos 3 meses',
     '6m': 'Últimos 6 meses',
     '1y': 'Último año'
+  };
+  
+  const getDaysCount = (period: TimePeriod): number => {
+    return {
+      '7d': 7,
+      '30d': 30,
+      '3m': 90,
+      '6m': 180,
+      '1y': 365
+    }[period];
   };
 
   return (
@@ -184,30 +204,30 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ritmo Promedio</CardTitle>
+            <CardTitle className="text-sm font-medium">Carga Promedio</CardTitle>
             <Zap className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">
-              {avgPace ? formatPace(avgPace) : 'N/A'}
+              {avgLoad ? avgLoad.toFixed(1) : 'N/A'}
             </div>
             <p className="text-xs text-muted-foreground">
-              Velocidad media
+              Promedio de carga
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Tiempo Total</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+            <CardTitle className="text-sm font-medium">Frecuencia Cardíaca</CardTitle>
+            <Heart className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-primary">
-              {formatDuration(totalDuration)}
+              {avgMaxHeartRate ? `${avgMaxHeartRate.toFixed(0)} bpm` : 'N/A'}
             </div>
             <p className="text-xs text-muted-foreground">
-              Duración acumulada
+              Promedio de FC máxima
             </p>
           </CardContent>
         </Card>
@@ -215,43 +235,42 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
 
       {/* Tabs para diferentes vistas */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="overview">Resumen</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="load">Carga</TabsTrigger>
           <TabsTrigger value="distance">Distancia</TabsTrigger>
-          <TabsTrigger value="pace">Ritmo</TabsTrigger>
           <TabsTrigger value="heartrate">Frecuencia Cardíaca</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="overview" className="space-y-6">
-          {/* Gráfico de distancia semanal */}
+        <TabsContent value="load" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Distancia por Día</CardTitle>
+              <CardTitle>Análisis de Carga</CardTitle>
               <CardDescription>
-                Kilometraje diario en {periodLabels[timePeriod].toLowerCase()}
+                Análisis de carga en los últimos {getDaysCount(timePeriod)} días
               </CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={400}>
-                <AreaChart data={data}>
+                <LineChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
                     tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
                   />
-                  <YAxis tickFormatter={(value) => formatDistance(value).split(' ')[0]} />
+                  <YAxis />
                   <Tooltip 
                     labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
-                    formatter={(value: number) => [formatDistance(value), 'Distancia']}
+                    formatter={(value: number) => [value.toFixed(1), 'Carga']}
                   />
-                  <Area 
+                  <Line 
                     type="monotone" 
-                    dataKey="distance" 
+                    dataKey="load" 
                     stroke="var(--primary)" 
-                    fill="var(--primary)" 
-                    fillOpacity={0.1}
+                    strokeWidth={2}
+                    name="Carga"
+                    dot={{ fill: 'var(--primary)', strokeWidth: 2, r: 3 }}
                   />
-                </AreaChart>
+                </LineChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -262,12 +281,12 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
             <CardHeader>
               <CardTitle>Análisis de Distancia</CardTitle>
               <CardDescription>
-                Evolución del kilometraje en {periodLabels[timePeriod].toLowerCase()}
+                Análisis de distancia en los últimos {getDaysCount(timePeriod)} días
               </CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={400}>
-                <BarChart data={data}>
+                <LineChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
@@ -278,43 +297,13 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
                     labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
                     formatter={(value: number) => [formatDistance(value), 'Distancia']}
                   />
-                  <Bar dataKey="distance" fill="var(--primary)" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="pace" className="space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Análisis de Ritmo</CardTitle>
-              <CardDescription>
-                Evolución de la velocidad de entrenamiento
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <ResponsiveContainer width="100%" height={400}>
-                <LineChart data={data.filter(d => d.pace > 0)}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="date" 
-                    tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
-                  />
-                  <YAxis 
-                    tickFormatter={(value) => formatPace(value)}
-                    domain={['dataMin - 0.2', 'dataMax + 0.2']}
-                  />
-                  <Tooltip 
-                    labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
-                    formatter={(value: number) => [formatPace(value), 'Ritmo']}
-                  />
                   <Line 
                     type="monotone" 
-                    dataKey="pace" 
-                    stroke="var(--accent)" 
-                    strokeWidth={3}
-                    dot={{ fill: 'var(--accent)', strokeWidth: 2, r: 4 }}
+                    dataKey="distance" 
+                    stroke="var(--primary)" 
+                    strokeWidth={2}
+                    name="Distancia"
+                    dot={{ fill: 'var(--primary)', strokeWidth: 2, r: 3 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
@@ -325,32 +314,33 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
         <TabsContent value="heartrate" className="space-y-6">
           <Card>
             <CardHeader>
-              <CardTitle>Frecuencia Cardíaca</CardTitle>
+              <CardTitle>Análisis de Frecuencia Cardíaca Máxima</CardTitle>
               <CardDescription>
-                Monitoreo de intensidad de entrenamiento
+                Análisis de frecuencia cardíaca en los últimos {getDaysCount(timePeriod)} días
               </CardDescription>
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={400}>
-                <AreaChart data={data.filter(d => d.heartRate > 0)}>
+                <LineChart data={data}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
                     tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
                   />
-                  <YAxis domain={[120, 200]} tickFormatter={(value) => `${value} bpm`} />
+                  <YAxis tickFormatter={(value) => `${value} bpm`} />
                   <Tooltip 
                     labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
-                    formatter={(value: number) => [`${value.toFixed(0)} bpm`, 'Frecuencia Cardíaca']}
+                    formatter={(value: number) => [`${value.toFixed(0)} bpm`, 'FC Máxima']}
                   />
-                  <Area 
+                  <Line 
                     type="monotone" 
-                    dataKey="heartRate" 
-                    stroke="var(--secondary)" 
-                    fill="var(--secondary)" 
-                    fillOpacity={0.2}
+                    dataKey="maxHeartRate" 
+                    stroke="var(--accent)" 
+                    strokeWidth={2}
+                    name="FC Máxima"
+                    dot={{ fill: 'var(--accent)', strokeWidth: 2, r: 3 }}
                   />
-                </AreaChart>
+                </LineChart>
               </ResponsiveContainer>
             </CardContent>
           </Card>

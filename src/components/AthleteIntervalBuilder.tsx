@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { IntervalForm } from './IntervalForm';
 import { IntervalList } from './IntervalList';
-import { TrainingInterval, calculateTargetTimeFromPace } from './utils/athleteIntervalUtils';
+import { TrainingInterval } from './utils/athleteIntervalUtils';
 import { toast } from 'sonner';
 
 interface AthleteIntervalBuilderProps {
@@ -9,23 +9,23 @@ interface AthleteIntervalBuilderProps {
   onAddInterval: (interval: Omit<TrainingInterval, 'id'>) => void;
   onUpdateInterval: (intervalId: string, interval: Omit<TrainingInterval, 'id'>) => void;
   onDeleteInterval: (intervalId: string) => void;
+  athletes?: any[];
 }
 
 export function AthleteIntervalBuilder({ 
   intervals, 
   onAddInterval, 
   onUpdateInterval, 
-  onDeleteInterval 
+  onDeleteInterval,
+  athletes = []
 }: AthleteIntervalBuilderProps) {
   const [newInterval, setNewInterval] = useState({
-    type: 'interval' as 'interval' | 'continuous' | 'recovery',
+    trainingMode: 'distance' as 'distance' | 'time',
     repetitions: 1,
     distance: 400,
-    targetTime: '',
+    duration: '',
+    targetSpeed: '',
     recoveryTime: '2:00',
-    paceType: 'vo2max_percentage' as 'fixed' | 'vo2max_percentage',
-    pace: 4.0,
-    vo2maxPercentage: 85,
     description: '',
     intensity: 'moderate' as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max'
   });
@@ -40,69 +40,96 @@ export function AthleteIntervalBuilder({
 
   const handleAddInterval = async () => {
     // Validaciones básicas
-    if (newInterval.type === 'interval' && newInterval.repetitions < 1) {
+    if (newInterval.repetitions < 1) {
       toast.error('Las repeticiones deben ser al menos 1');
       return;
     }
 
-    if (newInterval.distance < 100) {
+    if (newInterval.trainingMode === 'distance' && newInterval.distance < 100) {
       toast.error('La distancia mínima es 100 metros');
       return;
     }
 
-    if (newInterval.vo2maxPercentage < 50 || newInterval.vo2maxPercentage > 110) {
-      toast.error('El % VO₂ Max debe estar entre 50% y 110%');
+    if (newInterval.trainingMode === 'time' && !newInterval.duration) {
+      toast.error('Debes especificar la duración');
+      return;
+    }
+
+    if (!newInterval.targetSpeed) {
+      toast.error('Debes especificar la velocidad');
+      return;
+    }
+
+    if (!newInterval.recoveryTime) {
+      toast.error('Debes especificar el tiempo de recuperación');
       return;
     }
 
     setIsAdding(true);
 
     try {
-      // Auto-rellenar tiempo objetivo si no se proporciona
-      let finalTargetTime = newInterval.targetTime;
-      if (!finalTargetTime && newInterval.paceType === 'vo2max_percentage') {
-        const estimatedPace = newInterval.vo2maxPercentage! / 100 * 4.0; // Asumiendo VO2 max base de 4:00/km
-        finalTargetTime = calculateTargetTimeFromPace(newInterval.distance, estimatedPace);
-      }
+      // Convertir al formato TrainingInterval
+      const intervalToAdd: Omit<TrainingInterval, 'id'> = {
+        type: 'interval',
+        repetitions: newInterval.repetitions,
+        distance: newInterval.trainingMode === 'distance' ? newInterval.distance : 0,
+        targetTime: newInterval.trainingMode === 'time' ? newInterval.duration : '',
+        recoveryTime: newInterval.recoveryTime,
+        paceType: 'fixed',
+        pace: parseSpeed(newInterval.targetSpeed),
+        description: newInterval.description,
+        intensity: newInterval.intensity,
+        // Guardar el modo de entrenamiento como parte de la descripción interna
+        trainingMode: newInterval.trainingMode,
+        duration: newInterval.trainingMode === 'time' ? newInterval.duration : undefined,
+        targetSpeed: newInterval.targetSpeed
+      } as any;
 
-      // Simular una pequeña demora para mostrar el estado de carga
       await new Promise(resolve => setTimeout(resolve, 300));
 
-      onAddInterval({
-        ...newInterval,
-        targetTime: finalTargetTime
-      });
+      onAddInterval(intervalToAdd);
 
       // Reset form
       setNewInterval({
-        type: 'interval',
+        trainingMode: 'distance',
         repetitions: 1,
         distance: 400,
-        targetTime: '',
+        duration: '',
+        targetSpeed: '',
         recoveryTime: '2:00',
-        paceType: 'vo2max_percentage',
-        pace: 4.0,
-        vo2maxPercentage: 85,
         description: '',
         intensity: 'moderate'
       });
 
-      toast.success(`Intervalo agregado exitosamente`, {
-        description: `${newInterval.type === 'continuous' 
-          ? `${newInterval.distance >= 1000 ? `${newInterval.distance/1000}K` : `${newInterval.distance}m`} continuo`
-          : `${newInterval.repetitions} x ${newInterval.distance >= 1000 ? `${newInterval.distance/1000}K` : `${newInterval.distance}m`}`
-        }`
+      const modeText = newInterval.trainingMode === 'distance' 
+        ? `${newInterval.distance >= 1000 ? `${newInterval.distance/1000}K` : `${newInterval.distance}m`}`
+        : newInterval.duration;
+
+      toast.success(`Serie agregada exitosamente`, {
+        description: `${newInterval.repetitions} x ${modeText} a ${newInterval.targetSpeed}/km`
       });
     } catch (error) {
-      toast.error('Error al agregar el intervalo');
+      toast.error('Error al agregar la serie');
       console.error('Error adding interval:', error);
     } finally {
       setIsAdding(false);
     }
   };
 
+  const parseSpeed = (speedStr: string): number => {
+    try {
+      const [min, sec] = speedStr.split(':').map(Number);
+      return min + (sec || 0) / 60;
+    } catch {
+      return 4.0;
+    }
+  };
+
   const handleEditInterval = (interval: TrainingInterval) => {
     setEditingId(interval.id);
+    
+    // Convertir de vuelta al formato del formulario
+    const intervalAny = interval as any;
     setEditingInterval({
       type: interval.type,
       repetitions: interval.repetitions,
@@ -113,8 +140,11 @@ export function AthleteIntervalBuilder({
       pace: interval.pace,
       vo2maxPercentage: interval.vo2maxPercentage,
       description: interval.description || '',
-      intensity: interval.intensity || 'moderate'
-    });
+      intensity: interval.intensity || 'moderate',
+      trainingMode: intervalAny.trainingMode || 'distance',
+      duration: intervalAny.duration,
+      targetSpeed: intervalAny.targetSpeed
+    } as any);
   };
 
   const handleSaveEdit = () => {
@@ -123,7 +153,7 @@ export function AthleteIntervalBuilder({
     onUpdateInterval(editingId, editingInterval);
     setEditingId(null);
     setEditingInterval(null);
-    toast.success('Intervalo actualizado');
+    toast.success('Serie actualizada');
   };
 
   const handleCancelEdit = () => {

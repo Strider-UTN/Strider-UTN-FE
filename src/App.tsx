@@ -30,6 +30,14 @@ interface User {
       email: boolean;
     };
   };
+  // Información del entrenador coordinador (solo para atletas)
+  currentCoach?: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+    linkedSince?: string; // Fecha de vinculación
+  };
   // Ficha física para atletas
   physicalProfile?: {
     yearsOfExperience: number;
@@ -109,7 +117,15 @@ export default function App() {
           email: true
         },
         ...userData.preferences
-      }
+      },
+      // Agregar entrenador coordinador de ejemplo para atletas (en producción vendría del backend)
+      currentCoach: userData.userType === 'athlete' ? {
+        id: 'coach-001',
+        name: 'Carlos Martínez',
+        email: 'carlos.martinez@strider.com',
+        phone: '+34 666 777 888',
+        linkedSince: '2024-03-15'
+      } : undefined
     };
     
     setCurrentUser(userWithDefaults);

@@ -5,10 +5,14 @@ import { CreateTrainingSessionModal } from './CreateTrainingSessionModal';
 import { TemplateManagement } from './TemplateManagement';
 import { IndividualAthletesManagement } from './IndividualAthletesManagement';
 import { TrainingList } from './TrainingList';
+import { TrainingUpload } from './TrainingUpload';
+import { AthleteCalendar } from './AthleteCalendar';
 import { AthleteTrainingPlan } from './AthleteTrainingPlan';
 import { AthleteTrainingHistory } from './AthleteTrainingHistory';
 import { AthletePerformanceView } from './AthletePerformanceView';
+import { AthleteStatusManagement } from './AthleteStatusManagement';
 import { PlanningManagement } from './PlanningManagement';
+import { ReportsView } from './ReportsView';
 import { CreateGroupModal } from './CreateGroupModal';
 import { GroupConfigurationModal } from './GroupConfigurationModal';
 import { GroupAthleteManagementModal } from './GroupAthleteManagementModal';
@@ -17,6 +21,7 @@ import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { 
   Users, 
   Calendar, 
+  CalendarDays,
   FileText, 
   BarChart3, 
   Settings, 
@@ -30,7 +35,9 @@ import {
   ChevronDown,
   Search,
   Filter,
-  X
+  X,
+  Upload,
+  Heart
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -116,20 +123,21 @@ type CoachActiveView =
   | 'my-athletes'
   | 'my-groups' 
   | 'planning'
+  | 'reports'
   | 'feedback'
-  | 'templates'
-  | 'profile';
+  | 'templates';
 
-type AthleteActiveView = 'training-plan' | 'training-history' | 'performance' | 'profile';
+type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status';
 
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
   const [coachActiveView, setCoachActiveView] = useState<CoachActiveView>('my-athletes');
-  const [athleteActiveView, setAthleteActiveView] = useState<AthleteActiveView>('training-plan');
+  const [athleteActiveView, setAthleteActiveView] = useState<AthleteActiveView>('calendar');
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const [isGroupManagementOpen, setIsGroupManagementOpen] = useState(false);
   const [isAthleteManagementOpen, setIsAthleteManagementOpen] = useState(false);
   const [selectedGroupForAthletes, setSelectedGroupForAthletes] = useState<TrainingGroup | null>(null);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
   
   // Estados para filtros de sedes
   const [groupNameFilter, setGroupNameFilter] = useState('');
@@ -161,19 +169,23 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     }
   ]);
 
-  // Menú reorganizado sin sesiones: mis atletas, mis sedes, planificación, retroalimentación, plantillas
+  // Menú reorganizado sin sesiones: mis atletas, mis sedes, planificación, reportes, retroalimentación, plantillas
   const coachMenuItems = [
     { id: 'my-athletes', label: 'Mis Atletas', icon: User },
     { id: 'my-groups', label: 'Mis Sedes', icon: MapPin },
     { id: 'planning', label: 'Planificaciones', icon: Calendar },
+    { id: 'reports', label: 'Reportes', icon: BarChart3 },
     { id: 'feedback', label: 'Retroalimentación', icon: MessageSquare },
     { id: 'templates', label: 'Plantillas', icon: FileText }
   ];
 
   const athleteMenuItems = [
-    { id: 'training-plan', label: 'Plan de Entrenamiento', icon: Calendar },
-    { id: 'training-history', label: 'Histórico', icon: FileText },
-    { id: 'performance', label: 'Rendimiento', icon: BarChart3 }
+    { id: 'calendar', label: 'Calendario', icon: Calendar },
+    { id: 'training-plan', label: 'Planificación', icon: CalendarDays },
+    { id: 'upload-training', label: 'Subir Entrenamientos', icon: Upload },
+    { id: 'training-history', label: 'Histórico de entrenamientos', icon: FileText },
+    { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
+    { id: 'status', label: 'Estado y Lesiones', icon: Heart }
   ];
 
   const handleCreateSession = (session: any) => {
@@ -208,11 +220,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   };
 
   const handleProfileClick = () => {
-    if (userType === 'coach') {
-      setCoachActiveView('profile');
-    } else {
-      setAthleteActiveView('profile');
-    }
+    setIsProfileOpen(true);
   };
 
   const getInitials = (name: string) => {
@@ -464,22 +472,30 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
           </div>
         );
       case 'planning':
-        return <PlanningManagement onBack={() => setCoachActiveView('my-groups')}/>;
+        return <PlanningManagement />;
+      case 'reports':
+        return (
+          <div className="space-y-6">
+            <div>
+              <h1>Reportes de Entrenamiento</h1>
+              <p className="text-muted-foreground">
+                Analiza el rendimiento y métricas de tus atletas por periodo
+              </p>
+            </div>
+            <ReportsView 
+              planningId="all"
+              athletes={[
+                { id: 'athlete1', name: 'Carlos Mendoza', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 65 },
+                { id: 'athlete2', name: 'María García', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 62 },
+                { id: 'athlete3', name: 'Juan López', groupId: 'group2', groupName: 'Sede Madrid Norte', vo2max: 58 }
+              ]}
+            />
+          </div>
+        );
       case 'feedback':
         return <FeedbackManagement />;
       case 'templates':
         return <TemplateManagement />;
-      case 'profile':
-        return (
-          <UserProfile
-            isOpen={true}
-            onClose={() => setCoachActiveView('my-athletes')}
-            user={user}
-            onUpdateUser={onUpdateUser}
-            theme={theme}
-            onToggleTheme={onToggleTheme}
-          />
-        );
       default:
         return <div>Vista no encontrada</div>;
     }
@@ -487,23 +503,45 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
 
   const renderAthleteContent = () => {
     switch (athleteActiveView) {
+      case 'calendar':
+        return <AthleteCalendar />;
       case 'training-plan':
         return <AthleteTrainingPlan />;
+      case 'upload-training':
+        return <TrainingUpload />;
       case 'training-history':
-        return <AthleteTrainingHistory />;
-      case 'performance':
-        return <AthletePerformanceView />;
-      case 'profile':
+        // Para atletas, crear un objeto atleta basado en el usuario actual
+        const athleteFromUser = {
+          id: user.id,
+          name: user.realName,
+          email: user.email,
+          profileImage: user.profileImage
+        };
         return (
-          <UserProfile
-            isOpen={true}
-            onClose={() => setAthleteActiveView('training-plan')}
-            user={user}
-            onUpdateUser={onUpdateUser}
-            theme={theme}
-            onToggleTheme={onToggleTheme}
+          <AthleteTrainingHistory 
+            athlete={athleteFromUser}
+            onBack={() => setAthleteActiveView('training-plan')}
           />
         );
+      case 'performance':
+        // Para atletas, crear un objeto atleta basado en el usuario actual
+        const athleteForPerformance = {
+          id: user.id,
+          name: user.realName,
+          email: user.email,
+          age: user.dateOfBirth ? new Date().getFullYear() - new Date(user.dateOfBirth).getFullYear() : 25,
+          groupName: 'Mi Entrenamiento',
+          joinDate: '2024-01-01'
+        };
+        return (
+          <AthletePerformanceView 
+            athlete={athleteForPerformance}
+            units={user.preferences?.units || 'metric'}
+            onBack={() => setAthleteActiveView('training-plan')}
+          />
+        );
+      case 'status':
+        return <AthleteStatusManagement />;
       default:
         return <div>Vista no encontrada</div>;
     }
@@ -629,8 +667,10 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
             </div>
           </header>
           
-          <div className="flex-1 overflow-auto p-4 lg:p-6">
-            {userType === 'coach' ? renderCoachContent() : renderAthleteContent()}
+          <div className="flex-1 overflow-auto p-4 lg:p-6 relative">
+            <div className="w-full max-w-full">
+              {userType === 'coach' ? renderCoachContent() : renderAthleteContent()}
+            </div>
           </div>
         </main>
       </div>
@@ -669,6 +709,16 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         isOpen={isAthleteManagementOpen} 
         onClose={() => setIsAthleteManagementOpen(false)}
         group={selectedGroupForAthletes}
+      />
+
+      {/* Modal de Perfil de Usuario */}
+      <UserProfile 
+        isOpen={isProfileOpen}
+        onClose={() => setIsProfileOpen(false)}
+        user={user} 
+        onUpdateUser={onUpdateUser}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
       />
     </SidebarProvider>
   );

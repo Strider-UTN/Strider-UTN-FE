@@ -10,7 +10,9 @@ import {
   Star,
   ThumbsUp,
   AlertTriangle,
-  AlertCircle
+  AlertCircle,
+  Activity,
+  ShieldAlert
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -68,6 +70,7 @@ interface SessionRetroalimentacionModalProps {
   existingFeedback?: CoachFeedback;
   athleteName: string;
   onSaveFeedback: (feedback: CoachFeedback) => void;
+  readOnly?: boolean;
 }
 
 export function SessionRetroalimentacionModal({
@@ -77,7 +80,8 @@ export function SessionRetroalimentacionModal({
   actualSession,
   existingFeedback,
   athleteName,
-  onSaveFeedback
+  onSaveFeedback,
+  readOnly = false
 }: SessionRetroalimentacionModalProps) {
   const [rating, setRating] = useState<CoachFeedback['rating']>('good');
   const [retroalimentacionText, setRetroalimentacionText] = useState('');
@@ -178,10 +182,13 @@ export function SessionRetroalimentacionModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <MessageSquare className="w-5 h-5" />
-            Retroalimentación de Sesión - {athleteName}
+            {readOnly || existingFeedback ? 'Retroalimentación de Sesión' : 'Dar Retroalimentación de Sesión'} - {athleteName}
           </DialogTitle>
           <DialogDescription>
-            Proporciona retroalimentación específica sobre el rendimiento del atleta en esta sesión
+            {readOnly || existingFeedback 
+              ? 'Visualiza la retroalimentación proporcionada para esta sesión'
+              : 'Proporciona retroalimentación específica sobre el rendimiento del atleta en esta sesión'
+            }
           </DialogDescription>
         </DialogHeader>
 
@@ -204,7 +211,122 @@ export function SessionRetroalimentacionModal({
             )}
           </div>
 
+          {/* Información reportada por el atleta */}
+          {actualSession && (
+            <div className="border rounded-lg p-6 space-y-4 bg-blue-50/30 border-blue-200">
+              <h4 className="font-medium flex items-center gap-2">
+                <Activity className="w-4 h-4 text-accent" />
+                Información Reportada por el Atleta
+              </h4>
 
+              {/* Métricas de la sesión */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="bg-white/80 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Distancia</p>
+                  <p className="font-medium">{actualSession.actualDistance} km</p>
+                  <p className="text-xs text-muted-foreground">
+                    Planeado: {plannedSession.plannedDistance} km
+                  </p>
+                </div>
+                <div className="bg-white/80 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Ritmo</p>
+                  <p className="font-medium">{actualSession.actualPace}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Planeado: {plannedSession.plannedPace}
+                  </p>
+                </div>
+                <div className="bg-white/80 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Duración</p>
+                  <p className="font-medium">{Math.floor(actualSession.actualDuration / 60)} min</p>
+                  <p className="text-xs text-muted-foreground">
+                    Planeado: {Math.floor(plannedSession.plannedDuration / 60)} min
+                  </p>
+                </div>
+                <div className="bg-white/80 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-1">Esfuerzo Percibido</p>
+                  <p className="font-medium">{actualSession.perceivedExertion}/10</p>
+                  <p className="text-xs text-muted-foreground">
+                    Planeado: {plannedSession.plannedIntensity}/10
+                  </p>
+                </div>
+              </div>
+
+              {/* Frecuencia cardíaca si está disponible */}
+              {actualSession.heartRate && (
+                <div className="bg-white/80 rounded-lg p-3">
+                  <p className="text-xs text-muted-foreground mb-2">Frecuencia Cardíaca</p>
+                  <div className="flex gap-6">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Promedio</p>
+                      <p className="font-medium">{actualSession.heartRate.avg} bpm</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Máxima</p>
+                      <p className="font-medium">{actualSession.heartRate.max} bpm</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Molestias o dolencias */}
+              {actualSession.injuries && actualSession.injuries.length > 0 && (
+                <div className="bg-red-50/50 border border-red-200 rounded-lg p-4">
+                  <h5 className="font-medium flex items-center gap-2 mb-3 text-red-900">
+                    <ShieldAlert className="w-4 h-4" />
+                    Molestias o Dolencias Reportadas
+                  </h5>
+                  <div className="space-y-3">
+                    {actualSession.injuries.map((injury, index) => (
+                      <div key={index} className="bg-white/80 rounded-lg p-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline" className={
+                              injury.type === 'Dolor' 
+                                ? 'bg-red-100 text-red-800 border-red-300'
+                                : 'bg-orange-100 text-orange-800 border-orange-300'
+                            }>
+                              {injury.type}
+                            </Badge>
+                            <span className="font-medium">{injury.location}</span>
+                          </div>
+                          <Badge variant="outline" className="bg-gray-100">
+                            Severidad: {injury.severity}/10
+                          </Badge>
+                        </div>
+                        {injury.description && (
+                          <p className="text-sm text-muted-foreground">
+                            {injury.description}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Comentarios del atleta */}
+              {(actualSession.notes || actualSession.sensations) && (
+                <div className="bg-white/80 rounded-lg p-4">
+                  <h5 className="font-medium flex items-center gap-2 mb-2">
+                    <MessageSquare className="w-4 h-4" />
+                    Comentarios del Atleta
+                  </h5>
+                  {actualSession.sensations && (
+                    <div className="mb-3">
+                      <p className="text-xs text-muted-foreground mb-1">Sensaciones durante el entrenamiento:</p>
+                      <p className="text-sm">{actualSession.sensations}</p>
+                    </div>
+                  )}
+                  {actualSession.notes && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">Notas adicionales:</p>
+                      <p className="text-sm">{actualSession.notes}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Formulario de Retroalimentación */}
           <div className="border rounded-lg p-6 space-y-6">
@@ -222,7 +344,8 @@ export function SessionRetroalimentacionModal({
                     key={ratingOption}
                     variant={rating === ratingOption ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setRating(ratingOption)}
+                    onClick={() => !readOnly && !existingFeedback && setRating(ratingOption)}
+                    disabled={readOnly || !!existingFeedback}
                     className={`justify-start h-auto p-3 ${rating === ratingOption ? getRatingColor(ratingOption) : ''}`}
                   >
                     <div className="flex flex-col items-center gap-1 w-full">
@@ -237,7 +360,7 @@ export function SessionRetroalimentacionModal({
             {/* Comentarios */}
             <div>
               <label className="block text-sm font-medium mb-2">
-                Comentarios sobre la Sesión *
+                Comentarios sobre la Sesión {!readOnly && !existingFeedback && '*'}
               </label>
               <Textarea
                 placeholder="Evalúa el rendimiento del atleta en esta sesión específica. Menciona aspectos positivos, áreas de mejora, cumplimiento de objetivos, técnica, actitud, etc."
@@ -245,36 +368,49 @@ export function SessionRetroalimentacionModal({
                 onChange={(e) => setRetroalimentacionText(e.target.value)}
                 rows={4}
                 className="resize-none"
+                disabled={readOnly || !!existingFeedback}
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                Sé específico y constructivo en tu retroalimentación
-              </p>
+              {!readOnly && !existingFeedback && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Sé específico y constructivo en tu retroalimentación
+                </p>
+              )}
             </div>
 
             {/* Recomendaciones */}
             <div>
               <label className="block text-sm font-medium mb-2">
-                Recomendaciones para Futuras Sesiones (Opcional)
+                Recomendaciones para Próximas Sesiones
               </label>
               <Textarea
-                placeholder="Aspectos específicos a trabajar, ajustes en intensidad, técnica a mejorar, estrategias de entrenamiento..."
+                placeholder="Sugerencias específicas para las próximas sesiones de entrenamiento..."
                 value={recommendations}
                 onChange={(e) => setRecommendations(e.target.value)}
                 rows={3}
                 className="resize-none"
+                disabled={readOnly || !!existingFeedback}
               />
             </div>
+
           </div>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={handleCancel}>
-            Cancelar
-          </Button>
-          <Button onClick={handleSave} disabled={!retroalimentacionText.trim()}>
-            <Send className="w-4 h-4 mr-2" />
-            {existingFeedback ? 'Actualizar Retroalimentación' : 'Guardar Retroalimentación'}
-          </Button>
+          {readOnly || existingFeedback ? (
+            <Button onClick={handleCancel}>
+              Cerrar
+            </Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={handleCancel}>
+                Cancelar
+              </Button>
+              <Button onClick={handleSave} disabled={!retroalimentacionText.trim()}>
+                <Send className="w-4 h-4 mr-2" />
+                Guardar Retroalimentación
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

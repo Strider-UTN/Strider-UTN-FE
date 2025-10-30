@@ -193,20 +193,7 @@ El equipo de Strider`;
                   </p>
                 </div>
 
-                <div className="p-4 bg-muted/50 rounded-lg border">
-                  <p className="text-sm font-medium mb-2">Vista previa del mensaje:</p>
-                  <div className="text-sm text-muted-foreground space-y-2 max-h-40 overflow-y-auto">
-                    {inviteData.personalMessage && (
-                      <div className="p-3 bg-accent/10 rounded border-l-2 border-accent">
-                        <p className="font-medium text-accent-foreground">Mensaje personal:</p>
-                        <p className="mt-1">{inviteData.personalMessage}</p>
-                      </div>
-                    )}
-                    <div className="whitespace-pre-line">
-                      {defaultMessage}
-                    </div>
-                  </div>
-                </div>
+
               </CardContent>
             </Card>
           </div>

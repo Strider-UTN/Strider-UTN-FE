@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -30,7 +31,12 @@ import {
   Activity,
   AlertTriangle,
   ClipboardList,
-  UserPlus
+  UserPlus,
+  Lock,
+  Eye,
+  EyeOff,
+  Users,
+  UserX
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -53,6 +59,14 @@ interface User {
     notifications?: {
       email: boolean;
     };
+  };
+  // Información del entrenador coordinador (solo para atletas)
+  currentCoach?: {
+    id: string;
+    name: string;
+    email: string;
+    phone?: string;
+    linkedSince?: string; // Fecha de vinculación
   };
   // Ficha física para atletas
   physicalProfile?: {
@@ -77,6 +91,9 @@ interface User {
         lastCheckupDate?: string;
         expiryDate?: string;
         isExpired?: boolean;
+        certificateFile?: string;
+        certificateFileName?: string;
+        uploadDate?: string;
       };
     };
   };
@@ -134,6 +151,18 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
 
   const [isEditing, setIsEditing] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
+  const [passwordData, setPasswordData] = useState({
+    currentPassword: '',
+    newPassword: '',
+    confirmPassword: ''
+  });
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false);
+  const [showNewPassword, setShowNewPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [isUnlinkingCoach, setIsUnlinkingCoach] = useState(false);
+  const [certificatePreview, setCertificatePreview] = useState<string | null>(null);
+  const [isUploadingCertificate, setIsUploadingCertificate] = useState(false);
 
   const handleSave = () => {
     // Actualizar realName basado en firstName y lastName
@@ -228,6 +257,88 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
     }));
   };
 
+  const handleCertificateUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validar tipo de archivo
+    const validTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/heic', 'application/pdf'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Formato no válido. Solo se permiten imágenes (JPG, PNG, HEIC) o PDF');
+      return;
+    }
+
+    // Validar tamaño (máximo 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('El archivo es muy grande. Máximo 10MB');
+      return;
+    }
+
+    setIsUploadingCertificate(true);
+
+    // Simular subida
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    // Crear preview para imágenes
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        setCertificatePreview(reader.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else {
+      setCertificatePreview(null);
+    }
+
+    // Actualizar formData
+    setFormData(prev => ({
+      ...prev,
+      physicalProfile: {
+        ...prev.physicalProfile!,
+        medicalInfo: {
+          ...prev.physicalProfile!.medicalInfo,
+          medicalClearance: {
+            ...prev.physicalProfile!.medicalInfo.medicalClearance,
+            certificateFile: URL.createObjectURL(file),
+            certificateFileName: file.name,
+            uploadDate: new Date().toISOString(),
+            hasValidClearance: true
+          }
+        }
+      }
+    }));
+
+    setIsUploadingCertificate(false);
+    toast.success('Certificado subido correctamente');
+  };
+
+  const handleRemoveCertificate = () => {
+    setCertificatePreview(null);
+    setFormData(prev => ({
+      ...prev,
+      physicalProfile: {
+        ...prev.physicalProfile!,
+        medicalInfo: {
+          ...prev.physicalProfile!.medicalInfo,
+          medicalClearance: {
+            ...prev.physicalProfile!.medicalInfo.medicalClearance,
+            certificateFile: undefined,
+            certificateFileName: undefined,
+            uploadDate: undefined
+          }
+        }
+      }
+    }));
+    toast.success('Certificado eliminado');
+  };
+
+  const handleViewCertificate = () => {
+    const certificateUrl = formData.physicalProfile?.medicalInfo.medicalClearance.certificateFile;
+    if (certificateUrl) {
+      window.open(certificateUrl, '_blank');
+    }
+  };
+
   const handleToggleTheme = () => {
     const newTheme = formData.preferences?.theme === 'dark' ? 'light' : 'dark';
     setFormData(prev => ({
@@ -242,6 +353,25 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
     if (!isEditing && onToggleTheme) {
       onToggleTheme();
     }
+  };
+
+  const handleUnlinkCoach = () => {
+    setIsUnlinkingCoach(true);
+  };
+
+  const confirmUnlinkCoach = () => {
+    const updatedUser = {
+      ...formData,
+      currentCoach: undefined
+    };
+    onUpdateUser(updatedUser);
+    setFormData(updatedUser);
+    setIsUnlinkingCoach(false);
+    toast.success('Te has desvinculado del entrenador exitosamente');
+  };
+
+  const cancelUnlinkCoach = () => {
+    setIsUnlinkingCoach(false);
   };
 
   const getInitials = (name: string) => {
@@ -275,8 +405,53 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
     return diffDays;
   };
 
+  const handleChangePassword = () => {
+    // Validar que todos los campos estén llenos
+    if (!passwordData.currentPassword || !passwordData.newPassword || !passwordData.confirmPassword) {
+      toast.error('Por favor completa todos los campos');
+      return;
+    }
+
+    // Validar que la nueva contraseña tenga al menos 8 caracteres
+    if (passwordData.newPassword.length < 8) {
+      toast.error('La nueva contraseña debe tener al menos 8 caracteres');
+      return;
+    }
+
+    // Validar que las contraseñas coincidan
+    if (passwordData.newPassword !== passwordData.confirmPassword) {
+      toast.error('Las contraseñas nuevas no coinciden');
+      return;
+    }
+
+    // Validar que la nueva contraseña sea diferente a la actual
+    if (passwordData.currentPassword === passwordData.newPassword) {
+      toast.error('La nueva contraseña debe ser diferente a la actual');
+      return;
+    }
+
+    // Aquí iría la lógica real de cambio de contraseña
+    // Por ahora, simulamos un cambio exitoso
+    toast.success('¡Contraseña actualizada con éxito!');
+    setPasswordData({
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    });
+    setIsChangingPassword(false);
+  };
+
+  const handleCancelPasswordChange = () => {
+    setPasswordData({
+      currentPassword: '',
+      newPassword: '',
+      confirmPassword: ''
+    });
+    setIsChangingPassword(false);
+  };
+
   return (
-    <Dialog open={isOpen} onOpenChange={(open) => { if (!open) onClose(); }}>
+    <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between pr-12">
@@ -685,6 +860,95 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                         Apto Físico (Anual)
                       </h5>
                       
+                      {/* Subir Certificado */}
+                      <div className="space-y-3">
+                        <Label>Certificado Médico</Label>
+                        
+                        {formData.physicalProfile?.medicalInfo.medicalClearance.certificateFile ? (
+                          <div className="border border-border rounded-lg p-4 bg-muted/30">
+                            <div className="flex items-start gap-4">
+                              {certificatePreview || formData.physicalProfile.medicalInfo.medicalClearance.certificateFile?.includes('unsplash') ? (
+                                <div className="flex-shrink-0">
+                                  <img
+                                    src={certificatePreview || formData.physicalProfile.medicalInfo.medicalClearance.certificateFile}
+                                    alt="Certificado"
+                                    className="w-24 h-24 object-cover rounded-lg"
+                                  />
+                                </div>
+                              ) : (
+                                <div className="flex-shrink-0 w-24 h-24 bg-muted rounded-lg flex items-center justify-center">
+                                  <ClipboardList className="w-12 h-12 text-muted-foreground" />
+                                </div>
+                              )}
+                              
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium truncate">
+                                  {formData.physicalProfile.medicalInfo.medicalClearance.certificateFileName || 'certificado.pdf'}
+                                </p>
+                                {formData.physicalProfile.medicalInfo.medicalClearance.uploadDate && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Subido el {new Date(formData.physicalProfile.medicalInfo.medicalClearance.uploadDate).toLocaleDateString('es-ES', {
+                                      year: 'numeric',
+                                      month: 'long',
+                                      day: 'numeric'
+                                    })}
+                                  </p>
+                                )}
+                                <div className="flex items-center gap-2 mt-2">
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={handleViewCertificate}
+                                    type="button"
+                                  >
+                                    <Eye className="w-4 h-4 mr-2" />
+                                    Ver
+                                  </Button>
+                                  {isEditing && (
+                                    <Button
+                                      variant="outline"
+                                      size="sm"
+                                      onClick={handleRemoveCertificate}
+                                      type="button"
+                                    >
+                                      <Trash2 className="w-4 h-4 mr-2" />
+                                      Eliminar
+                                    </Button>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="border-2 border-dashed border-border rounded-lg p-6 text-center">
+                            <input
+                              type="file"
+                              id="certificate-upload"
+                              className="hidden"
+                              accept="image/jpeg,image/jpg,image/png,image/heic,application/pdf"
+                              onChange={handleCertificateUpload}
+                              disabled={!isEditing || isUploadingCertificate}
+                            />
+                            <label 
+                              htmlFor="certificate-upload" 
+                              className={`cursor-pointer ${(!isEditing || isUploadingCertificate) ? 'opacity-50 cursor-not-allowed' : ''}`}
+                            >
+                              <ClipboardList className="w-12 h-12 mx-auto mb-3 text-muted-foreground" />
+                              <p className="font-medium mb-1">
+                                {isUploadingCertificate ? 'Subiendo...' : 'Subir Certificado Médico'}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                JPG, PNG, HEIC o PDF (máx. 10MB)
+                              </p>
+                            </label>
+                          </div>
+                        )}
+                        
+                        <p className="text-xs text-muted-foreground">
+                          Sube una foto o archivo de tu apto físico para actividad deportiva
+                        </p>
+                      </div>
+
                       {/* Alerta de vencimiento */}
                       {formData.physicalProfile?.medicalInfo.medicalClearance.expiryDate && (
                         <div className={`p-3 rounded-lg border ${
@@ -769,6 +1033,197 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
               </CardContent>
             </Card>
           )}
+
+          {/* Entrenador Coordinador (solo para atletas) */}
+          {user.userType === 'athlete' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center">
+                  <Users className="w-5 h-5 mr-2" />
+                  Entrenador Coordinador
+                </CardTitle>
+                <CardDescription>
+                  Información sobre el entrenador que coordina tu planificación
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {formData.currentCoach ? (
+                  <div className="space-y-4">
+                    <div className="flex items-start justify-between p-4 bg-muted/50 rounded-lg">
+                      <div className="space-y-3 flex-1">
+                        <div>
+                          <Label className="text-sm text-muted-foreground">Nombre</Label>
+                          <p className="font-medium">{formData.currentCoach.name}</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                              <Mail className="w-3 h-3" />
+                              Email
+                            </Label>
+                            <p className="text-sm">{formData.currentCoach.email}</p>
+                          </div>
+                          {formData.currentCoach.phone && (
+                            <div>
+                              <Label className="text-sm text-muted-foreground flex items-center gap-1">
+                                <Phone className="w-3 h-3" />
+                                Teléfono
+                              </Label>
+                              <p className="text-sm">{formData.currentCoach.phone}</p>
+                            </div>
+                          )}
+                        </div>
+                        {formData.currentCoach.linkedSince && (
+                          <div>
+                            <Label className="text-sm text-muted-foreground">Vinculado desde</Label>
+                            <p className="text-sm">
+                              {new Date(formData.currentCoach.linkedSince).toLocaleDateString('es-ES', {
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric'
+                              })}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="pt-2">
+                      <Button
+                        variant="destructive"
+                        onClick={handleUnlinkCoach}
+                        className="w-full md:w-auto"
+                      >
+                        <UserX className="w-4 h-4 mr-2" />
+                        Desvincularme de este entrenador
+                      </Button>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Al desvincularte, perderás acceso a la planificación compartida por este entrenador
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8">
+                    <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
+                      <Users className="w-8 h-8 text-muted-foreground" />
+                    </div>
+                    <p className="text-muted-foreground mb-2">No tienes un entrenador coordinador asignado</p>
+                    <p className="text-sm text-muted-foreground">
+                      Espera a recibir una invitación de un entrenador para comenzar tu planificación
+                    </p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Seguridad */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center">
+                <Lock className="w-5 h-5 mr-2" />
+                Seguridad de tu Cuenta
+              </CardTitle>
+              <CardDescription>
+                Mantén tu cuenta segura actualizando tu contraseña regularmente
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {!isChangingPassword ? (
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Contraseña</Label>
+                    <p className="text-sm text-muted-foreground">
+                      ••••••••••
+                    </p>
+                  </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setIsChangingPassword(true)}
+                  >
+                    Cambiar Contraseña
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="currentPassword">Contraseña Actual</Label>
+                    <div className="relative">
+                      <Input
+                        id="currentPassword"
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        value={passwordData.currentPassword}
+                        onChange={(e) => setPasswordData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                        placeholder="Ingresa tu contraseña actual"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showCurrentPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="newPassword">Nueva Contraseña</Label>
+                    <div className="relative">
+                      <Input
+                        id="newPassword"
+                        type={showNewPassword ? 'text' : 'password'}
+                        value={passwordData.newPassword}
+                        onChange={(e) => setPasswordData(prev => ({ ...prev, newPassword: e.target.value }))}
+                        placeholder="Ingresa tu nueva contraseña"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showNewPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Mínimo 8 caracteres
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword">Confirmar Nueva Contraseña</Label>
+                    <div className="relative">
+                      <Input
+                        id="confirmPassword"
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        value={passwordData.confirmPassword}
+                        onChange={(e) => setPasswordData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                        placeholder="Confirma tu nueva contraseña"
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      >
+                        {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-2">
+                    <Button variant="outline" onClick={handleCancelPasswordChange}>
+                      Cancelar
+                    </Button>
+                    <Button onClick={handleChangePassword} className="bg-accent hover:bg-accent/90">
+                      Actualizar Contraseña
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Preferencias */}
           <Card>
@@ -870,6 +1325,44 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
             </div>
         )}
       </DialogContent>
+
+      {/* AlertDialog de confirmación de desvinculación */}
+      <AlertDialog open={isUnlinkingCoach} onOpenChange={setIsUnlinkingCoach}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="w-5 h-5 text-destructive" />
+              ¿Confirmar desvinculación?
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-3">
+                <div>
+                  Estás a punto de desvincularte de <strong>{formData.currentCoach?.name}</strong>.
+                </div>
+                <div>
+                  Al confirmar esta acción:
+                </div>
+                <ul className="list-disc list-inside space-y-1 text-sm pl-2">
+                  <li>Perderás acceso a la planificación compartida por este entrenador</li>
+                  <li>El entrenador ya no podrá ver tu progreso ni enviarte nuevas sesiones</li>
+                  <li>Deberás esperar una nueva invitación para volver a vincularte</li>
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={cancelUnlinkCoach}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmUnlinkCoach}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Sí, desvincularme
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

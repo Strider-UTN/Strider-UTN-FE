@@ -1,14 +1,11 @@
 import React from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
-import { Timer, Edit, X, Check } from 'lucide-react';
-import { DISTANCE_OPTIONS, INTENSITY_OPTIONS } from './constants/athleteIntervalConstants';
-import { TrainingInterval, formatIntervalDisplay } from './utils/athleteIntervalUtils';
+import { Timer, Edit, X, Ruler, Clock } from 'lucide-react';
+import { INTENSITY_OPTIONS } from './constants/athleteIntervalConstants';
+import { TrainingInterval } from './utils/athleteIntervalUtils';
 
 interface IntervalListProps {
   intervals: TrainingInterval[];
@@ -35,14 +32,29 @@ export function IntervalList({
     return INTENSITY_OPTIONS.find(opt => opt.value === intensity) || INTENSITY_OPTIONS[1];
   };
 
+  const formatIntervalDisplay = (interval: any) => {
+    const trainingMode = interval.trainingMode || 'distance';
+    const repetitions = interval.repetitions || 1;
+    
+    if (trainingMode === 'distance') {
+      const distance = interval.distance >= 1000 
+        ? `${interval.distance / 1000}K` 
+        : `${interval.distance}m`;
+      return `${repetitions} x ${distance}`;
+    } else {
+      const duration = interval.duration || interval.targetTime || '0:00';
+      return `${repetitions} x ${duration}`;
+    }
+  };
+
   if (intervals.length === 0) {
     return (
       <Card>
         <CardContent className="text-center py-12">
           <Timer className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-          <h3 className="font-medium mb-2">No hay intervalos configurados</h3>
+          <h3 className="font-medium mb-2">No hay series configuradas</h3>
           <p className="text-sm text-muted-foreground">
-            Agrega tu primer intervalo usando el formulario de arriba
+            Agrega tu primera serie usando el formulario de arriba
           </p>
         </CardContent>
       </Card>
@@ -52,107 +64,72 @@ export function IntervalList({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Intervalos Configurados ({intervals.length})</CardTitle>
+        <CardTitle>Series Configuradas ({intervals.length})</CardTitle>
         <CardDescription>
           Secuencia de entrenamiento programada
         </CardDescription>
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          {intervals.map((interval, index) => (
-            <div key={interval.id}>
-              {editingId === interval.id ? (
-                // Formulario de edición
-                <Card className="border-2 border-accent">
-                  <CardContent className="p-4 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="font-medium">Editando Intervalo {index + 1}</h4>
-                      <div className="flex gap-2">
-                        <Button size="sm" onClick={onSaveEdit}>
-                          <Check className="w-4 h-4 mr-1" />
-                          Guardar
-                        </Button>
-                        <Button size="sm" variant="outline" onClick={onCancelEdit}>
-                          <X className="w-4 h-4 mr-1" />
-                          Cancelar
-                        </Button>
-                      </div>
-                    </div>
-                    
-                    {editingInterval && (
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                        <div className="space-y-1">
-                          <Label className="text-xs">Repeticiones</Label>
-                          <Input
-                            type="number"
-                            min="1"
-                            value={editingInterval.repetitions}
-                            onChange={(e) => onEditChange('repetitions', Math.max(1, parseInt(e.target.value) || 1))}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Distancia</Label>
-                          <Select
-                            value={editingInterval.distance.toString()}
-                            onValueChange={(value) => onEditChange('distance', parseInt(value))}
-                          >
-                            <SelectTrigger>
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {DISTANCE_OPTIONS.map(option => (
-                                <SelectItem key={option.value} value={option.value.toString()}>
-                                  {option.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Tiempo (mm:ss)</Label>
-                          <Input
-                            value={editingInterval.targetTime || ''}
-                            onChange={(e) => onEditChange('targetTime', e.target.value)}
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <Label className="text-xs">Recuperación</Label>
-                          <Input
-                            value={editingInterval.recoveryTime}
-                            onChange={(e) => onEditChange('recoveryTime', e.target.value)}
-                          />
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ) : (
-                // Vista normal del intervalo
-                <div className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50">
-                  <div className="flex items-center gap-3">
-                    <Badge variant="outline" className="font-mono">
+          {intervals.map((interval, index) => {
+            const intervalAny = interval as any;
+            const trainingMode = intervalAny.trainingMode || 'distance';
+            
+            return (
+              <div key={interval.id}>
+                <div className="flex items-start justify-between p-4 border rounded-lg hover:bg-muted/30 transition-colors">
+                  <div className="flex items-start gap-3 flex-1">
+                    <Badge variant="outline" className="font-mono mt-1">
                       {index + 1}
                     </Badge>
-                    <div>
-                      <div className="flex items-center gap-2">
+                    
+                    <div className="flex-1 space-y-2">
+                      {/* Línea principal */}
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Badge className={getIntensityInfo(interval.intensity || 'moderate').color}>
                           {getIntensityInfo(interval.intensity || 'moderate').label}
                         </Badge>
-                        <span className="font-medium">
-                          {formatIntervalDisplay(interval)}
-                        </span>
-                        {interval.targetTime && (
-                          <span className="text-muted-foreground">• {interval.targetTime}</span>
+                        
+                        <div className="flex items-center gap-1.5">
+                          {trainingMode === 'distance' ? (
+                            <Ruler className="w-4 h-4 text-muted-foreground" />
+                          ) : (
+                            <Clock className="w-4 h-4 text-muted-foreground" />
+                          )}
+                          <span className="font-medium">
+                            {formatIntervalDisplay(intervalAny)}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Detalles */}
+                      <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
+                        {intervalAny.targetSpeed && (
+                          <span className="flex items-center gap-1">
+                            <span className="font-medium">Velocidad:</span>
+                            {intervalAny.targetSpeed}/km
+                          </span>
+                        )}
+                        
+                        {interval.recoveryTime && interval.recoveryTime !== '0:00' && (
+                          <span className="flex items-center gap-1">
+                            <span className="font-medium">Recuperación:</span>
+                            {interval.recoveryTime}
+                          </span>
                         )}
                       </div>
+                      
+                      {/* Descripción */}
                       {interval.description && (
-                        <p className="text-sm text-muted-foreground mt-1">
+                        <p className="text-sm text-muted-foreground italic">
                           {interval.description}
                         </p>
                       )}
                     </div>
                   </div>
-                  <div className="flex gap-2">
+                  
+                  {/* Botones de acción */}
+                  <div className="flex gap-2 ml-3">
                     <Button
                       size="sm"
                       variant="outline"
@@ -169,11 +146,11 @@ export function IntervalList({
                     </Button>
                   </div>
                 </div>
-              )}
-              
-              {index < intervals.length - 1 && <Separator className="my-2" />}
-            </div>
-          ))}
+                
+                {index < intervals.length - 1 && <Separator className="my-2" />}
+              </div>
+            );
+          })}
         </div>
       </CardContent>
     </Card>

@@ -4,10 +4,12 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar, Users, Settings, ArrowLeft, Activity } from 'lucide-react';
+import { Calendar, Users, Settings, ArrowLeft } from 'lucide-react';
 import { PlanningCalendar } from './PlanningCalendar';
 import { PlanningConfigurationModal } from './PlanningConfigurationModal';
 import { MacrocycleView } from './MacrocycleView';
+import { MicrocycleView } from './MicrocycleView';
+import { Mesocycle, Microcycle } from './types/microcycleTypes';
 
 interface Planning {
   id: string;
@@ -38,9 +40,14 @@ interface PlanningViewProps {
   onUpdate: (updatedPlanning: Planning) => void;
 }
 
+
+
 export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningViewProps) {
   const [activeTab, setActiveTab] = useState('macrocycle');
   const [isConfigurationModalOpen, setIsConfigurationModalOpen] = useState(false);
+  const [currentView, setCurrentView] = useState<'main' | 'microcycle' | 'weekly-calendar'>('main');
+  const [selectedMicrocycle, setSelectedMicrocycle] = useState<Microcycle | null>(null);
+  const [selectedMesocycle, setSelectedMesocycle] = useState<Mesocycle | null>(null);
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-ES', {
@@ -49,6 +56,86 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
       year: 'numeric'
     });
   };
+
+  const handleViewWeeklyPlanning = (microcycle: Microcycle, mesocycle: Mesocycle) => {
+    setSelectedMicrocycle(microcycle);
+    setSelectedMesocycle(mesocycle);
+    setCurrentView('microcycle');
+  };
+
+  const handleViewWeeklyCalendar = (microcycle: Microcycle, mesocycle: Mesocycle) => {
+    setSelectedMicrocycle(microcycle);
+    setSelectedMesocycle(mesocycle);
+    setCurrentView('weekly-calendar');
+  };
+
+  const handleBackToMain = () => {
+    setCurrentView('main');
+    setSelectedMicrocycle(null);
+    setSelectedMesocycle(null);
+  };
+
+  // Si estamos en la vista de microciclo, mostrar MicrocycleView
+  if (currentView === 'microcycle' && selectedMicrocycle && selectedMesocycle) {
+    return (
+      <MicrocycleView
+        mesocycle={selectedMesocycle}
+        athletes={athletes}
+        onBack={handleBackToMain}
+        onCreateSession={(session) => {
+          console.log('Nueva sesión creada:', session);
+        }}
+        onEditMicrocycle={(microcycle) => {
+          console.log('Editar microciclo:', microcycle);
+        }}
+        onDeleteMicrocycle={(microcycleId) => {
+          console.log('Eliminar microciclo:', microcycleId);
+        }}
+        onViewCalendar={(microcycle) => {
+          console.log('Ver calendario:', microcycle);
+        }}
+      />
+    );
+  }
+
+  // Si estamos en la vista de calendario semanal, mostrar PlanningCalendar
+  if (currentView === 'weekly-calendar' && selectedMicrocycle && selectedMesocycle) {
+    return (
+      <div className="space-y-4">
+        <div className="flex items-center gap-4">
+          <Button
+            variant="outline"
+            onClick={handleBackToMain}
+            className="flex items-center gap-2"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Volver al Macrociclo
+          </Button>
+          <div>
+            <h2 className="text-xl font-semibold">
+              Calendario - Semana {selectedMicrocycle.weekNumber}
+            </h2>
+            <p className="text-muted-foreground">
+              {selectedMesocycle.name} • {formatDate(selectedMicrocycle.startDate)} - {formatDate(selectedMicrocycle.endDate)}
+            </p>
+          </div>
+        </div>
+        
+        <PlanningCalendar
+          planningId={planning.id}
+          userType="coach"
+          athletes={athletes}
+          view="microcycle"
+          currentDate={selectedMicrocycle.startDate}
+          microcycle={selectedMicrocycle}
+          onSessionCreate={(session) => {
+            console.log('Nueva sesión creada:', session);
+            // Aquí puedes manejar la creación de la sesión
+          }}
+        />
+      </div>
+    );
+  }
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -121,7 +208,7 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
         <TabsList className="grid w-full grid-cols-3 max-w-2xl">
           <TabsTrigger value="macrocycle" className="flex items-center gap-2">
-            <Activity className="w-4 h-4" />
+            <Calendar className="w-4 h-4" />
             Macrociclo
           </TabsTrigger>
           <TabsTrigger value="calendar" className="flex items-center gap-2">
@@ -139,6 +226,8 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
             planningId={planning.id}
             year={new Date(planning.startDate).getFullYear()}
             athletes={athletes}
+            onViewWeeklyPlanning={handleViewWeeklyPlanning}
+            onViewWeeklyCalendar={handleViewWeeklyCalendar}
           />
         </TabsContent>
 

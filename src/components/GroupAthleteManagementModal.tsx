@@ -12,7 +12,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { 
   Users, 
   UserPlus,
-  Edit3,
   Trash2,
   Mail,
   Phone,
@@ -60,7 +59,7 @@ interface GroupAthleteManagementModalProps {
   group: TrainingGroup | null;
 }
 
-// Datos mock de atletas
+// Datos mock de atletas en la sede
 const mockAthletes: Athlete[] = [
   {
     id: 'athlete-1',
@@ -108,6 +107,49 @@ const mockAthletes: Athlete[] = [
   }
 ];
 
+// Datos mock de atletas existentes que no están en la sede
+const mockExistingAthletes: Athlete[] = [
+  {
+    id: 'athlete-4',
+    name: 'Juan Pérez',
+    email: 'juan.perez@email.com',
+    phone: '+34 600 123 456',
+    dateOfBirth: '1990-05-12',
+    gender: 'M',
+    speciality: 'Medio-fondo (800m)',
+    vo2Max: 65,
+    joinedDate: '2024-03-01',
+    status: 'active',
+    location: 'Sevilla, España'
+  },
+  {
+    id: 'athlete-5',
+    name: 'Laura Jiménez',
+    email: 'laura.jimenez@email.com',
+    phone: '+34 655 789 012',
+    dateOfBirth: '1997-09-25',
+    gender: 'F',
+    speciality: 'Fondo (3000m)',
+    vo2Max: 69,
+    joinedDate: '2024-02-15',
+    status: 'active',
+    location: 'Bilbao, España'
+  },
+  {
+    id: 'athlete-6',
+    name: 'Roberto Sánchez',
+    email: 'roberto.sanchez@email.com',
+    phone: '+34 612 456 789',
+    dateOfBirth: '1994-12-08',
+    gender: 'M',
+    speciality: 'Maratón',
+    vo2Max: 71,
+    joinedDate: '2024-01-10',
+    status: 'active',
+    location: 'Zaragoza, España'
+  }
+];
+
 export function GroupAthleteManagementModal({ 
   isOpen, 
   onClose, 
@@ -115,11 +157,21 @@ export function GroupAthleteManagementModal({
 }: GroupAthleteManagementModalProps) {
   const [activeTab, setActiveTab] = useState('list');
   const [athletes, setAthletes] = useState<Athlete[]>(mockAthletes);
+  
+  // Cargar atletas existentes al abrir el modal
+  React.useEffect(() => {
+    if (isOpen) {
+      setExistingAthletes(mockExistingAthletes);
+    }
+  }, [isOpen]);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showAddAthleteModal, setShowAddAthleteModal] = useState(false);
+  const [existingAthletes, setExistingAthletes] = useState<Athlete[]>([]);
+  const [addAthleteSearch, setAddAthleteSearch] = useState('');
   
   const [inviteForm, setInviteForm] = useState({
     email: '',
@@ -127,13 +179,7 @@ export function GroupAthleteManagementModal({
     message: ''
   });
 
-  const [editForm, setEditForm] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    speciality: '',
-    status: 'active' as 'active' | 'inactive' | 'injured'
-  });
+
 
   const filteredAthletes = athletes.filter(athlete => {
     const matchesSearch = athlete.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -153,35 +199,7 @@ export function GroupAthleteManagementModal({
     setShowInviteForm(false);
   };
 
-  const handleEditAthlete = (athlete: Athlete) => {
-    setSelectedAthlete(athlete);
-    setEditForm({
-      name: athlete.name,
-      email: athlete.email,
-      phone: athlete.phone || '',
-      speciality: athlete.speciality,
-      status: athlete.status
-    });
-    setActiveTab('edit');
-  };
 
-  const handleSaveEdit = async () => {
-    if (!selectedAthlete) return;
-    
-    const updatedAthlete: Athlete = {
-      ...selectedAthlete,
-      name: editForm.name,
-      email: editForm.email,
-      phone: editForm.phone,
-      speciality: editForm.speciality,
-      status: editForm.status
-    };
-    
-    setAthletes(prev => prev.map(a => a.id === selectedAthlete.id ? updatedAthlete : a));
-    setSelectedAthlete(null);
-    setActiveTab('list');
-    toast.success('Atleta actualizado exitosamente');
-  };
 
   const handleDeleteAthlete = (athlete: Athlete) => {
     setSelectedAthlete(athlete);
@@ -196,6 +214,24 @@ export function GroupAthleteManagementModal({
     setSelectedAthlete(null);
     toast.success('Atleta eliminado de la sede');
   };
+
+  const handleAddExistingAthlete = (athlete: Athlete) => {
+    // Agregar atleta a la sede
+    const athleteWithJoinDate = {
+      ...athlete,
+      joinedDate: new Date().toISOString().split('T')[0]
+    };
+    
+    setAthletes(prev => [...prev, athleteWithJoinDate]);
+    setExistingAthletes(prev => prev.filter(a => a.id !== athlete.id));
+    toast.success(`${athlete.name} agregado exitosamente a la sede`);
+  };
+
+  const filteredExistingAthletes = existingAthletes.filter(athlete => 
+    athlete.name.toLowerCase().includes(addAthleteSearch.toLowerCase()) ||
+    athlete.email.toLowerCase().includes(addAthleteSearch.toLowerCase()) ||
+    athlete.speciality.toLowerCase().includes(addAthleteSearch.toLowerCase())
+  );
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -242,7 +278,7 @@ export function GroupAthleteManagementModal({
         </DialogHeader>
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="list" className="flex items-center gap-2">
               <Users className="w-4 h-4" />
               Lista de Atletas
@@ -251,15 +287,11 @@ export function GroupAthleteManagementModal({
               <UserPlus className="w-4 h-4" />
               Invitar Atleta
             </TabsTrigger>
-            <TabsTrigger value="edit" className="flex items-center gap-2" disabled={!selectedAthlete}>
-              <Edit3 className="w-4 h-4" />
-              Editar Atleta
-            </TabsTrigger>
           </TabsList>
 
           {/* Lista de Atletas */}
           <TabsContent value="list" className="space-y-4">
-            {/* Controles de búsqueda y filtro */}
+            {/* Controles de búsqueda, filtro y botón agregar */}
             <div className="flex flex-col sm:flex-row gap-4">
               <div className="flex-1">
                 <div className="relative">
@@ -284,6 +316,13 @@ export function GroupAthleteManagementModal({
                   <SelectItem value="injured">Lesionados</SelectItem>
                 </SelectContent>
               </Select>
+              <Button 
+                onClick={() => setShowAddAthleteModal(true)}
+                className="bg-accent hover:bg-accent/90"
+              >
+                <UserPlus className="w-4 h-4 mr-2" />
+                Agregar Atleta
+              </Button>
             </div>
 
             {/* Estadísticas rápidas */}
@@ -367,14 +406,7 @@ export function GroupAthleteManagementModal({
                       </div>
                       
                       <div className="flex items-center space-x-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEditAthlete(athlete)}
-                        >
-                          <Edit3 className="w-4 h-4 mr-1" />
-                          Editar
-                        </Button>
+
                         <Button
                           variant="destructive"
                           size="sm"
@@ -466,96 +498,7 @@ export function GroupAthleteManagementModal({
             </Card>
           </TabsContent>
 
-          {/* Editar Atleta */}
-          <TabsContent value="edit" className="space-y-4">
-            {selectedAthlete && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Editar Atleta - {selectedAthlete.name}</CardTitle>
-                  <CardDescription>
-                    Modifica la información del atleta
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="editName">Nombre *</Label>
-                      <Input
-                        id="editName"
-                        value={editForm.name}
-                        onChange={(e) => setEditForm(prev => ({ ...prev, name: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="editEmail">Email *</Label>
-                      <Input
-                        id="editEmail"
-                        type="email"
-                        value={editForm.email}
-                        onChange={(e) => setEditForm(prev => ({ ...prev, email: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="editPhone">Teléfono</Label>
-                      <Input
-                        id="editPhone"
-                        value={editForm.phone}
-                        onChange={(e) => setEditForm(prev => ({ ...prev, phone: e.target.value }))}
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="editSpeciality">Especialidad</Label>
-                      <Select value={editForm.speciality} onValueChange={(value) => setEditForm(prev => ({ ...prev, speciality: value }))}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Medio-fondo (800m)">Medio-fondo (800m)</SelectItem>
-                          <SelectItem value="Medio-fondo (1500m)">Medio-fondo (1500m)</SelectItem>
-                          <SelectItem value="Fondo (3000m)">Fondo (3000m)</SelectItem>
-                          <SelectItem value="Fondo (5000m)">Fondo (5000m)</SelectItem>
-                          <SelectItem value="Fondo (10000m)">Fondo (10000m)</SelectItem>
-                          <SelectItem value="Maratón">Maratón</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="editStatus">Estado</Label>
-                      <Select value={editForm.status} onValueChange={(value) => setEditForm(prev => ({ ...prev, status: value as any }))}>
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="active">Activo</SelectItem>
-                          <SelectItem value="inactive">Inactivo</SelectItem>
-                          <SelectItem value="injured">Lesionado</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
 
-                  <div className="flex space-x-2 pt-4">
-                    <Button 
-                      onClick={handleSaveEdit}
-                      disabled={!editForm.name.trim() || !editForm.email.trim()}
-                      className="bg-accent hover:bg-accent/90"
-                    >
-                      Guardar Cambios
-                    </Button>
-                    <Button 
-                      variant="outline" 
-                      onClick={() => {
-                        setSelectedAthlete(null);
-                        setActiveTab('list');
-                      }}
-                    >
-                      Cancelar
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </TabsContent>
         </Tabs>
 
         {/* Dialog de confirmación para eliminar */}
@@ -580,6 +523,120 @@ export function GroupAthleteManagementModal({
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Modal para agregar atletas existentes */}
+        <Dialog open={showAddAthleteModal} onOpenChange={setShowAddAthleteModal}>
+          <DialogContent className="sm:max-w-4xl max-h-[80vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center text-primary">
+                <UserPlus className="w-5 h-5 mr-2" />
+                Agregar Atleta Existente a {group.name}
+              </DialogTitle>
+              <DialogDescription>
+                Selecciona atletas que ya están registrados en el sistema para agregarlos a esta sede.
+              </DialogDescription>
+            </DialogHeader>
+
+            {/* Búsqueda de atletas existentes */}
+            <div className="space-y-4">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                <Input
+                  placeholder="Buscar atletas por nombre, email o especialidad..."
+                  value={addAthleteSearch}
+                  onChange={(e) => setAddAthleteSearch(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+
+              {/* Lista de atletas disponibles */}
+              <div className="grid gap-3 max-h-96 overflow-y-auto">
+                {filteredExistingAthletes.length === 0 ? (
+                  <Card>
+                    <CardContent className="p-6 text-center">
+                      <Users className="w-12 h-12 text-muted-foreground mx-auto mb-3" />
+                      <p className="text-muted-foreground">
+                        {addAthleteSearch 
+                          ? 'No se encontraron atletas con esos criterios'
+                          : 'No hay atletas disponibles para agregar a esta sede'
+                        }
+                      </p>
+                    </CardContent>
+                  </Card>
+                ) : (
+                  filteredExistingAthletes.map((athlete) => (
+                    <Card key={athlete.id} className="hover:bg-muted/50 transition-colors">
+                      <CardContent className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3">
+                            <Avatar className="w-10 h-10">
+                              <AvatarImage src={athlete.profileImage} />
+                              <AvatarFallback>{athlete.name.split(' ').map(n => n[0]).join('')}</AvatarFallback>
+                            </Avatar>
+                            
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-medium">{athlete.name}</h4>
+                                <Badge className={getStatusColor(athlete.status)}>
+                                  {getStatusText(athlete.status)}
+                                </Badge>
+                              </div>
+                              <div className="text-sm text-muted-foreground space-y-1">
+                                <div className="flex items-center gap-4">
+                                  <span className="flex items-center gap-1">
+                                    <Mail className="w-3 h-3" />
+                                    {athlete.email}
+                                  </span>
+                                  {athlete.phone && (
+                                    <span className="flex items-center gap-1">
+                                      <Phone className="w-3 h-3" />
+                                      {athlete.phone}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="flex items-center gap-4">
+                                  <span className="flex items-center gap-1">
+                                    <Activity className="w-3 h-3" />
+                                    {athlete.speciality}
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <Calendar className="w-3 h-3" />
+                                    {calculateAge(athlete.dateOfBirth)} años
+                                  </span>
+                                  {athlete.location && (
+                                    <span className="flex items-center gap-1">
+                                      <MapPin className="w-3 h-3" />
+                                      {athlete.location}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                          
+                          <Button
+                            size="sm"
+                            onClick={() => handleAddExistingAthlete(athlete)}
+                            className="bg-accent hover:bg-accent/90"
+                          >
+                            <UserPlus className="w-4 h-4 mr-1" />
+                            Agregar
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))
+                )}
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowAddAthleteModal(false)}>
+                Cerrar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>

@@ -115,13 +115,15 @@ interface CoachRetroalimentacionSystemProps {
   microcycle: Microcycle;
   onSaveFeedback: (feedback: CoachFeedback | Microcycle['microcycleFeedback'], type: 'session' | 'microcycle', id: string) => void;
   onOpenSessionFeedback?: (planned: PlannedSession, actual?: ActualSession) => void;
+  isEditMode?: boolean;
 }
 
 export function CoachRetroalimentacionSystem({
   athlete,
   microcycle,
   onSaveFeedback,
-  onOpenSessionFeedback
+  onOpenSessionFeedback,
+  isEditMode = false
 }: CoachRetroalimentacionSystemProps) {
   const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set());
   const [expandedInjuries, setExpandedInjuries] = useState<Record<string, boolean>>({});
@@ -129,7 +131,23 @@ export function CoachRetroalimentacionSystem({
   const [editingMicrocycleRetroalimentacion, setEditingMicrocycleRetroalimentacion] = useState(false);
   
   // Estados para formularios de retroalimentación
-  const [sessionRetroalimentaciones, setSessionRetroalimentaciones] = useState<{[sessionId: string]: Partial<CoachFeedback>}>({});
+  // Pre-cargar con datos existentes si estamos en modo edición
+  const [sessionRetroalimentaciones, setSessionRetroalimentaciones] = useState<{[sessionId: string]: Partial<CoachFeedback>}>(() => {
+    if (isEditMode) {
+      const preloadedData: {[sessionId: string]: Partial<CoachFeedback>} = {};
+      microcycle.sessions.forEach(session => {
+        if (session.coachFeedback) {
+          preloadedData[session.plan.id] = {
+            rating: session.coachFeedback.rating,
+            feedbackText: session.coachFeedback.feedbackText,
+            recommendations: session.coachFeedback.recommendations
+          };
+        }
+      });
+      return preloadedData;
+    }
+    return {};
+  });
   const [microcycleRetroalimentacionForm, setMicrocycleRetroalimentacionForm] = useState<Partial<Microcycle['microcycleFeedback']>>({
     overallRating: microcycle.microcycleFeedback?.overallRating || 'good',
     summary: microcycle.microcycleFeedback?.summary || '',
@@ -270,11 +288,11 @@ export function CoachRetroalimentacionSystem({
 
     onSaveFeedback(feedback, 'session', sessionId);
     setEditingSessionRetroalimentacion(null);
-    toast.success('Retroalimentación guardada exitosamente');
+    toast.success(isEditMode ? 'Retroalimentación actualizada exitosamente' : 'Retroalimentación guardada exitosamente');
   };
 
   const handleSaveMicrocycleRetroalimentacion = () => {
-    if (!microcycleRetroalimentacionForm?.summary?.trim()) {
+    if (!microcycleRetroalimentacionForm.summary?.trim()) {
       toast.error('Por favor, escribe un resumen antes de guardar');
       return;
     }
@@ -288,7 +306,7 @@ export function CoachRetroalimentacionSystem({
 
     onSaveFeedback(feedback, 'microcycle', microcycle.id);
     setEditingMicrocycleRetroalimentacion(false);
-    toast.success('Retroalimentación del microciclo guardada exitosamente');
+    toast.success(isEditMode ? 'Retroalimentación del microciclo actualizada exitosamente' : 'Retroalimentación del microciclo guardada exitosamente');
   };
 
   // Calcular estadísticas del microciclo
@@ -310,154 +328,73 @@ export function CoachRetroalimentacionSystem({
   return (
     <div className="space-y-6">
       {/* Header del microciclo con feedback general */}
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Calendar className="w-5 h-5" />
-                Semana {microcycle.weekNumber} - {athlete.name}
-              </CardTitle>
-              <CardDescription>
-                {formatDate(microcycle.startDate)} - {formatDate(microcycle.endDate)} • {microcycle.focus}
-                {athlete.sede && ` • ${athlete.sede}`}
-              </CardDescription>
+      <div className="mb-6">
+        <h2 className="mb-6">{athlete.name}</h2>
+
+        {/* Retroalimentación del microciclo */}
+        {editingMicrocycleRetroalimentacion && (
+          <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
+            <h4 className="font-medium flex items-center gap-2">
+              <MessageSquare className="w-4 h-4" />
+              Retroalimentación General del Microciclo
+            </h4>
+            
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+              {(['excellent', 'good', 'needs_improvement', 'concerning'] as const).map((rating) => (
+                <Button
+                  key={rating}
+                  variant={microcycleRetroalimentacionForm.overallRating === rating ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, overallRating: rating }))}
+                  className={microcycleRetroalimentacionForm.overallRating === rating ? getRatingColor(rating) : ''}
+                >
+                  {getRatingIcon(rating)}
+                  <span className="ml-2">{getRatingLabel(rating)}</span>
+                </Button>
+              ))}
             </div>
-            <div className="flex items-center gap-3">
-              {microcycle.microcycleFeedback && (
-                <Badge className={`${getRatingColor(microcycle.microcycleFeedback.overallRating)} flex items-center gap-1`}>
-                  {getRatingIcon(microcycle.microcycleFeedback.overallRating)}
-                  {getRatingLabel(microcycle.microcycleFeedback.overallRating)}
-                </Badge>
-              )}
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Resumen del Rendimiento</label>
+              <Textarea
+                placeholder="Evalúa el rendimiento general del atleta durante esta semana..."
+                value={microcycleRetroalimentacionForm.summary || ''}
+                onChange={(e) => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, summary: e.target.value }))}
+                rows={3}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">Recomendaciones para la Próxima Semana</label>
+              <Textarea
+                placeholder="Ajustes sugeridos, aspectos a mejorar, felicitaciones..."
+                value={microcycleRetroalimentacionForm.recommendations || ''}
+                onChange={(e) => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, recommendations: e.target.value }))}
+                rows={2}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2">
               <Button
-                variant={editingMicrocycleRetroalimentacion ? "secondary" : "outline"}
+                variant="outline"
                 size="sm"
-                onClick={() => setEditingMicrocycleRetroalimentacion(!editingMicrocycleRetroalimentacion)}
+                onClick={() => setEditingMicrocycleRetroalimentacion(false)}
               >
-                <Edit3 className="w-4 h-4 mr-2" />
-                {microcycle.microcycleFeedback ? 'Editar Retroalimentación' : 'Agregar Retroalimentación'}
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveMicrocycleRetroalimentacion}
+              >
+                <Send className="w-4 h-4 mr-2" />
+                Guardar Retroalimentación
               </Button>
             </div>
           </div>
-        </CardHeader>
-        <CardContent>
-          {/* Estadísticas generales */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-primary">{weekStats.completedSessions}/{weekStats.totalSessions}</div>
-              <div className="text-sm text-muted-foreground">Sesiones Completadas</div>
-            </div>
-            
-            <div className="text-center">
-              <div className="flex items-center justify-center gap-1">
-                <span className="text-2xl font-bold text-primary">{weekStats.totalActual.toFixed(1)}</span>
-                <span className="text-sm text-muted-foreground">/ {weekStats.totalPlanned.toFixed(1)} km</span>
-              </div>
-              <div className="text-sm text-muted-foreground">Volumen Semanal</div>
-              <Progress value={weekCompliance} className="mt-1 h-2" />
-              <div className={`text-xs mt-1 ${getComplianceColor(weekCompliance)}`}>
-                {weekCompliance.toFixed(0)}% cumplimiento
-              </div>
-            </div>
-            
-            <div className="text-center">
-              <div className="text-2xl font-bold text-primary">{weekStats.avgRPE.toFixed(1)}</div>
-              <div className="text-sm text-muted-foreground">RPE Promedio</div>
-            </div>
-            
-            <div className="text-center">
-              <Badge className={`text-base px-3 py-1 ${getRatingColor(microcycle.microcycleFeedback?.overallRating || 'good')}`}>
-                {microcycle.microcycleFeedback ? getRatingLabel(microcycle.microcycleFeedback.overallRating) : 'Sin Evaluar'}
-              </Badge>
-              <div className="text-sm text-muted-foreground">Evaluación</div>
-            </div>
-          </div>
+        )}
 
-          {/* Retroalimentación del microciclo */}
-          {editingMicrocycleRetroalimentacion && (
-            <div className="border rounded-lg p-4 bg-muted/30 space-y-4">
-              <h4 className="font-medium flex items-center gap-2">
-                <MessageSquare className="w-4 h-4" />
-                Retroalimentación General del Microciclo
-              </h4>
-              
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
-                {(['excellent', 'good', 'needs_improvement', 'concerning'] as const).map((rating) => (
-                  <Button
-                    key={rating}
-                    variant={microcycleRetroalimentacionForm?.overallRating === rating ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, overallRating: rating }))}
-                    className={microcycleRetroalimentacionForm?.overallRating === rating ? getRatingColor(rating) : ''}
-                  >
-                    {getRatingIcon(rating)}
-                    <span className="ml-2">{getRatingLabel(rating)}</span>
-                  </Button>
-                ))}
-              </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2">Resumen del Rendimiento</label>
-                <Textarea
-                  placeholder="Evalúa el rendimiento general del atleta durante esta semana..."
-                  value={microcycleRetroalimentacionForm?.summary || ''}
-                  onChange={(e) => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, summary: e.target.value }))}
-                  rows={3}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">Recomendaciones para la Próxima Semana</label>
-                <Textarea
-                  placeholder="Ajustes sugeridos, aspectos a mejorar, felicitaciones..."
-                  value={microcycleRetroalimentacionForm?.recommendations || ''}
-                  onChange={(e) => setMicrocycleRetroalimentacionForm(prev => ({ ...prev, recommendations: e.target.value }))}
-                  rows={2}
-                />
-              </div>
-
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setEditingMicrocycleRetroalimentacion(false)}
-                >
-                  Cancelar
-                </Button>
-                <Button
-                  size="sm"
-                  onClick={handleSaveMicrocycleRetroalimentacion}
-                >
-                  <Send className="w-4 h-4 mr-2" />
-                  Guardar Retroalimentación
-                </Button>
-              </div>
-            </div>
-          )}
-
-          {/* Mostrar retroalimentación existente del microciclo */}
-          {microcycle.microcycleFeedback && !editingMicrocycleRetroalimentacion && (
-            <div className="border rounded-lg p-4 bg-muted/20">
-              <h4 className="font-medium flex items-center gap-2 mb-3">
-                <MessageSquare className="w-4 h-4" />
-                Retroalimentación del Entrenador
-              </h4>
-              <div className="space-y-2">
-                <p className="text-sm">{microcycle.microcycleFeedback.summary}</p>
-                {microcycle.microcycleFeedback.recommendations && (
-                  <div className="p-2 bg-accent/10 rounded text-sm">
-                    <strong>Recomendaciones:</strong> {microcycle.microcycleFeedback.recommendations}
-                  </div>
-                )}
-                <div className="text-xs text-muted-foreground">
-                  Evaluación realizada el {new Date(microcycle.microcycleFeedback.createdAt).toLocaleDateString('es-ES')}
-                </div>
-              </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      </div>
 
       {/* Lista de sesiones con retroalimentación individual */}
       <div className="space-y-4">
@@ -475,7 +412,6 @@ export function CoachRetroalimentacionSystem({
                   <div className="w-full">
                     <div className="flex items-center justify-between p-6 hover:bg-muted/30 transition-colors">
                       <div className="flex items-center gap-3">
-                        {getSessionStatusIcon(session.plan, session.actual)}
                         <div className="text-left">
                           <div className="flex items-center gap-2">
                             <p className="font-medium">{session.plan.name}</p>
@@ -498,103 +434,35 @@ export function CoachRetroalimentacionSystem({
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-6">
-                        {session.actual ? (
+                      <div className="flex items-center justify-end gap-2">
+                        {editingSessionRetroalimentacion !== session.plan.id && (
                           <>
-                            {/* Resumen compacto */}
-                            <div className="text-center">
-                              <div className="text-xs text-muted-foreground mb-1">Distancia</div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-primary">
-                                  {session.actual.actualDistance.toFixed(1)}
-                                </span>
-                                <span className="text-muted-foreground">/ {session.plan.plannedDistance.toFixed(1)} km</span>
-                                {getVariationIndicator(session.plan.plannedDistance, session.actual.actualDistance)}
-                              </div>
-                            </div>
-
-                            <div className="text-center">
-                              <div className="text-xs text-muted-foreground mb-1">RPE</div>
-                              <div className="flex items-center gap-2">
-                                <span className="font-bold text-primary">{session.actual.perceivedExertion}</span>
-                                <span className="text-muted-foreground">/ {session.plan.plannedIntensity}</span>
-                              </div>
-                            </div>
-
-                            {session.actual.heartRate && (
-                              <div className="text-center">
-                                <div className="text-xs text-muted-foreground mb-1">FC Promedio</div>
-                                <div className="flex items-center gap-2 justify-center">
-                                  <Heart className="w-3 h-3 text-red-500" />
-                                  <span className="font-bold text-primary">{session.actual.heartRate.avg}</span>
-                                  <span className="text-muted-foreground text-xs">bpm</span>
-                                </div>
-                              </div>
-                            )}
-
-                            {/* Indicador de molestias */}
-                            {session.actual.injuries && session.actual.injuries.length > 0 && (
-                              <div className="text-center">
-                                <div className="text-xs text-muted-foreground mb-1">Molestias</div>
-                                <div className="flex items-center gap-1 justify-center">
-                                  <ShieldAlert className="w-3 h-3 text-red-500" />
-                                  <span className="font-bold text-red-600">{session.actual.injuries.length}</span>
-                                  <span className="text-red-500 text-xs">
-                                    {session.actual.injuries.some(i => i.severity >= 7) ? 'Alta' :
-                                     session.actual.injuries.some(i => i.severity >= 4) ? 'Media' : 'Baja'}
-                                  </span>
-                                </div>
-                              </div>
-                            )}
-                          </>
-                        ) : (
-                          <div className="text-center py-2">
-                            <XCircle className="w-6 h-6 text-red-500 mx-auto mb-1" />
-                            <div className="text-sm font-medium text-red-600">No realizada</div>
-                          </div>
-                        )}
-
-                        <div className="flex items-center gap-2">
-                          {!isEditingRetroalimentacion && (
-                            <div className="flex items-center gap-2">
+                            {existingFeedback ? (
                               <Button
                                 onClick={() => {
                                   if (onOpenSessionFeedback) {
                                     onOpenSessionFeedback(session.plan, session.actual || undefined);
-                                  } else {
-                                    setEditingSessionRetroalimentacion(session.plan.id);
-                                    if (!sessionRetroalimentaciones[session.plan.id] && existingFeedback) {
-                                      setSessionRetroalimentaciones(prev => ({
-                                        ...prev,
-                                        [session.plan.id]: {
-                                          rating: existingFeedback.rating,
-                                          feedbackText: existingFeedback.feedbackText,
-                                          recommendations: existingFeedback.recommendations
-                                        }
-                                      }));
-                                    }
                                   }
                                 }}
                                 size="sm"
                                 variant="outline"
                               >
-                                <MessageSquare className="w-4 h-4 mr-1" />
-                                {existingFeedback ? 'Editar' : 'Retroalimentación'}
+                                <Eye className="w-4 h-4 mr-1" />
+                                Ver Retroalimentación
                               </Button>
-                            </div>
-                          )}
-                          
-                          <CollapsibleTrigger 
-                            className="flex items-center p-2 hover:bg-muted/50 rounded transition-colors"
-                            onClick={() => toggleSessionExpansion(session.plan.id)}
-                          >
-                            {isExpanded ? (
-                              <ChevronUp className="w-4 h-4" />
                             ) : (
-                              <ChevronDown className="w-4 h-4" />
+                              <Button
+                                onClick={() => setEditingSessionRetroalimentacion(session.plan.id)}
+                                size="sm"
+                                variant="default"
+                                className="bg-accent hover:bg-accent/90"
+                              >
+                                <MessageSquare className="w-4 h-4 mr-1" />
+                                Añadir Retroalimentación
+                              </Button>
                             )}
-                          </CollapsibleTrigger>
-                        </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -603,8 +471,14 @@ export function CoachRetroalimentacionSystem({
                     <div className="px-6 pb-6 border-t bg-muted/20">
                       <div className="pt-4 space-y-4">
                         
+                        {/* Identificación del atleta */}
+                        <div className="flex items-center gap-2 pb-2 border-b border-muted">
+                          <span className="text-sm text-muted-foreground">Atleta:</span>
+                          <span className="font-medium text-primary">{athlete.name}</span>
+                        </div>
+                        
                         {/* Formulario de retroalimentación de sesión */}
-                        {isEditingRetroalimentacion && (
+                        {editingSessionRetroalimentacion === session.plan.id && (
                           <div className="border rounded-lg p-4 bg-background space-y-4">
                             <h5 className="font-medium flex items-center gap-2">
                               <MessageSquare className="w-4 h-4" />
@@ -666,16 +540,35 @@ export function CoachRetroalimentacionSystem({
                         )}
 
                         {/* Mostrar feedback existente */}
-                        {existingFeedback && !isEditingRetroalimentacion && (
+                        {session.coachFeedback && editingSessionRetroalimentacion !== session.plan.id && (
                           <div className="border rounded-lg p-4 bg-primary/5">
-                            <h5 className="font-medium flex items-center gap-2 mb-2">
-                              {getRatingIcon(existingFeedback.rating)}
-                              Feedback del Entrenador - {getRatingLabel(existingFeedback.rating)}
-                            </h5>
-                            <p className="text-sm mb-2">{existingFeedback.feedbackText}</p>
-                            {existingFeedback.recommendations && (
+                            <div className="flex items-start justify-between mb-2">
+                              <h5 className="font-medium flex items-center gap-2">
+                                {getRatingIcon(session.coachFeedback.rating)}
+                                Feedback del Entrenador - {getRatingLabel(session.coachFeedback.rating)}
+                              </h5>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => {
+                                  // Cargar datos existentes en el formulario
+                                  handleSessionRetroalimentacionChange(session.plan.id, 'rating', session.coachFeedback!.rating);
+                                  handleSessionRetroalimentacionChange(session.plan.id, 'feedbackText', session.coachFeedback!.feedbackText);
+                                  if (session.coachFeedback!.recommendations) {
+                                    handleSessionRetroalimentacionChange(session.plan.id, 'recommendations', session.coachFeedback!.recommendations);
+                                  }
+                                  setEditingSessionRetroalimentacion(session.plan.id);
+                                }}
+                                className="h-auto py-1 px-2"
+                              >
+                                <Edit3 className="w-4 h-4 mr-1" />
+                                Editar
+                              </Button>
+                            </div>
+                            <p className="text-sm mb-2">{session.coachFeedback.feedbackText}</p>
+                            {session.coachFeedback.recommendations && (
                               <div className="p-2 bg-accent/10 rounded text-sm">
-                                <strong>Recomendaciones:</strong> {existingFeedback.recommendations}
+                                <strong>Recomendaciones:</strong> {session.coachFeedback.recommendations}
                               </div>
                             )}
                           </div>

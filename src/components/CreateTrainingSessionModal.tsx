@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -7,13 +7,13 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
-import { X, Save, Plus, Users, Clock, Target, Zap, Play, Pause, Copy, Lightbulb, UserCheck, FileText, Timer, Edit, Check, Search } from 'lucide-react';
+import { Save, Users, Clock, Target, FileText, Check, Search, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
 import { AthleteIntervalBuilder } from './AthleteIntervalBuilder';
+import { SeriesBuilder } from './SeriesBuilder';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { TrainingInterval } from './utils/athleteIntervalUtils';
 
 interface Athlete {
   id: string;
@@ -29,29 +29,53 @@ interface Group {
   athleteIds: string[];
 }
 
+interface TrainingInterval {
+  id: string;
+  type: 'interval' | 'continuous' | 'recovery';
+  repetitions: number;
+  distance: number;
+  targetTime?: string;
+  recoveryTime: string;
+  paceType: 'fixed' | 'vo2max_percentage';
+  pace?: number;
+  vo2maxPercentage?: number;
+  description?: string;
+  intensity?: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  trainingMode?: 'distance' | 'time';
+  duration?: string;
+  targetSpeed?: string;
+}
+
+interface IntervalInSeries {
+  id: string;
+  trainingMode: 'distance' | 'time';
+  repetitions: number;
+  distance?: number;
+  duration?: string;
+  targetSpeed: string;
+  description?: string;
+  intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+}
+
+interface SeriesSet {
+  id: string;
+  name: string;
+  repetitions: number;
+  intervals: IntervalInSeries[];
+  recoveryBetweenSets: string;
+}
+
 interface TrainingSession {
   id: string;
   date: string;
   name: string;
   description?: string;
   category: 'training' | 'prep_competition' | 'main_competition';
-  athletes: string[]; // IDs de atletas
+  athletes: string[];
   intervals: TrainingInterval[];
-  volume?: string;
-  intensity?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-interface SessionTemplate {
-  id: string;
-  name: string;
-  category: 'training' | 'prep_competition' | 'main_competition';
-  description: string;
-  intervals: Omit<TrainingInterval, 'id'>[];
-  volume?: string;
-  intensity?: string;
 }
 
 interface TrainingTemplate {
@@ -59,38 +83,14 @@ interface TrainingTemplate {
   name: string;
   description: string;
   type: 'Continuo' | 'Intervalos' | 'Tempo' | 'Fartlek' | 'Recuperación' | 'Cuestas' | 'Series';
-  category: 'Resistencia' | 'Velocidad' | 'Fuerza' | 'Recuperación' | 'Técnica';
+  category: 'training' | 'prep_competition' | 'main_competition';
   duration: number;
   distance?: number;
   targetPace?: string;
   targetHR?: string;
-  intervals: Array<{
-    id: string;
-    type: 'work' | 'rest';
-    duration: number;
-    durationUnit: 'time' | 'distance';
-    pace: string;
-    intensity: string;
-    description: string;
-    distance?: number;
-  }>;
-  warmUp?: {
-    duration: number;
-    pace: string;
-    description: string;
-  };
-  coolDown?: {
-    duration: number;
-    pace: string;
-    description: string;
-  };
+  intervals: TrainingInterval[];
   notes: string;
   difficulty: 1 | 2 | 3 | 4 | 5;
-  isFavorite: boolean;
-  createdAt: string;
-  lastUsed?: string;
-  useCount: number;
-  tags: string[];
 }
 
 interface CreateTrainingSessionModalProps {
@@ -100,8 +100,6 @@ interface CreateTrainingSessionModalProps {
   athletes: Athlete[];
   selectedDate: string;
   existingSessions?: TrainingSession[];
-  availableTemplates?: TrainingTemplate[];
-  userType?: 'athlete' | 'coach';
 }
 
 export function CreateTrainingSessionModal({ 
@@ -110,124 +108,179 @@ export function CreateTrainingSessionModal({
   onSubmit, 
   athletes, 
   selectedDate,
-  existingSessions = [],
-  availableTemplates = [],
-  userType = 'coach'
+  existingSessions = []
 }: CreateTrainingSessionModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     category: 'training' as 'training' | 'prep_competition' | 'main_competition',
-    volume: '',
-    intensity: '',
-    notes: '',
-    intensityPercentage: ''
+    notes: ''
   });
   
   const [selectedAthletes, setSelectedAthletes] = useState<string[]>([]);
   const [intervals, setIntervals] = useState<TrainingInterval[]>([]);
-  const [activeTab, setActiveTab] = useState('basic');
-  const [templateFilter, setTemplateFilter] = useState<string>('all');
+  const [series, setSeries] = useState<SeriesSet[]>([]);
+  const [seriesBuilderMode, setSeriesBuilderMode] = useState<'simple' | 'advanced'>('simple');
+  const [currentStep, setCurrentStep] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
-  const [showTemplates, setShowTemplates] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
+  const [showTemplateSelector, setShowTemplateSelector] = useState(false);
 
-  // Plantillas predefinidas
-  const sessionTemplates: SessionTemplate[] = [
+  // Mock de plantillas disponibles
+  const mockTemplates: TrainingTemplate[] = [
     {
-      id: 'speed-400m',
-      name: '8 x 400m',
+      id: 'template1',
+      name: 'Intervalos 5x1000m',
+      description: 'Sesión de velocidad con 5 repeticiones de 1000m a ritmo de 5K',
+      type: 'Intervalos',
       category: 'training',
-      description: 'Series de 400 metros para mejorar velocidad',
-      volume: '6-8 km',
-      intensity: 'Alta',
+      duration: 45,
+      distance: 8,
+      targetPace: '4:30',
+      targetHR: '85-90% FCMax',
       intervals: [
         {
+          id: 'int1',
           type: 'interval',
-          repetitions: 8,
-          distance: 400,
-          targetTime: '1:30',
+          repetitions: 5,
+          distance: 1,
           recoveryTime: '2:00',
-          paceType: 'vo2max_percentage',
-          vo2maxPercentage: 95,
-          description: '400m a ritmo de 1500m',
-          intensity: 'hard'
+          paceType: 'fixed',
+          pace: 4.5,
+          description: '1000m a ritmo de 5K',
+          intensity: 'hard',
+          trainingMode: 'distance'
         }
-      ]
+      ],
+      notes: 'Calentamiento: 15 min trote suave\nEnfriamiento: 10 min trote muy suave',
+      difficulty: 4
     },
     {
-      id: 'tempo-2000m',
-      name: '4 x 2000m',
+      id: 'template2',
+      name: 'Rodaje Continuo 60min',
+      description: 'Carrera continua a ritmo aeróbico moderado',
+      type: 'Continuo',
       category: 'training',
-      description: 'Series de 2000 metros a ritmo tempo',
-      volume: '10-12 km',
-      intensity: 'Moderada-Alta',
+      duration: 60,
+      distance: 12,
+      targetPace: '5:00',
+      targetHR: '70-75% FCMax',
       intervals: [
         {
-          type: 'interval',
-          repetitions: 4,
-          distance: 2000,
-          targetTime: '7:30',
-          recoveryTime: '3:00',
-          paceType: 'vo2max_percentage',
-          vo2maxPercentage: 85,
-          description: '2000m a ritmo de 10K',
-          intensity: 'moderate'
-        }
-      ]
-    },
-    {
-      id: 'vo2max-1000m',
-      name: '6 x 1000m',
-      category: 'training',
-      description: 'Intervalos de 1000m para VO₂ máximo',
-      volume: '8-10 km',
-      intensity: 'Muy Alta',
-      intervals: [
-        {
-          type: 'interval',
-          repetitions: 6,
-          distance: 1000,
-          targetTime: '3:45',
-          recoveryTime: '2:30',
-          paceType: 'vo2max_percentage',
-          vo2maxPercentage: 95,
-          description: '1000m a ritmo de 3K-5K',
-          intensity: 'very_hard'
-        }
-      ]
-    },
-    {
-      id: 'long-continuous',
-      name: 'Carrera Continua Larga',
-      category: 'training',
-      description: 'Entrenamiento aeróbico continuo',
-      volume: '15-20 km',
-      intensity: 'Baja',
-      intervals: [
-        {
+          id: 'int1',
           type: 'continuous',
           repetitions: 1,
-          distance: 15000,
+          distance: 12,
           recoveryTime: '0:00',
-          paceType: 'vo2max_percentage',
-          vo2maxPercentage: 70,
-          description: 'Ritmo aeróbico confortable',
-          intensity: 'easy'
+          paceType: 'fixed',
+          pace: 5.0,
+          description: 'Carrera continua aeróbica',
+          intensity: 'moderate',
+          trainingMode: 'distance'
         }
-      ]
+      ],
+      notes: 'Mantener ritmo constante, conversación posible',
+      difficulty: 2
+    },
+    {
+      id: 'template3',
+      name: 'Fartlek 40min',
+      description: 'Juego de velocidades variadas en terreno mixto',
+      type: 'Fartlek',
+      category: 'training',
+      duration: 40,
+      distance: 8,
+      targetPace: '4:45-5:30',
+      targetHR: '75-90% FCMax',
+      intervals: [
+        {
+          id: 'int1',
+          type: 'interval',
+          repetitions: 6,
+          distance: 0.4,
+          recoveryTime: '1:30',
+          paceType: 'fixed',
+          pace: 4.45,
+          description: '400m rápido',
+          intensity: 'very_hard',
+          trainingMode: 'distance'
+        },
+        {
+          id: 'int2',
+          type: 'recovery',
+          repetitions: 6,
+          distance: 0.6,
+          recoveryTime: '0:00',
+          paceType: 'fixed',
+          pace: 5.5,
+          description: '600m recuperación activa',
+          intensity: 'easy',
+          trainingMode: 'distance'
+        }
+      ],
+      notes: 'Alternar intensidades según sensaciones. Terreno mixto preferentemente.',
+      difficulty: 3
+    },
+    {
+      id: 'template4',
+      name: 'Series 10x400m',
+      description: 'Trabajo de velocidad en pista con series cortas',
+      type: 'Series',
+      category: 'training',
+      duration: 50,
+      distance: 7,
+      targetPace: '4:00',
+      targetHR: '90-95% FCMax',
+      intervals: [
+        {
+          id: 'int1',
+          type: 'interval',
+          repetitions: 10,
+          distance: 0.4,
+          recoveryTime: '1:30',
+          paceType: 'fixed',
+          pace: 4.0,
+          description: '400m a ritmo de 1500m',
+          intensity: 'very_hard',
+          trainingMode: 'distance'
+        }
+      ],
+      notes: 'Calentamiento: 20 min + técnica de carrera\nRecuperación entre series: trote muy suave',
+      difficulty: 5
+    },
+    {
+      id: 'template5',
+      name: 'Tempo Run 30min',
+      description: 'Carrera a ritmo de umbral anaeróbico',
+      type: 'Tempo',
+      category: 'training',
+      duration: 30,
+      distance: 6.5,
+      targetPace: '4:37',
+      targetHR: '80-85% FCMax',
+      intervals: [
+        {
+          id: 'int1',
+          type: 'continuous',
+          repetitions: 1,
+          distance: 6.5,
+          recoveryTime: '0:00',
+          paceType: 'fixed',
+          pace: 4.62,
+          description: 'Ritmo de umbral sostenido',
+          intensity: 'hard',
+          trainingMode: 'distance'
+        }
+      ],
+      notes: 'Esfuerzo controlado, ritmo "cómodamente duro"',
+      difficulty: 3
     }
   ];
 
   const categoryLabels = {
     'training': 'Entrenamiento',
-    'prep_competition': 'Competencia\nPreparatoria',
+    'prep_competition': 'Competencia Preparatoria',
     'main_competition': 'Competencia Principal'
-  };
-
-  const categoryColors = {
-    'training': 'bg-blue-100 text-blue-800',
-    'prep_competition': 'bg-orange-100 text-orange-800',
-    'main_competition': 'bg-red-100 text-red-800'
   };
 
   // Obtener grupos únicos de los atletas
@@ -268,11 +321,14 @@ export function CreateTrainingSessionModal({
     })
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    
+  const handleSubmit = () => {
     if (!formData.name.trim()) {
       toast.error('El nombre de la sesión es requerido');
+      return;
+    }
+
+    if (intervals.length === 0 && series.length === 0) {
+      toast.error('Debe agregar al menos una serie o intervalo');
       return;
     }
 
@@ -281,10 +337,53 @@ export function CreateTrainingSessionModal({
       return;
     }
 
-    if (intervals.length === 0) {
-      toast.error('Debe agregar al menos un intervalo');
-      return;
-    }
+    // Convertir series a intervalos si es necesario
+    let allIntervals = [...intervals];
+    
+    // Agregar los intervalos de las series complejas
+    series.forEach(s => {
+      // Repetir toda la serie s.repetitions veces
+      for (let seriesRep = 0; seriesRep < s.repetitions; seriesRep++) {
+        // Agregar cada intervalo de la serie
+        s.intervals.forEach((interval, intervalIndex) => {
+          const convertedInterval: TrainingInterval = {
+            id: `${s.id}-rep${seriesRep}-${interval.id}`,
+            type: 'interval',
+            repetitions: interval.repetitions,
+            distance: interval.trainingMode === 'distance' ? (interval.distance || 0) : 0,
+            targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+            recoveryTime: '0:00', // La recuperación entre intervalos dentro de la serie
+            paceType: 'fixed',
+            pace: parseSpeed(interval.targetSpeed),
+            description: `${s.name} (Serie ${seriesRep + 1}/${s.repetitions}) - ${interval.description || ''}`,
+            intensity: interval.intensity,
+            trainingMode: interval.trainingMode,
+            duration: interval.trainingMode === 'time' ? interval.duration : undefined,
+            targetSpeed: interval.targetSpeed
+          };
+          allIntervals.push(convertedInterval);
+        });
+        
+        // Agregar intervalo de recuperación entre series (excepto después de la última)
+        if (seriesRep < s.repetitions - 1) {
+          const recoveryInterval: TrainingInterval = {
+            id: `${s.id}-recovery-${seriesRep}`,
+            type: 'recovery',
+            repetitions: 1,
+            distance: 0,
+            recoveryTime: s.recoveryBetweenSets,
+            paceType: 'fixed',
+            pace: 0,
+            description: `Recuperación entre series de ${s.name}`,
+            intensity: 'easy',
+            trainingMode: 'time',
+            duration: s.recoveryBetweenSets,
+            targetSpeed: '0:00'
+          };
+          allIntervals.push(recoveryInterval);
+        }
+      }
+    });
 
     const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
       date: selectedDate,
@@ -292,9 +391,7 @@ export function CreateTrainingSessionModal({
       description: formData.description.trim(),
       category: formData.category,
       athletes: selectedAthletes,
-      intervals: intervals,
-      volume: formData.volume.trim() || undefined,
-      intensity: formData.intensity.trim() || undefined,
+      intervals: allIntervals,
       notes: formData.notes.trim() || undefined
     };
 
@@ -302,90 +399,30 @@ export function CreateTrainingSessionModal({
     handleReset();
   };
 
+  const parseSpeed = (speedStr: string): number => {
+    // Convertir "4:30" a 4.5 minutos
+    const parts = speedStr.split(':');
+    if (parts.length === 2) {
+      const mins = parseInt(parts[0]);
+      const secs = parseInt(parts[1]);
+      return mins + (secs / 60);
+    }
+    return parseFloat(speedStr) || 0;
+  };
+
   const handleReset = () => {
     setFormData({
       name: '',
       description: '',
       category: 'training',
-      volume: '',
-      intensity: '',
-      notes: '',
-      intensityPercentage: ''
+      notes: ''
     });
     setSelectedAthletes([]);
     setIntervals([]);
-    setActiveTab('basic');
-    setTemplateFilter('all');
+    setSeries([]);
+    setSeriesBuilderMode('simple');
+    setCurrentStep(1);
     setSearchTerm('');
-    setShowTemplates(false);
-  };
-
-  const handleApplyAdvancedTemplate = (template: TrainingTemplate) => {
-    const mappedCategory = template.category === 'Velocidad' ? 'prep_competition' : 'training';
-    
-    setFormData(prev => ({
-      ...prev,
-      name: template.name,
-      description: template.description,
-      category: mappedCategory,
-      volume: `${template.distance || 0} km`,
-      intensity: getDifficultyLabel(template.difficulty),
-      notes: template.notes
-    }));
-
-    // Convertir intervalos de plantilla avanzada a formato de sesión
-    const convertedIntervals: TrainingInterval[] = template.intervals.map((interval, index) => {
-      // Manejar el parsing del pace de manera segura
-      let paceValue = 4.0; // valor por defecto
-      if (interval.pace && interval.pace.includes(':')) {
-        try {
-          const [mins, secs] = interval.pace.split(':').map(Number);
-          paceValue = mins + (secs || 0) / 60;
-        } catch (e) {
-          console.warn('Error parsing pace:', interval.pace);
-        }
-      }
-
-      return {
-        id: `advanced-template-${Date.now()}-${index}`,
-        type: interval.type === 'work' ? 'interval' : 'recovery',
-        repetitions: 1,
-        distance: interval.distance || (interval.durationUnit === 'distance' ? interval.duration * 1000 : 400),
-        targetTime: interval.pace || '4:00',
-        recoveryTime: interval.type === 'rest' ? '2:00' : '0:00',
-        paceType: 'fixed',
-        pace: paceValue,
-        description: interval.description,
-        intensity: 'moderate'
-      };
-    });
-
-    setIntervals(convertedIntervals);
-    toast.success(`Plantilla avanzada \"${template.name}\" aplicada`);
-    setActiveTab('intervals');
-    setShowTemplates(false);
-  };
-
-  const getDifficultyColor = (difficulty: number) => {
-    switch (difficulty) {
-      case 1: return 'bg-green-100 text-green-800 border-green-200';
-      case 2: return 'bg-blue-100 text-blue-800 border-blue-200';
-      case 3: return 'bg-yellow-100 text-yellow-800 border-yellow-200';
-      case 4: return 'bg-orange-100 text-orange-800 border-orange-200';
-      case 5: return 'bg-red-100 text-red-800 border-red-200';
-      default: return 'bg-gray-100 text-gray-800 border-gray-200';
-    }
-  };
-
-  const getDifficultyLabel = (difficulty: number) => {
-    switch (difficulty) {
-      case 1: return 'Muy Fácil';
-      case 2: return 'Fácil';
-      case 3: return 'Moderado';
-      case 4: return 'Difícil';
-      case 5: return 'Muy Difícil';
-      default: return 'Sin definir';
-    }
   };
 
   const handleClose = () => {
@@ -408,10 +445,8 @@ export function CreateTrainingSessionModal({
     const allGroupAthletesSelected = group.athleteIds.every(id => selectedAthletes.includes(id));
     
     if (allGroupAthletesSelected) {
-      // Deseleccionar todos los atletas del grupo
       setSelectedAthletes(prev => prev.filter(id => !group.athleteIds.includes(id)));
     } else {
-      // Seleccionar todos los atletas del grupo
       setSelectedAthletes(prev => {
         const newSelection = [...prev];
         group.athleteIds.forEach(id => {
@@ -432,26 +467,38 @@ export function CreateTrainingSessionModal({
     setSelectedAthletes(allSelected ? [] : athletes.map(a => a.id));
   };
 
-  const handleApplyTemplate = (template: SessionTemplate) => {
-    setFormData(prev => ({
-      ...prev,
+  const handleUseTemplate = () => {
+    if (!selectedTemplateId) {
+      toast.error('Por favor selecciona una plantilla');
+      return;
+    }
+
+    const template = mockTemplates.find(t => t.id === selectedTemplateId);
+    if (!template) {
+      toast.error('Plantilla no encontrada');
+      return;
+    }
+
+    // Llenar todos los campos excepto atletas
+    setFormData({
       name: template.name,
       description: template.description,
       category: template.category,
-      volume: template.volume || '5-10 km',
-      intensity: template.intensity || 'Moderada'
-    }));
+      notes: template.notes
+    });
 
-    // Crear intervalos con IDs únicos
-    const templateIntervals: TrainingInterval[] = template.intervals.map((interval, index) => ({
+    // Copiar intervalos de la plantilla
+    setIntervals(template.intervals.map(interval => ({
       ...interval,
-      id: `template-${Date.now()}-${index}`
-    }));
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    })));
 
-    setIntervals(templateIntervals);
-    toast.success(`Plantilla \"${template.name}\" aplicada`);
-    setActiveTab('intervals');
-    setShowTemplates(false);
+    // Cerrar selector de plantilla
+    setShowTemplateSelector(false);
+    
+    toast.success('Plantilla aplicada correctamente', {
+      description: 'Todos los campos excepto atletas han sido llenados. Revisa y ajusta según necesites.'
+    });
   };
 
   const handleAddInterval = (interval: Omit<TrainingInterval, 'id'>) => {
@@ -474,6 +521,24 @@ export function CreateTrainingSessionModal({
     setIntervals(prev => prev.filter(interval => interval.id !== intervalId));
   };
 
+  const handleAddSeries = (newSeries: Omit<SeriesSet, 'id'>) => {
+    const seriesWithId: SeriesSet = {
+      ...newSeries,
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
+    };
+    setSeries(prev => [...prev, seriesWithId]);
+  };
+
+  const handleUpdateSeries = (seriesId: string, updatedSeries: Omit<SeriesSet, 'id'>) => {
+    setSeries(prev => prev.map(s => 
+      s.id === seriesId ? { ...updatedSeries, id: seriesId } : s
+    ));
+  };
+
+  const handleDeleteSeries = (seriesId: string) => {
+    setSeries(prev => prev.filter(s => s.id !== seriesId));
+  };
+
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-ES', {
       weekday: 'long',
@@ -483,14 +548,44 @@ export function CreateTrainingSessionModal({
     });
   };
 
-  const isFormValid = formData.name.trim() && selectedAthletes.length > 0 && intervals.length > 0 && athletes && athletes.length > 0;
+  const canGoToNextStep = () => {
+    if (currentStep === 1) {
+      return formData.name.trim() !== '';
+    }
+    if (currentStep === 2) {
+      return intervals.length > 0 || series.length > 0;
+    }
+    return true;
+  };
+
+  const handleNextStep = () => {
+    if (currentStep === 1 && !formData.name.trim()) {
+      toast.error('Por favor completa el nombre de la sesión');
+      return;
+    }
+    if (currentStep === 2 && intervals.length === 0 && series.length === 0) {
+      toast.error('Debes agregar al menos una serie o intervalo');
+      return;
+    }
+    if (currentStep < 3) {
+      setCurrentStep(currentStep + 1);
+    }
+  };
+
+  const handlePreviousStep = () => {
+    if (currentStep > 1) {
+      setCurrentStep(currentStep - 1);
+    }
+  };
+
+  const isFormValid = formData.name.trim() && selectedAthletes.length > 0 && (intervals.length > 0 || series.length > 0) && athletes && athletes.length > 0;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle className="flex items-center">
-            <Target className="w-5 h-5 mr-2 text-accent" />
+          <DialogTitle className="flex items-center gap-2">
+            <Target className="w-5 h-5 text-accent" />
             Nueva Sesión de Entrenamiento
           </DialogTitle>
           <DialogDescription>
@@ -503,41 +598,197 @@ export function CreateTrainingSessionModal({
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="basic" className="flex items-center gap-2">
-              <FileText className="w-4 h-4" />
-              Básico
-            </TabsTrigger>
-            <TabsTrigger value="athletes" className="flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              Atletas
-            </TabsTrigger>
-            <TabsTrigger value="intervals" className="flex items-center gap-2">
-              <Clock className="w-4 h-4" />
-              Intervalos
-            </TabsTrigger>
-          </TabsList>
+        {/* Indicador de Pasos */}
+        <div className="relative mb-8">
+          <div className="flex items-center justify-between">
+            {[
+              { step: 1, label: 'Datos Básicos', icon: FileText },
+              { step: 2, label: 'Series', icon: Clock },
+              { step: 3, label: 'Atletas', icon: Users }
+            ].map(({ step, label, icon: Icon }, index) => (
+              <React.Fragment key={step}>
+                <div className="flex flex-col items-center flex-1">
+                  <div 
+                    className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
+                      currentStep === step 
+                        ? 'bg-accent border-accent text-white' 
+                        : currentStep > step
+                        ? 'bg-green-500 border-green-500 text-white'
+                        : 'bg-white border-gray-300 text-gray-400'
+                    }`}
+                  >
+                    {currentStep > step ? (
+                      <Check className="w-6 h-6" />
+                    ) : (
+                      <Icon className="w-6 h-6" />
+                    )}
+                  </div>
+                  <span className={`mt-2 text-sm ${currentStep === step ? 'font-medium text-accent' : 'text-muted-foreground'}`}>
+                    {label}
+                  </span>
+                </div>
+                {index < 2 && (
+                  <div className={`flex-1 h-0.5 mx-4 mb-8 transition-all ${
+                    currentStep > step + 1 ? 'bg-green-500' : currentStep > step ? 'bg-accent' : 'bg-gray-300'
+                  }`} />
+                )}
+              </React.Fragment>
+            ))}
+          </div>
+        </div>
 
-          <TabsContent value="basic" className="space-y-6">
-            <div>
-              <h3 className="text-lg font-medium mb-4">Información Básica</h3>
-              <p className="text-sm text-muted-foreground mb-6">
-                Completa los datos básicos de la sesión de entrenamiento
-              </p>
-            </div>
+        {/* Contenido del Paso Actual */}
+        <div className="min-h-[400px]">
+          {/* Paso 1: Datos Básicos */}
+          {currentStep === 1 && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-medium mb-2">Paso 1: Información Básica</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Completa los datos fundamentales de la sesión de entrenamiento
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowTemplateSelector(!showTemplateSelector)}
+                  className="flex items-center gap-2"
+                >
+                  <FileText className="w-4 h-4" />
+                  {showTemplateSelector ? 'Crear Manual' : 'Usar Plantilla'}
+                </Button>
+              </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <Separator />
+
+              {/* Selector de Plantilla */}
+              {showTemplateSelector && (
+                <Card className="border-accent/20 bg-accent/5">
+                  <CardHeader>
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-accent" />
+                      Seleccionar Plantilla
+                    </CardTitle>
+                    <CardDescription>
+                      Elige una plantilla para llenar automáticamente todos los campos (excepto atletas)
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div>
+                      <Label htmlFor="template-select">Plantilla</Label>
+                      <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
+                        <SelectTrigger id="template-select" className="mt-1">
+                          <SelectValue placeholder="Selecciona una plantilla..." />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {mockTemplates.map(template => (
+                            <SelectItem key={template.id} value={template.id}>
+                              {template.name} - {template.type}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {selectedTemplateId && (() => {
+                      const selectedTemplate = mockTemplates.find(t => t.id === selectedTemplateId);
+                      if (!selectedTemplate) return null;
+                      
+                      return (
+                        <div className="p-4 bg-white border border-accent/20 rounded-lg space-y-2">
+                          <div className="flex items-start justify-between">
+                            <div className="flex-1">
+                              <h4 className="font-medium">{selectedTemplate.name}</h4>
+                              <p className="text-sm text-muted-foreground mt-1">
+                                {selectedTemplate.description}
+                              </p>
+                            </div>
+                            <Badge variant="secondary">{selectedTemplate.type}</Badge>
+                          </div>
+                          <div className="grid grid-cols-3 gap-3 text-sm">
+                            <div>
+                              <span className="text-muted-foreground">Duración:</span>
+                              <span className="ml-1 font-medium">{selectedTemplate.duration} min</span>
+                            </div>
+                            {selectedTemplate.distance && (
+                              <div>
+                                <span className="text-muted-foreground">Distancia:</span>
+                                <span className="ml-1 font-medium">{selectedTemplate.distance} km</span>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-muted-foreground">Dificultad:</span>
+                              <span className="ml-1 font-medium">
+                                {'⭐'.repeat(selectedTemplate.difficulty)}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="text-sm">
+                            <span className="text-muted-foreground">Series:</span>
+                            <span className="ml-1 font-medium">{selectedTemplate.intervals.length}</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={handleUseTemplate}
+                        disabled={!selectedTemplateId}
+                        className="flex-1"
+                      >
+                        <Check className="w-4 h-4 mr-2" />
+                        Usar Plantilla Completa
+                      </Button>
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setShowTemplateSelector(false);
+                          setSelectedTemplateId('');
+                        }}
+                      >
+                        Cancelar
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
               <div className="space-y-4">
                 <div>
-                  <Label htmlFor="session-name">Nombre de la Sesión</Label>
+                  <Label htmlFor="session-name">
+                    Nombre de la Sesión <span className="text-red-500">*</span>
+                  </Label>
                   <Input
                     id="session-name"
                     value={formData.name}
                     onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                     placeholder="Ej: Intervalos 8x400m"
                     required
+                    className="mt-1"
                   />
+                </div>
+
+                <div>
+                  <Label htmlFor="session-category">
+                    Categoría <span className="text-red-500">*</span>
+                  </Label>
+                  <Select 
+                    value={formData.category} 
+                    onValueChange={(value: 'training' | 'prep_competition' | 'main_competition') => 
+                      setFormData(prev => ({ ...prev, category: value }))
+                    }
+                  >
+                    <SelectTrigger className="mt-1">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="training">Entrenamiento</SelectItem>
+                      <SelectItem value="prep_competition">Competencia Preparatoria</SelectItem>
+                      <SelectItem value="main_competition">Competencia Principal</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
 
                 <div>
@@ -548,47 +799,7 @@ export function CreateTrainingSessionModal({
                     onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                     placeholder="Descripción detallada del entrenamiento..."
                     rows={3}
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="session-category">Categoría</Label>
-                  <Select 
-                    value={formData.category} 
-                    onValueChange={(value: 'training' | 'prep_competition' | 'main_competition') => 
-                      setFormData(prev => ({ ...prev, category: value }))
-                    }
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="training">Entrenamiento</SelectItem>
-                      <SelectItem value="prep_competition">Competencia Preparatoria</SelectItem>
-                      <SelectItem value="main_competition">Competencia Principal</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="session-volume">Volumen Estimado</Label>
-                  <Input
-                    id="session-volume"
-                    value={formData.volume}
-                    onChange={(e) => setFormData(prev => ({ ...prev, volume: e.target.value }))}
-                    placeholder="Ej: 8-10 km"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="session-intensity">Intensidad</Label>
-                  <Input
-                    id="session-intensity"
-                    value={formData.intensity}
-                    onChange={(e) => setFormData(prev => ({ ...prev, intensity: e.target.value }))}
-                    placeholder="Ej: Alta, Moderada, Baja"
+                    className="mt-1"
                   />
                 </div>
 
@@ -599,393 +810,276 @@ export function CreateTrainingSessionModal({
                     value={formData.notes}
                     onChange={(e) => setFormData(prev => ({ ...prev, notes: e.target.value }))}
                     placeholder="Instrucciones especiales, consideraciones..."
-                    rows={3}
+                    rows={4}
+                    className="mt-1"
                   />
                 </div>
               </div>
-            </div>
 
-            <Separator />
-
-            {/* Sección de plantillas dentro de básico */}
-            <div className="space-y-4">
-              {!showTemplates ? (
-                <div className="text-center py-8 bg-muted/30 rounded-lg border-2 border-dashed border-muted-foreground/25">
-                  <Lightbulb className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
-                  <h4 className="font-medium mb-2">¿Necesitas inspiración?</h4>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Comienza rápidamente con plantillas predefinidas o personalizadas
-                  </p>
-                  <Button 
-                    onClick={() => setShowTemplates(true)}
-                    variant="outline"
-                    className="mx-auto"
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    O puedes usar plantillas
-                  </Button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-medium">Plantillas Disponibles</h4>
-                      <p className="text-sm text-muted-foreground">
-                        Selecciona una plantilla para comenzar
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Select value={templateFilter} onValueChange={setTemplateFilter}>
-                        <SelectTrigger className="w-40">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="all">Todas</SelectItem>
-                          <SelectItem value="predefined">Predefinidas</SelectItem>
-                          <SelectItem value="custom">Personalizadas</SelectItem>
-                          <SelectItem value="favorites">Favoritas</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <Button 
-                        onClick={() => setShowTemplates(false)}
-                        variant="ghost" 
-                        size="sm"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </div>
+              {!formData.name.trim() && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">Nombre requerido</p>
+                    <p className="text-sm text-amber-700">Debes completar el nombre de la sesión para continuar</p>
                   </div>
-
-                  {/* Plantillas personalizadas */}
-                  {availableTemplates.length > 0 && (templateFilter === 'all' || templateFilter === 'custom' || templateFilter === 'favorites') && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center">
-                          <FileText className="w-5 h-5 mr-2" />
-                          Plantillas Personalizadas
-                        </CardTitle>
-                        <CardDescription>
-                          Plantillas creadas por ti y tu equipo
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {availableTemplates
-                            .filter(template => {
-                              if (templateFilter === 'favorites') return template.isFavorite;
-                              return true;
-                            })
-                            .map(template => (
-                              <Card key={template.id} className="cursor-pointer hover:shadow-md transition-shadow border-2 border-primary/10">
-                                <CardContent className="p-4">
-                                  <div className="flex items-start justify-between mb-3">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2 mb-1">
-                                        <h4 className="font-medium">{template.name}</h4>
-                                        {template.isFavorite && (
-                                          <Badge variant="outline" className="text-yellow-600 bg-yellow-50 border-yellow-200">
-                                            ⭐ Favorita
-                                          </Badge>
-                                        )}
-                                      </div>
-                                      <p className="text-sm text-muted-foreground">
-                                        {template.description}
-                                      </p>
-                                    </div>
-                                  </div>
-                                  
-                                  <div className="flex items-center gap-2 mb-3">
-                                    <Badge variant="outline" className="text-xs">{template.type}</Badge>
-                                    <Badge variant="outline" className="text-xs">{template.category}</Badge>
-                                    <Badge className={`text-xs ${getDifficultyColor(template.difficulty)}`}>
-                                      {getDifficultyLabel(template.difficulty)}
-                                    </Badge>
-                                  </div>
-                                  
-                                  <div className="space-y-2 text-sm text-muted-foreground mb-3">
-                                    <div className="flex items-center justify-between">
-                                      <span className="flex items-center">
-                                        <Clock className="w-3 h-3 mr-1" />
-                                        {template.duration} min
-                                      </span>
-                                      {template.distance && (
-                                        <span className="flex items-center">
-                                          <Target className="w-3 h-3 mr-1" />
-                                          {template.distance} km
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="flex items-center">
-                                      <Zap className="w-3 h-3 mr-1" />
-                                      {template.intervals.length} intervalos
-                                    </div>
-                                  </div>
-
-                                  <Button 
-                                    onClick={() => handleApplyAdvancedTemplate(template)}
-                                    className="w-full"
-                                    variant="outline"
-                                  >
-                                    <Copy className="w-4 h-4 mr-2" />
-                                    Usar Plantilla
-                                  </Button>
-                                </CardContent>
-                              </Card>
-                            ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
-
-                  {/* Plantillas predefinidas */}
-                  {(templateFilter === 'all' || templateFilter === 'predefined') && (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle className="flex items-center">
-                          <Lightbulb className="w-5 h-5 mr-2" />
-                          Plantillas Predefinidas
-                        </CardTitle>
-                        <CardDescription>
-                          Plantillas básicas para diferentes tipos de entrenamiento
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {sessionTemplates.map(template => (
-                            <Card key={template.id} className="cursor-pointer hover:shadow-md transition-shadow">
-                              <CardContent className="p-4">
-                                <div className="flex items-start justify-between mb-3">
-                                  <div>
-                                    <h4 className="font-medium">{template.name}</h4>
-                                    <p className="text-sm text-muted-foreground mt-1">
-                                      {template.description}
-                                    </p>
-                                  </div>
-                                  <Badge className={`${categoryColors[template.category]} whitespace-pre-line text-center text-xs`}>
-                                    {categoryLabels[template.category]}
-                                  </Badge>
-                                </div>
-                                
-                                <div className="space-y-2 text-sm text-muted-foreground">
-                                  <div className="flex items-center">
-                                    <Target className="w-3 h-3 mr-1" />
-                                    {template.intervals.length} intervalos
-                                  </div>
-                                  {template.volume && (
-                                    <div className="flex items-center">
-                                      <Target className="w-3 h-3 mr-1" />
-                                      Volumen: {template.volume}
-                                    </div>
-                                  )}
-                                  {template.intensity && (
-                                    <div className="flex items-center">
-                                      <Zap className="w-3 h-3 mr-1" />
-                                      Intensidad: {template.intensity}
-                                    </div>
-                                  )}
-                                </div>
-
-                                <Button 
-                                  onClick={() => handleApplyTemplate(template)}
-                                  className="w-full mt-4"
-                                  variant="outline"
-                                >
-                                  <Copy className="w-4 h-4 mr-2" />
-                                  Usar Plantilla
-                                </Button>
-                              </CardContent>
-                            </Card>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  )}
                 </div>
               )}
             </div>
-          </TabsContent>
+          )}
 
-          <TabsContent value="athletes" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium">Selección de Atletas</h3>
-                <p className="text-sm text-muted-foreground">
-                  Selecciona los atletas que participarán en esta sesión
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button 
-                  onClick={handleSelectAllAthletes}
-                  variant="outline"
-                  size="sm"
-                >
-                  {selectedAthletes.length === athletes?.length ? 'Deseleccionar Todos' : 'Seleccionar Todos'}
-                </Button>
-                <Badge variant="secondary">
-                  {selectedAthletes.length} seleccionado{selectedAthletes.length !== 1 ? 's' : ''}
-                </Badge>
-              </div>
-            </div>
-
-            {/* Barra de búsqueda */}
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar atletas o sedes..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-
-            {/* Lista de grupos */}
-            {filteredGroups.length > 0 && (
-              <div className="space-y-4">
-                <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Por Sedes</h4>
-                {filteredGroups.map(group => {
-                  const groupAthletes = athletes?.filter(athlete => athlete.groupId === group.id) || [];
-                  const allGroupAthletesSelected = group.athleteIds.every(id => selectedAthletes.includes(id));
-                  const someGroupAthletesSelected = group.athleteIds.some(id => selectedAthletes.includes(id));
-
-                  return (
-                    <Card key={group.id} className="overflow-hidden">
-                      <CardHeader 
-                        className="cursor-pointer hover:bg-muted/50 transition-colors py-3"
-                        onClick={() => handleGroupToggle(group.id)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-3">
-                            <Checkbox
-                              checked={
-                                allGroupAthletesSelected
-                                  ? true
-                                  : (someGroupAthletesSelected ? 'indeterminate' : false)
-                              }
-                              onCheckedChange={() => handleGroupToggle(group.id)}
-                            />
-                            <div>
-                              <CardTitle className="text-base">{group.name}</CardTitle>
-                              <CardDescription>
-                                {groupAthletes.length} atleta{groupAthletes.length !== 1 ? 's' : ''}
-                              </CardDescription>
-                            </div>
-                          </div>
-                          <Badge variant={allGroupAthletesSelected ? 'default' : 'outline'}>
-                            {group.athleteIds.filter(id => selectedAthletes.includes(id)).length}/{group.athleteIds.length}
-                          </Badge>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="pt-0">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                          {groupAthletes.map(athlete => (
-                            <div
-                              key={athlete.id}
-                              className="flex items-center gap-3 p-2 rounded hover:bg-muted/30 cursor-pointer"
-                              onClick={() => handleAthleteToggle(athlete.id)}
-                            >
-                              <Checkbox 
-                                checked={selectedAthletes.includes(athlete.id)}
-                                onCheckedChange={() => handleAthleteToggle(athlete.id)}
-                              />
-                              <div className="flex-1">
-                                <p className="text-sm font-medium">{athlete.name}</p>
-                                {athlete.vo2max && (
-                                  <p className="text-xs text-muted-foreground">
-                                    VO₂ Max: {athlete.vo2max} ml/kg/min
-                                  </p>
-                                )}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </CardContent>
-                    </Card>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Lista individual de atletas filtrados */}
-            {filteredAthletes.length > 0 && searchTerm && (
-              <div className="space-y-4">
-                <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Resultados de Búsqueda</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {filteredAthletes.map(athlete => (
-                    <Card 
-                      key={athlete.id}
-                      className={`cursor-pointer hover:shadow-md transition-all ${
-                        selectedAthletes.includes(athlete.id) ? 'ring-2 ring-primary bg-primary/5' : ''
-                      }`}
-                      onClick={() => handleAthleteToggle(athlete.id)}
-                    >
-                      <CardContent className="p-4">
-                        <div className="flex items-center gap-3">
-                          <Checkbox 
-                            checked={selectedAthletes.includes(athlete.id)}
-                            onChange={() => handleAthleteToggle(athlete.id)}
-                          />
-                          <div className="flex-1">
-                            <h4 className="font-medium">{athlete.name}</h4>
-                            <p className="text-sm text-muted-foreground">{athlete.groupName}</p>
-                            {athlete.vo2max && (
-                              <p className="text-xs text-muted-foreground mt-1">
-                                VO₂ Max: {athlete.vo2max} ml/kg/min
-                              </p>
-                            )}
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
+          {/* Paso 2: Series/Intervalos */}
+          {currentStep === 2 && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-medium mb-2">Paso 2: Constructor de Series</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Define los intervalos y estructura de la sesión
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-sm">
+                    {intervals.length} intervalo{intervals.length !== 1 ? 's' : ''}
+                  </Badge>
+                  <Badge variant="outline" className="text-sm">
+                    {series.length} serie{series.length !== 1 ? 's' : ''} compleja{series.length !== 1 ? 's' : ''}
+                  </Badge>
                 </div>
               </div>
-            )}
 
-            {/* Estado vacío */}
-            {(!athletes || athletes.length === 0) && (
-              <div className="text-center py-12">
-                <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
-                <h3 className="font-medium mb-2">No hay atletas disponibles</h3>
-                <p className="text-muted-foreground">
-                  Primero debes agregar atletas a tu sede para poder crear sesiones.
-                </p>
-              </div>
-            )}
-          </TabsContent>
+              <Separator />
 
-          <TabsContent value="intervals" className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-medium">Constructor de Intervalos</h3>
-                <p className="text-sm text-muted-foreground">
-                  Define los intervalos y estructura de la sesión
-                </p>
-              </div>
-              <Badge variant="secondary">
-                {intervals.length} intervalo{intervals.length !== 1 ? 's' : ''}
-              </Badge>
+              <Tabs value={seriesBuilderMode} onValueChange={(value: any) => setSeriesBuilderMode(value)}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="simple">Intervalos Simples</TabsTrigger>
+                  <TabsTrigger value="advanced">Series con Intervalos</TabsTrigger>
+                </TabsList>
+                
+                <TabsContent value="simple" className="mt-6">
+                  <div className="space-y-4">
+                    <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <p className="text-sm text-blue-900">
+                        <strong>Intervalos Simples:</strong> Agrega series homogéneas como "10x400m" o "5x1000m"
+                      </p>
+                    </div>
+                    
+                    <AthleteIntervalBuilder
+                      intervals={intervals}
+                      onAddInterval={handleAddInterval}
+                      onUpdateInterval={handleUpdateInterval}
+                      onDeleteInterval={handleDeleteInterval}
+                      athletes={athletes?.filter(athlete => selectedAthletes.includes(athlete.id)) || []}
+                    />
+                  </div>
+                </TabsContent>
+                
+                <TabsContent value="advanced" className="mt-6">
+                  <div className="space-y-4">
+                    <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                      <p className="text-sm text-purple-900">
+                        <strong>Series con Intervalos:</strong> Crea series heterogéneas como "3 series de 4x200m + 6x500m"
+                      </p>
+                      <p className="text-xs text-purple-700 mt-1">
+                        Cada serie puede contener múltiples tipos de intervalos que se repiten juntos
+                      </p>
+                    </div>
+                    
+                    <SeriesBuilder
+                      series={series}
+                      onAddSeries={handleAddSeries}
+                      onUpdateSeries={handleUpdateSeries}
+                      onDeleteSeries={handleDeleteSeries}
+                    />
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              {intervals.length === 0 && series.length === 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-4">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">Series o intervalos requeridos</p>
+                    <p className="text-sm text-amber-700">Debes agregar al menos un intervalo simple o una serie con intervalos para continuar</p>
+                  </div>
+                </div>
+              )}
             </div>
+          )}
 
-            <AthleteIntervalBuilder
-              intervals={intervals}
-              onAddInterval={handleAddInterval}
-              onUpdateInterval={handleUpdateInterval}
-              onDeleteInterval={handleDeleteInterval}
-              //athletes={athletes?.filter(athlete => selectedAthletes.includes(athlete.id)) || []}
-            />
-          </TabsContent>
-        </Tabs>
+          {/* Paso 3: Atletas */}
+          {currentStep === 3 && (
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-lg font-medium mb-2">Paso 3: Selección de Atletas</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Elige los atletas que realizarán esta sesión
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={handleSelectAllAthletes}
+                    variant="outline"
+                    size="sm"
+                  >
+                    {selectedAthletes.length === athletes.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                  </Button>
+                  <Badge variant="secondary">
+                    {selectedAthletes.length} seleccionado{selectedAthletes.length !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
+              </div>
 
-        <DialogFooter className="flex items-center justify-between">
+              <Separator />
+
+              {/* Barra de búsqueda */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar atletas o sedes..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+
+              {/* Lista de grupos */}
+              {filteredGroups.length > 0 && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Por Sedes</h4>
+                  {filteredGroups.map(group => {
+                    const groupAthletes = athletes?.filter(athlete => athlete.groupId === group.id) || [];
+                    const allGroupAthletesSelected = group.athleteIds.every(id => selectedAthletes.includes(id));
+                    const someGroupAthletesSelected = group.athleteIds.some(id => selectedAthletes.includes(id));
+
+                    return (
+                      <Card key={group.id} className="overflow-hidden">
+                        <CardHeader 
+                          className="cursor-pointer hover:bg-muted/50 transition-colors py-3"
+                          onClick={() => handleGroupToggle(group.id)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <Checkbox 
+                                checked={allGroupAthletesSelected}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = someGroupAthletesSelected && !allGroupAthletesSelected;
+                                }}
+                                onChange={() => handleGroupToggle(group.id)}
+                              />
+                              <div>
+                                <CardTitle className="text-base">{group.name}</CardTitle>
+                                <CardDescription>
+                                  {groupAthletes.length} atleta{groupAthletes.length !== 1 ? 's' : ''}
+                                </CardDescription>
+                              </div>
+                            </div>
+                            <Badge variant={allGroupAthletesSelected ? 'default' : 'outline'}>
+                              {group.athleteIds.filter(id => selectedAthletes.includes(id)).length}/{group.athleteIds.length}
+                            </Badge>
+                          </div>
+                        </CardHeader>
+                        <CardContent className="pt-0">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {groupAthletes.map(athlete => (
+                              <div
+                                key={athlete.id}
+                                className="flex items-center gap-3 p-2 rounded hover:bg-muted/30 cursor-pointer"
+                                onClick={() => handleAthleteToggle(athlete.id)}
+                              >
+                                <Checkbox 
+                                  checked={selectedAthletes.includes(athlete.id)}
+                                  onChange={() => handleAthleteToggle(athlete.id)}
+                                />
+                                <div className="flex-1">
+                                  <p className="text-sm font-medium">{athlete.name}</p>
+                                  {athlete.vo2max && (
+                                    <p className="text-xs text-muted-foreground">
+                                      VO₂ Max: {athlete.vo2max} ml/kg/min
+                                    </p>
+                                  )}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Lista individual de atletas filtrados */}
+              {filteredAthletes.length > 0 && searchTerm && (
+                <div className="space-y-4">
+                  <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Resultados de Búsqueda</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {filteredAthletes.map(athlete => (
+                      <Card 
+                        key={athlete.id}
+                        className={`cursor-pointer hover:shadow-md transition-all ${
+                          selectedAthletes.includes(athlete.id) ? 'ring-2 ring-primary bg-primary/5' : ''
+                        }`}
+                        onClick={() => handleAthleteToggle(athlete.id)}
+                      >
+                        <CardContent className="p-4">
+                          <div className="flex items-center gap-3">
+                            <Checkbox 
+                              checked={selectedAthletes.includes(athlete.id)}
+                              onChange={() => handleAthleteToggle(athlete.id)}
+                            />
+                            <div className="flex-1">
+                              <p className="font-medium">{athlete.name}</p>
+                              <p className="text-sm text-muted-foreground">{athlete.groupName}</p>
+                              {athlete.vo2max && (
+                                <p className="text-xs text-muted-foreground mt-1">
+                                  VO₂ Max: {athlete.vo2max} ml/kg/min
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {(!athletes || athletes.length === 0) && (
+                <div className="text-center py-12">
+                  <Users className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-medium mb-2">No hay atletas disponibles</h3>
+                  <p className="text-muted-foreground">
+                    Primero debes agregar atletas a tu sede para poder crear sesiones.
+                  </p>
+                </div>
+              )}
+
+              {selectedAthletes.length === 0 && athletes.length > 0 && (
+                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-4">
+                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-sm font-medium text-amber-900">Atletas requeridos</p>
+                    <p className="text-sm text-amber-700">Debes seleccionar al menos un atleta para crear la sesión</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Botones de Navegación */}
+        <div className="flex items-center justify-between pt-6 border-t">
           <div className="flex items-center gap-2">
             {intervals.length > 0 && (
               <Badge variant="outline" className="text-xs">
-                {intervals.length} intervalo{intervals.length !== 1 ? 's' : ''} definido{intervals.length !== 1 ? 's' : ''}
+                {intervals.length} serie{intervals.length !== 1 ? 's' : ''}
               </Badge>
             )}
             {selectedAthletes.length > 0 && (
               <Badge variant="outline" className="text-xs">
-                {selectedAthletes.length} atleta{selectedAthletes.length !== 1 ? 's' : ''} seleccionado{selectedAthletes.length !== 1 ? 's' : ''}
+                {selectedAthletes.length} atleta{selectedAthletes.length !== 1 ? 's' : ''}
               </Badge>
             )}
           </div>
@@ -994,17 +1088,41 @@ export function CreateTrainingSessionModal({
             <Button type="button" variant="outline" onClick={handleClose}>
               Cancelar
             </Button>
-            <Button 
-              type="submit" 
-              onClick={handleSubmit}
-              disabled={!isFormValid}
-              className="min-w-32"
-            >
-              <Save className="w-4 h-4 mr-2" />
-              Crear Sesión
-            </Button>
+            
+            {currentStep > 1 && (
+              <Button 
+                type="button" 
+                variant="outline" 
+                onClick={handlePreviousStep}
+              >
+                <ChevronLeft className="w-4 h-4 mr-2" />
+                Anterior
+              </Button>
+            )}
+            
+            {currentStep < 3 ? (
+              <Button 
+                type="button" 
+                onClick={handleNextStep}
+                disabled={!canGoToNextStep()}
+                className="min-w-32"
+              >
+                Siguiente
+                <ChevronRight className="w-4 h-4 ml-2" />
+              </Button>
+            ) : (
+              <Button 
+                type="submit" 
+                onClick={handleSubmit}
+                disabled={!isFormValid}
+                className="min-w-32 bg-accent hover:bg-accent/90"
+              >
+                <Save className="w-4 h-4 mr-2" />
+                Crear Sesión
+              </Button>
+            )}
           </div>
-        </DialogFooter>
+        </div>
       </DialogContent>
     </Dialog>
   );

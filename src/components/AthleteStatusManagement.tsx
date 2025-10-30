@@ -73,9 +73,26 @@ const TREATMENT_TYPES = [
 ];
 
 export function AthleteStatusManagement() {
-  const [isActive, setIsActive] = useState(true);
-  const [currentInjury, setCurrentInjury] = useState<InjuryRecord | null>(null);
+  // Mock: Lesión activa por defecto para demostración
+  const mockCurrentInjury: InjuryRecord = {
+    id: '2',
+    type: 'Fascitis Plantar',
+    bodyZone: 'Pie Derecho',
+    description: 'Dolor en la planta del pie al levantarme y después de entrenamientos largos',
+    startDate: new Date('2025-01-20'),
+    estimatedEndDate: new Date('2025-02-20'),
+    severity: 'Moderada',
+    treatment: 'Fisioterapia',
+    status: 'Activa',
+    impactOnTraining: 'Moderado',
+    notes: 'Evitar entrenamientos de alto impacto. Realizar ejercicios de estiramiento.',
+    createdAt: new Date('2025-01-20')
+  };
+
+  const [isActive, setIsActive] = useState(false); // Inactivo por la lesión mock
+  const [currentInjury, setCurrentInjury] = useState<InjuryRecord | null>(mockCurrentInjury);
   const [injuryHistory, setInjuryHistory] = useState<InjuryRecord[]>([
+    mockCurrentInjury,
     {
       id: '1',
       type: 'Tendinitis',
@@ -239,6 +256,68 @@ export function AthleteStatusManagement() {
 
   return (
     <div className="space-y-6">
+      {/* Banner de Lesión Activa - PROMINENTE */}
+      {currentInjury && (
+        <div className="bg-gradient-to-r from-red-500 to-orange-500 text-white p-6 rounded-lg shadow-lg border-2 border-red-600">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex items-start gap-4 flex-1">
+              <div className="p-3 bg-white/20 rounded-lg backdrop-blur-sm">
+                <AlertTriangle className="w-8 h-8" />
+              </div>
+              <div className="flex-1">
+                <div className="flex items-center gap-2 mb-2">
+                  <h3 className="font-bold text-xl">Lesión Activa en Seguimiento</h3>
+                  <Badge className="bg-white text-red-600 hover:bg-white">
+                    {currentInjury.status}
+                  </Badge>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
+                  <div>
+                    <p className="text-red-100 text-sm">Tipo de Lesión</p>
+                    <p className="font-semibold text-lg">{currentInjury.type}</p>
+                  </div>
+                  <div>
+                    <p className="text-red-100 text-sm">Zona Afectada</p>
+                    <p className="font-semibold text-lg">{currentInjury.bodyZone}</p>
+                  </div>
+                  <div>
+                    <p className="text-red-100 text-sm">Impacto en Entrenamiento</p>
+                    <p className="font-semibold text-lg">{currentInjury.impactOnTraining}</p>
+                  </div>
+                </div>
+                <p className="text-red-50 text-sm mb-3">{currentInjury.description}</p>
+                <div className="bg-white/10 backdrop-blur-sm p-3 rounded-lg">
+                  <div className="flex justify-between text-sm mb-2">
+                    <span className="text-red-50">Progreso de Recuperación</span>
+                    <span className="font-semibold">{Math.round(calculateRecoveryProgress(currentInjury))}%</span>
+                  </div>
+                  <Progress 
+                    value={calculateRecoveryProgress(currentInjury)} 
+                    className="h-2 bg-white/20" 
+                  />
+                  <div className="flex justify-between text-xs mt-2 text-red-100">
+                    <span>Inicio: {currentInjury.startDate.toLocaleDateString('es-ES')}</span>
+                    <span>Estimado: {currentInjury.estimatedEndDate.toLocaleDateString('es-ES')}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                setPendingStatusChange(true);
+                setIsStatusChangeModalOpen(true);
+              }}
+              className="flex items-center gap-2 bg-white text-red-600 hover:bg-red-50"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Actualizar Estado
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Status Overview */}
       <Card>
         <CardHeader>

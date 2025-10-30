@@ -52,4 +52,8 @@ export interface TrainingInterval {
   vo2maxPercentage?: number;
   description?: string;
   intensity?: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  // Nuevos campos para soporte de modo distancia/tiempo
+  trainingMode?: 'distance' | 'time';
+  duration?: string;
+  targetSpeed?: string;
 }

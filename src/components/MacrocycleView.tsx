@@ -10,6 +10,7 @@ import { EditMicrocycleModal } from './EditMicrocycleModal';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
 import { PlanningCalendar } from './PlanningCalendar';
+import { Mesocycle, Microcycle } from './types/microcycleTypes';
 import { toast } from 'sonner';
 
 interface MacrocycleViewProps {
@@ -20,32 +21,13 @@ interface MacrocycleViewProps {
     name: string;
     groupName: string;
   }>;
+  onViewWeeklyPlanning?: (microcycle: Microcycle, mesocycle: Mesocycle) => void;
+  onViewWeeklyCalendar?: (microcycle: Microcycle, mesocycle: Mesocycle) => void;
 }
 
-interface Mesocycle {
-  id: string;
-  name: string;
-  startWeek: number;
-  endWeek: number;
-  objective: string;
-  microcycles: Microcycle[];
-  sessions: number;
-  totalVolume: number;
-  status: 'planning' | 'active' | 'completed';
-}
 
-interface Microcycle {
-  id: string;
-  weekNumber: number;
-  startDate: string;
-  endDate: string;
-  sessions: number;
-  volume: number;
-  intensity: 'baja' | 'media' | 'alta';
-  focus: string;
-}
 
-export function MacrocycleView({ planningId, year, athletes }: MacrocycleViewProps) {
+export function MacrocycleView({ planningId, year, athletes, onViewWeeklyPlanning, onViewWeeklyCalendar }: MacrocycleViewProps) {
   const [selectedYear, setSelectedYear] = useState(year);
   const [isCreateMesocycleModalOpen, setIsCreateMesocycleModalOpen] = useState(false);
   const [editingMesocycle, setEditingMesocycle] = useState<Mesocycle | null>(null);
@@ -709,10 +691,10 @@ export function MacrocycleView({ planningId, year, athletes }: MacrocycleViewPro
                                     variant="ghost"
                                     size="sm"
                                     className="h-7 w-7 p-0 hover:bg-accent/20"
-                                    title="Ver calendario"
+                                    title="Ver calendario de la semana"
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      handleViewMicrocycleCalendar(microcycle, mesocycle);
+                                      onViewWeeklyCalendar?.(microcycle, mesocycle);
                                     }}
                                   >
                                     <Calendar className="h-3 w-3" />

@@ -179,7 +179,7 @@ export function AthleteProfileModal({
           <TabsList className="grid w-full grid-cols-4 flex-shrink-0 mb-6">
             <TabsTrigger value="basic" className="flex items-center gap-2 px-4 py-2">
               <User className="w-4 h-4" />
-              <span className="hidden sm:inline">Información Básica</span>
+              <span className="hidden sm:inline">Información</span>
               <span className="sm:hidden">Básica</span>
             </TabsTrigger>
             <TabsTrigger value="physical" className="flex items-center gap-2 px-4 py-2">
@@ -189,12 +189,12 @@ export function AthleteProfileModal({
             </TabsTrigger>
             <TabsTrigger value="emergency" className="flex items-center gap-2 px-4 py-2">
               <Users className="w-4 h-4" />
-              <span className="hidden sm:inline">Contacto Emergencia</span>
+              <span className="hidden sm:inline">Contacto</span>
               <span className="sm:hidden">Emergencia</span>
             </TabsTrigger>
             <TabsTrigger value="experience" className="flex items-center gap-2 px-4 py-2">
               <Activity className="w-4 h-4" />
-              <span className="hidden sm:inline">Experiencia Atlética</span>
+              <span className="hidden sm:inline">Experiencia</span>
               <span className="sm:hidden">Experiencia</span>
             </TabsTrigger>
           </TabsList>
