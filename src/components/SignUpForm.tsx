@@ -8,6 +8,8 @@ import { Separator } from './ui/separator';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { ChevronLeft, ChevronRight, User, UserCheck, Activity, Shield, Phone } from 'lucide-react';
 import { SocialProfileCompletion } from './SocialProfileCompletion';
+import { AuthService } from '../services/authService';
+import { toast } from 'sonner';
 
 type UserType = 'athlete' | 'coach' | null;
 
@@ -52,6 +54,9 @@ interface CoachFormData {
   password: string;
   confirmPassword: string;
   realName: string;
+  birthDate: string; // Formato YYYY-MM-DD o Date
+  gender: string;
+  address: string;
   
   // Paso 2: información adicional
   location: string;
@@ -203,6 +208,9 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     password: '',
     confirmPassword: '',
     realName: '',
+    birthDate: '',
+    gender: '',
+    address: '',
     location: ''
   });
 
@@ -239,7 +247,9 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     setCoachFormData(prev => ({ ...prev, [field]: value }));
   };
 
-  const nextStep = () => {
+  const nextStep = (e?: React.MouseEvent<HTMLButtonElement>) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     const maxSteps = userType === 'athlete' ? 5 : 2;
     if (currentStep < maxSteps) setCurrentStep(currentStep + 1);
   };
@@ -277,7 +287,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     return expiryDate.toISOString().split('T')[0];
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     const currentFormData = userType === 'athlete' ? athleteFormData : coachFormData;
@@ -333,26 +343,62 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
       
       onSuccessfulSignUp(newUser);
     } else {
-      console.log('Registro de entrenador enviado:', coachFormData);
-      
-      // Simular registro exitoso
-      const newUser: User = {
-        id: Date.now().toString(),
-        username: currentFormData.username,
-        email: currentFormData.email,
-        userType: userType!,
-        realName: currentFormData.realName,
-        location: coachFormData.location,
-        preferences: {
-          theme: 'light',
-          units: 'metric',
-          notifications: {
-            email: true
-          }
+      // Validar que las contraseñas coincidan
+      if (coachFormData.password !== coachFormData.confirmPassword) {
+        toast.error('Las contraseñas no coinciden');
+        return;
+      }
+
+      // Validar campos requeridos
+      if (!coachFormData.birthDate || !coachFormData.gender || !coachFormData.address) {
+        toast.error('Por favor completa todos los campos requeridos');
+        return;
+      }
+
+      try {
+        // Convertir birthDate string a Date
+        // Si viene en formato YYYY-MM-DD, usarlo directamente
+        // Si viene en otro formato, intentar parsearlo
+        const birthDate = new Date(coachFormData.birthDate);
+        
+        if (isNaN(birthDate.getTime())) {
+          toast.error('Fecha de nacimiento inválida');
+          return;
         }
-      };
-      
-      onSuccessfulSignUp(newUser);
+
+        // Registrar el coach en el backend
+        await AuthService.createCoach({
+          username: coachFormData.username,
+          fullName: coachFormData.realName,
+          email: coachFormData.email,
+          password: coachFormData.password,
+          birthDate: birthDate,
+          address: coachFormData.address,
+          gender: coachFormData.gender as 'masculino' | 'femenino' | 'no-especifica'
+        });
+
+        // Crear el objeto User para el frontend
+        const newUser: User = {
+          id: Date.now().toString(),
+          username: coachFormData.username,
+          email: coachFormData.email,
+          userType: 'coach',
+          realName: coachFormData.realName,
+          location: coachFormData.location,
+          preferences: {
+            theme: 'light',
+            units: 'metric',
+            notifications: {
+              email: true
+            }
+          }
+        };
+        
+        onSuccessfulSignUp(newUser);
+      } catch (error) {
+        console.error('Error al registrar coach:', error);
+        // El error ya se maneja automáticamente en apiClient.ts
+      }
     }
   };
 
@@ -488,8 +534,21 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
 
 
       {/* Formulario */}
-      <form onSubmit={handleSubmit} className="space-y-6">
-        {/* Paso 1: Información de cuenta (igual para ambos tipos) */}
+      <form 
+        onSubmit={(e: React.FormEvent<HTMLFormElement>) => {
+          const maxSteps = userType === 'athlete' ? 5 : 2;
+          if (currentStep < maxSteps) {
+            e.preventDefault();
+            e.stopPropagation();
+            // No avanzar paso desde aquí, solo prevenir submit
+            // El botón "Siguiente" manejará el avance de paso
+          } else {
+            handleSubmit(e);
+          }
+        }} 
+        className="space-y-6"
+      >
+        {/* Paso 1: Información de cuenta */}
         {currentStep === 1 && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -549,6 +608,57 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
                 required
               />
             </div>
+
+            {/* Campos adicionales solo para Coach */}
+            {userType === 'coach' && (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="birthDate">Fecha de Nacimiento</Label>
+                  <Input
+                    id="birthDate"
+                    type="date"
+                    value={coachFormData.birthDate}
+                    onChange={(e) => updateCoachFormData('birthDate', e.target.value)}
+                    required
+                    max={new Date().toISOString().split('T')[0]} // No permitir fechas futuras
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="gender">Género</Label>
+                  <Select 
+                    value={coachFormData.gender} 
+                    onValueChange={(value: string) => updateCoachFormData('gender', value)}
+                    required
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Selecciona tu género" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {SEX_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="address">Dirección</Label>
+                  <Input
+                    id="address"
+                    placeholder="Calle, número, ciudad"
+                    value={coachFormData.address}
+                    onChange={(e) => updateCoachFormData('address', e.target.value)}
+                    required
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Dirección completa para contacto y ubicación
+                  </p>
+                </div>
+              </>
+            )}
           </div>
         )}
 
@@ -582,7 +692,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
               <Label htmlFor="sex">Sexo</Label>
               <Select 
                 value={athleteFormData.sex} 
-                onValueChange={(value) => updateAthleteFormData('sex', value)}
+                onValueChange={(value: string) => updateAthleteFormData('sex', value)}
                 required
               >
                 <SelectTrigger className="w-full">
@@ -634,7 +744,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
               <Label htmlFor="location">Ubicación</Label>
               <Select 
                 value={athleteFormData.location} 
-                onValueChange={(value) => updateAthleteFormData('location', value)}
+                onValueChange={(value: string) => updateAthleteFormData('location', value)}
                 required
               >
                 <SelectTrigger className="w-full">
@@ -788,7 +898,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
                 <Label htmlFor="emergencyContactRelationship">Relación</Label>
                 <Select 
                   value={athleteFormData.emergencyContactRelationship} 
-                  onValueChange={(value) => updateAthleteFormData('emergencyContactRelationship', value)}
+                  onValueChange={(value: string) => updateAthleteFormData('emergencyContactRelationship', value)}
                   required
                 >
                   <SelectTrigger className="w-full">
@@ -913,7 +1023,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
               <Label htmlFor="location">Ubicación</Label>
               <Select 
                 value={coachFormData.location} 
-                onValueChange={(value) => updateCoachFormData('location', value)}
+                onValueChange={(value: string) => updateCoachFormData('location', value)}
                 required
               >
                 <SelectTrigger className="w-full">
@@ -959,7 +1069,11 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
           {currentStep < maxSteps ? (
             <Button
               type="button"
-              onClick={nextStep}
+              onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
+                e.preventDefault();
+                e.stopPropagation();
+                nextStep(e);
+              }}
               className="flex items-center"
             >
               Siguiente

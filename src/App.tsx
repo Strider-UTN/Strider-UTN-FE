@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { SignUpForm } from './components/SignUpForm';
 import { SignInForm } from './components/SignInForm';
 import { SignUpVisual } from './components/SignUpVisual';
@@ -208,7 +209,7 @@ export default function App() {
   // Si el usuario está autenticado, mostrar dashboard
   if (isAuthenticated && currentUser) {
     return (
-      <>
+      <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID as string}>
         <Toaster />
         <Dashboard 
           onLogout={handleLogout} 
@@ -218,7 +219,7 @@ export default function App() {
           theme={currentUser.preferences?.theme || 'light'}
           onToggleTheme={handleToggleTheme}
         />
-      </>
+      </GoogleOAuthProvider>
     );
   }
 
@@ -238,7 +239,7 @@ export default function App() {
 
   // Si no está autenticado, mostrar pantallas de login/registro
   return (
-    <>
+    <GoogleOAuthProvider clientId={import.meta.env.VITE_GOOGLE_CLIENT_ID as string}>
       <Toaster />
       <div className="min-h-screen flex">
         {/* Panel izquierdo - Visual storytelling */}
@@ -247,7 +248,7 @@ export default function App() {
         </div>
         
         {/* Panel derecho - Formulario */}
-        <div className="w-full lg:w-1/2 xl:w-2/5 flex items-center justify-center p-6 lg:p-12 bg-background">
+        <div className="w-full lg:w-1/2 xl:w-2/5 flex items-center justificar-center p-6 lg:p-12 bg-background">
           <div className="w-full max-w-md">
             {/* Renderizar el formulario según el modo */}
             {authMode === 'signin' ? (
@@ -277,6 +278,6 @@ export default function App() {
           </div>
         </div>
       </div>
-    </>
+    </GoogleOAuthProvider>
   );
 }
