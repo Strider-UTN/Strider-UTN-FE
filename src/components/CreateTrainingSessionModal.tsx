@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,11 +9,16 @@ import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Separator } from './ui/separator';
-import { Save, Users, Clock, Target, FileText, Check, Search, ChevronLeft, ChevronRight, AlertCircle } from 'lucide-react';
+import { Save, Users, Clock, Target, FileText, Check, Search, ChevronLeft, ChevronRight, AlertCircle, Loader2 } from 'lucide-react';
 import { AthleteIntervalBuilder } from './AthleteIntervalBuilder';
 import { SeriesBuilder } from './SeriesBuilder';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
+import { TrainingTemplateService, TrainingTemplateResponseDto } from '../services/trainingTemplateService';
+import { TrainingSessionService, CreateTrainingSessionDto, CreateTrainingIntervalDto } from '../services/trainingSessionService';
+import { mapTrainingTypeFromBackend } from '../utils/trainingTypeMapper';
+import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
+import { mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
 
 interface Athlete {
   id: string;
@@ -100,6 +105,7 @@ interface CreateTrainingSessionModalProps {
   athletes: Athlete[];
   selectedDate: string;
   existingSessions?: TrainingSession[];
+  onSessionCreated?: () => void; // Callback opcional cuando se crea exitosamente en el backend
 }
 
 export function CreateTrainingSessionModal({ 
@@ -108,7 +114,8 @@ export function CreateTrainingSessionModal({
   onSubmit, 
   athletes, 
   selectedDate,
-  existingSessions = []
+  existingSessions = [],
+  onSessionCreated
 }: CreateTrainingSessionModalProps) {
   const [formData, setFormData] = useState({
     name: '',
@@ -125,157 +132,101 @@ export function CreateTrainingSessionModal({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  
+  // Estado para plantillas desde el backend
+  const [templates, setTemplates] = useState<TrainingTemplate[]>([]);
+  const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
+  const [templateSearchTerm, setTemplateSearchTerm] = useState('');
 
-  // Mock de plantillas disponibles
-  const mockTemplates: TrainingTemplate[] = [
-    {
-      id: 'template1',
-      name: 'Intervalos 5x1000m',
-      description: 'Sesión de velocidad con 5 repeticiones de 1000m a ritmo de 5K',
-      type: 'Intervalos',
-      category: 'training',
-      duration: 45,
-      distance: 8,
-      targetPace: '4:30',
-      targetHR: '85-90% FCMax',
-      intervals: [
-        {
-          id: 'int1',
-          type: 'interval',
-          repetitions: 5,
-          distance: 1,
-          recoveryTime: '2:00',
-          paceType: 'fixed',
-          pace: 4.5,
-          description: '1000m a ritmo de 5K',
-          intensity: 'hard',
-          trainingMode: 'distance'
-        }
-      ],
-      notes: 'Calentamiento: 15 min trote suave\nEnfriamiento: 10 min trote muy suave',
-      difficulty: 4
-    },
-    {
-      id: 'template2',
-      name: 'Rodaje Continuo 60min',
-      description: 'Carrera continua a ritmo aeróbico moderado',
-      type: 'Continuo',
-      category: 'training',
-      duration: 60,
-      distance: 12,
-      targetPace: '5:00',
-      targetHR: '70-75% FCMax',
-      intervals: [
-        {
-          id: 'int1',
-          type: 'continuous',
-          repetitions: 1,
-          distance: 12,
-          recoveryTime: '0:00',
-          paceType: 'fixed',
-          pace: 5.0,
-          description: 'Carrera continua aeróbica',
-          intensity: 'moderate',
-          trainingMode: 'distance'
-        }
-      ],
-      notes: 'Mantener ritmo constante, conversación posible',
-      difficulty: 2
-    },
-    {
-      id: 'template3',
-      name: 'Fartlek 40min',
-      description: 'Juego de velocidades variadas en terreno mixto',
-      type: 'Fartlek',
-      category: 'training',
-      duration: 40,
-      distance: 8,
-      targetPace: '4:45-5:30',
-      targetHR: '75-90% FCMax',
-      intervals: [
-        {
-          id: 'int1',
-          type: 'interval',
-          repetitions: 6,
-          distance: 0.4,
-          recoveryTime: '1:30',
-          paceType: 'fixed',
-          pace: 4.45,
-          description: '400m rápido',
-          intensity: 'very_hard',
-          trainingMode: 'distance'
-        },
-        {
-          id: 'int2',
-          type: 'recovery',
-          repetitions: 6,
-          distance: 0.6,
-          recoveryTime: '0:00',
-          paceType: 'fixed',
-          pace: 5.5,
-          description: '600m recuperación activa',
-          intensity: 'easy',
-          trainingMode: 'distance'
-        }
-      ],
-      notes: 'Alternar intensidades según sensaciones. Terreno mixto preferentemente.',
-      difficulty: 3
-    },
-    {
-      id: 'template4',
-      name: 'Series 10x400m',
-      description: 'Trabajo de velocidad en pista con series cortas',
-      type: 'Series',
-      category: 'training',
-      duration: 50,
-      distance: 7,
-      targetPace: '4:00',
-      targetHR: '90-95% FCMax',
-      intervals: [
-        {
-          id: 'int1',
-          type: 'interval',
-          repetitions: 10,
-          distance: 0.4,
-          recoveryTime: '1:30',
-          paceType: 'fixed',
-          pace: 4.0,
-          description: '400m a ritmo de 1500m',
-          intensity: 'very_hard',
-          trainingMode: 'distance'
-        }
-      ],
-      notes: 'Calentamiento: 20 min + técnica de carrera\nRecuperación entre series: trote muy suave',
-      difficulty: 5
-    },
-    {
-      id: 'template5',
-      name: 'Tempo Run 30min',
-      description: 'Carrera a ritmo de umbral anaeróbico',
-      type: 'Tempo',
-      category: 'training',
-      duration: 30,
-      distance: 6.5,
-      targetPace: '4:37',
-      targetHR: '80-85% FCMax',
-      intervals: [
-        {
-          id: 'int1',
-          type: 'continuous',
-          repetitions: 1,
-          distance: 6.5,
-          recoveryTime: '0:00',
-          paceType: 'fixed',
-          pace: 4.62,
-          description: 'Ritmo de umbral sostenido',
-          intensity: 'hard',
-          trainingMode: 'distance'
-        }
-      ],
-      notes: 'Esfuerzo controlado, ritmo "cómodamente duro"',
-      difficulty: 3
+  // Función para convertir plantillas del backend al formato del frontend
+  const convertBackendTemplateToFrontend = (backendTemplate: TrainingTemplateResponseDto): TrainingTemplate => {
+    return {
+      id: backendTemplate.id.toString(),
+      name: backendTemplate.name,
+      description: backendTemplate.description,
+      type: mapTrainingTypeFromBackend(backendTemplate.type) as any,
+      category: (backendTemplate.category === 'Training'
+        ? 'training'
+        : backendTemplate.category === 'PrepCompetition'
+        ? 'prep_competition'
+        : 'main_competition') as 'training' | 'prep_competition' | 'main_competition',
+      duration: backendTemplate.duration,
+      distance: backendTemplate.distance,
+      targetPace: backendTemplate.targetPace,
+      targetHR: backendTemplate.targetHR,
+      intervals: backendTemplate.intervals.map((interval) => ({
+        id: interval.id.toString(),
+        type: (interval.type === 'Interval' 
+          ? 'interval' 
+          : interval.type === 'Continuous' 
+          ? 'continuous' 
+          : 'recovery') as 'interval' | 'continuous' | 'recovery',
+        repetitions: interval.repetitions,
+        distance: interval.distance,
+        targetTime: interval.targetTime,
+        recoveryTime: interval.recoveryTime,
+        paceType: (interval.paceType === 'Fixed' ? 'fixed' : 'vo2max_percentage') as 'fixed' | 'vo2max_percentage',
+        pace: interval.pace,
+        vo2maxPercentage: interval.vo2maxPercentage,
+        description: interval.description,
+        intensity: interval.intensity 
+          ? (interval.intensity.toLowerCase() as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max')
+          : undefined,
+        trainingMode: interval.trainingMode 
+          ? (interval.trainingMode.toLowerCase() as 'distance' | 'time')
+          : undefined,
+        duration: interval.duration,
+        targetSpeed: interval.targetSpeed
+      })),
+      notes: backendTemplate.notes,
+      difficulty: mapDifficultyFromBackend(backendTemplate.difficulty)
+    };
+  };
+
+  // Cargar plantillas desde el backend
+  const loadTemplates = async () => {
+    setIsLoadingTemplates(true);
+    try {
+      const backendTemplates = await TrainingTemplateService.getAllTrainingTemplates();
+      const frontendTemplates = backendTemplates.map(convertBackendTemplateToFrontend);
+      setTemplates(frontendTemplates);
+    } catch (error) {
+      console.error('Error al cargar plantillas:', error);
+      setTemplates([]);
+      toast.error('Error al cargar plantillas disponibles');
+    } finally {
+      setIsLoadingTemplates(false);
     }
-  ];
+  };
+
+  // Cargar plantillas cuando se abre el selector o el modal
+  useEffect(() => {
+    if (isOpen && showTemplateSelector) {
+      if (templates.length === 0) {
+        loadTemplates();
+      }
+    }
+  }, [isOpen, showTemplateSelector]);
+
+  // Resetear búsqueda cuando se cierra el selector
+  useEffect(() => {
+    if (!showTemplateSelector) {
+      setTemplateSearchTerm('');
+      setSelectedTemplateId('');
+    }
+  }, [showTemplateSelector]);
+
+  // Filtrar plantillas según búsqueda
+  const filteredTemplates = templates.filter(template => {
+    if (!templateSearchTerm.trim()) return true;
+    const search = templateSearchTerm.toLowerCase();
+    return (
+      template.name.toLowerCase().includes(search) ||
+      template.description.toLowerCase().includes(search) ||
+      template.type.toLowerCase().includes(search) ||
+      template.notes.toLowerCase().includes(search)
+    );
+  });
 
   const categoryLabels = {
     'training': 'Entrenamiento',
@@ -321,7 +272,7 @@ export function CreateTrainingSessionModal({
     })
   );
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!formData.name.trim()) {
       toast.error('El nombre de la sesión es requerido');
       return;
@@ -385,18 +336,93 @@ export function CreateTrainingSessionModal({
       }
     });
 
-    const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
-      date: selectedDate,
+    // Convertir intervalos al formato del backend
+    const backendIntervals: CreateTrainingIntervalDto[] = allIntervals.map((interval, index) => {
+      // Mapear el tipo del frontend al backend
+      const typeMapping: Record<string, string> = {
+        'interval': 'Interval',
+        'continuous': 'Continuous',
+        'recovery': 'Recovery'
+      };
+
+      // Mapear el tipo de pace del frontend al backend
+      const paceTypeMapping: Record<string, string> = {
+        'fixed': 'Fixed',
+        'vo2max_percentage': 'Vo2MaxPercentage'
+      };
+
+      // Mapear la intensidad del frontend al backend
+      const intensityMapping: Record<string, string> = {
+        'easy': 'Easy',
+        'moderate': 'Moderate',
+        'hard': 'Hard',
+        'very_hard': 'VeryHard',
+        'max': 'Max'
+      };
+
+      // Mapear el modo de entrenamiento del frontend al backend
+      const trainingModeMapping: Record<string, string> = {
+        'distance': 'Distance',
+        'time': 'Time'
+      };
+
+      return {
+        type: typeMapping[interval.type] || 'Interval',
+        repetitions: interval.repetitions,
+        distance: interval.distance,
+        targetTime: interval.targetTime,
+        recoveryTime: interval.recoveryTime,
+        paceType: paceTypeMapping[interval.paceType] || 'Fixed',
+        pace: interval.pace,
+        vo2MaxPercentage: interval.vo2maxPercentage,
+        description: interval.description,
+        intensity: interval.intensity ? intensityMapping[interval.intensity] : undefined,
+        trainingMode: interval.trainingMode ? trainingModeMapping[interval.trainingMode] : undefined,
+        duration: interval.duration,
+        targetSpeed: interval.targetSpeed,
+        orderIndex: index
+      };
+    });
+
+    // Crear el DTO para el backend
+    const backendDto: CreateTrainingSessionDto = {
       name: formData.name.trim(),
-      description: formData.description.trim(),
-      category: formData.category,
-      athletes: selectedAthletes,
-      intervals: allIntervals,
-      notes: formData.notes.trim() || undefined
+      description: formData.description.trim() || undefined,
+      date: selectedDate, // ISO string format
+      category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
+      notes: formData.notes.trim() || undefined,
+      athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
+      intervals: backendIntervals
     };
 
-    onSubmit(session);
-    handleReset();
+    // Enviar al backend
+    try {
+      const createdSession = await TrainingSessionService.createTrainingSession(backendDto);
+      
+      // Llamar callback cuando se crea exitosamente (para refrescar listas)
+      if (onSessionCreated) {
+        onSessionCreated();
+      }
+      
+      // También llamar al callback del componente padre si es necesario (para compatibilidad)
+      if (onSubmit) {
+        const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
+          date: selectedDate,
+          name: formData.name.trim(),
+          description: formData.description.trim(),
+          category: formData.category,
+          athletes: selectedAthletes,
+          intervals: allIntervals,
+          notes: formData.notes.trim() || undefined
+        };
+        onSubmit(session);
+      }
+      
+      handleReset();
+    } catch (error) {
+      // El error ya se maneja automáticamente en el servicio
+      console.error('Error al crear sesión:', error);
+    }
   };
 
   const parseSpeed = (speedStr: string): number => {
@@ -473,7 +499,7 @@ export function CreateTrainingSessionModal({
       return;
     }
 
-    const template = mockTemplates.find(t => t.id === selectedTemplateId);
+    const template = templates.find(t => t.id === selectedTemplateId);
     if (!template) {
       toast.error('Plantilla no encontrada');
       return;
@@ -666,15 +692,48 @@ export function CreateTrainingSessionModal({
               {showTemplateSelector && (
                 <Card className="border-accent/20 bg-accent/5">
                   <CardHeader>
-                    <CardTitle className="text-base flex items-center gap-2">
-                      <FileText className="w-5 h-5 text-accent" />
-                      Seleccionar Plantilla
-                    </CardTitle>
-                    <CardDescription>
-                      Elige una plantilla para llenar automáticamente todos los campos (excepto atletas)
-                    </CardDescription>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <CardTitle className="text-base flex items-center gap-2">
+                          <FileText className="w-5 h-5 text-accent" />
+                          Seleccionar Plantilla
+                        </CardTitle>
+                        <CardDescription>
+                          Elige una plantilla para llenar automáticamente todos los campos (excepto atletas)
+                        </CardDescription>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={loadTemplates}
+                        disabled={isLoadingTemplates}
+                        className="flex items-center gap-2"
+                        title="Recargar plantillas"
+                      >
+                        {isLoadingTemplates ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Search className="w-4 h-4" />
+                        )}
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    {/* Búsqueda de plantillas */}
+                    <div>
+                      <Label htmlFor="template-search">Buscar Plantilla</Label>
+                      <div className="relative mt-1">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-muted-foreground w-4 h-4" />
+                        <Input
+                          id="template-search"
+                          value={templateSearchTerm}
+                          onChange={(e) => setTemplateSearchTerm(e.target.value)}
+                          placeholder="Buscar por nombre, tipo o descripción..."
+                          className="pl-10"
+                        />
+                      </div>
+                    </div>
+
                     <div>
                       <Label htmlFor="template-select">Plantilla</Label>
                       <Select value={selectedTemplateId} onValueChange={setSelectedTemplateId}>
@@ -682,17 +741,37 @@ export function CreateTrainingSessionModal({
                           <SelectValue placeholder="Selecciona una plantilla..." />
                         </SelectTrigger>
                         <SelectContent>
-                          {mockTemplates.map(template => (
-                            <SelectItem key={template.id} value={template.id}>
-                              {template.name} - {template.type}
-                            </SelectItem>
-                          ))}
+                          {isLoadingTemplates ? (
+                            <div className="p-4 text-center text-sm text-muted-foreground">
+                              <Loader2 className="w-4 h-4 animate-spin mx-auto mb-2" />
+                              Cargando plantillas...
+                            </div>
+                          ) : filteredTemplates.length === 0 ? (
+                            <div className="p-4 text-center text-sm text-muted-foreground">
+                              {templateSearchTerm 
+                                ? 'No se encontraron plantillas con ese criterio'
+                                : templates.length === 0
+                                ? 'No hay plantillas disponibles. Crea una en la sección de Plantillas.'
+                                : 'No hay plantillas que coincidan con la búsqueda'}
+                            </div>
+                          ) : (
+                            filteredTemplates.map(template => (
+                              <SelectItem key={template.id} value={template.id}>
+                                {template.name} - {template.type}
+                              </SelectItem>
+                            ))
+                          )}
                         </SelectContent>
                       </Select>
+                      {filteredTemplates.length > 0 && templateSearchTerm && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {filteredTemplates.length} plantilla{filteredTemplates.length !== 1 ? 's' : ''} encontrada{filteredTemplates.length !== 1 ? 's' : ''}
+                        </p>
+                      )}
                     </div>
 
                     {selectedTemplateId && (() => {
-                      const selectedTemplate = mockTemplates.find(t => t.id === selectedTemplateId);
+                      const selectedTemplate = templates.find(t => t.id === selectedTemplateId);
                       if (!selectedTemplate) return null;
                       
                       return (
@@ -963,8 +1042,10 @@ export function CreateTrainingSessionModal({
                             <div className="flex items-center gap-3">
                               <Checkbox 
                                 checked={allGroupAthletesSelected}
-                                ref={(el) => {
-                                  if (el) el.indeterminate = someGroupAthletesSelected && !allGroupAthletesSelected;
+                                ref={(el: HTMLButtonElement | null) => {
+                                  if (el) {
+                                    (el as any).indeterminate = someGroupAthletesSelected && !allGroupAthletesSelected;
+                                  }
                                 }}
                                 onChange={() => handleGroupToggle(group.id)}
                               />

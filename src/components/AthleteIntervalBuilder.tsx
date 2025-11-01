@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { IntervalForm } from './IntervalForm';
 import { IntervalList } from './IntervalList';
 import { TrainingInterval } from './utils/athleteIntervalUtils';
@@ -33,6 +33,16 @@ export function AthleteIntervalBuilder({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingInterval, setEditingInterval] = useState<Omit<TrainingInterval, 'id'> | null>(null);
   const [isAdding, setIsAdding] = useState(false);
+
+  // Resetear el estado de edición cuando cambian los intervals
+  // (por ejemplo, cuando se carga una nueva plantilla)
+  useEffect(() => {
+    // Si el intervalo que estábamos editando ya no existe en la lista, cancelar la edición
+    if (editingId && !intervals.find(i => String(i.id) === String(editingId))) {
+      setEditingId(null);
+      setEditingInterval(null);
+    }
+  }, [intervals, editingId]);
 
   const handleFormChange = (field: keyof typeof newInterval, value: any) => {
     setNewInterval(prev => ({ ...prev, [field]: value }));
@@ -125,12 +135,23 @@ export function AthleteIntervalBuilder({
     }
   };
 
+  const formatSpeedFromPace = (paceMinutes: number): string => {
+    const minutes = Math.floor(paceMinutes);
+    const seconds = Math.round((paceMinutes - minutes) * 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+  };
+
   const handleEditInterval = (interval: TrainingInterval) => {
-    setEditingId(interval.id);
-    
     // Convertir de vuelta al formato del formulario
     const intervalAny = interval as any;
-    setEditingInterval({
+    
+    // Si no hay targetSpeed pero hay pace, convertir pace a targetSpeed
+    let targetSpeed = intervalAny.targetSpeed;
+    if (!targetSpeed && interval.pace) {
+      targetSpeed = formatSpeedFromPace(interval.pace);
+    }
+    
+    const editingData: Omit<TrainingInterval, 'id'> = {
       type: interval.type,
       repetitions: interval.repetitions,
       distance: interval.distance,
@@ -142,9 +163,12 @@ export function AthleteIntervalBuilder({
       description: interval.description || '',
       intensity: interval.intensity || 'moderate',
       trainingMode: intervalAny.trainingMode || 'distance',
-      duration: intervalAny.duration,
-      targetSpeed: intervalAny.targetSpeed
-    } as any);
+      duration: intervalAny.duration || interval.targetTime,
+      targetSpeed: targetSpeed || ''
+    } as any;
+    
+    setEditingId(interval.id);
+    setEditingInterval(editingData);
   };
 
   const handleSaveEdit = () => {

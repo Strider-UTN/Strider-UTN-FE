@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -38,6 +38,8 @@ import {
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
 import { toast } from 'sonner';
+import { CoachAthleteRelationshipService, AthleteResponseDto } from '../services/coachAthleteRelationshipService';
+import { Loader2, UserX, Trash2 } from 'lucide-react';
 
 interface AthleteProfile {
   id: string;
@@ -78,119 +80,10 @@ interface AthleteProfile {
 }
 
 export function IndividualAthletesManagement() {
-  const [athletes, setAthletes] = useState<AthleteProfile[]>([
-    {
-      id: '1',
-      name: 'Juan Pérez García',
-      email: 'juan.perez@email.com',
-      phone: '+34 666 777 888',
-      birthYear: 1995,
-      height: 175,
-      weight: 68.5,
-      emergencyContact: {
-        name: 'María García',
-        phone: '+34 600 111 222',
-        relationship: 'Esposa'
-      },
-      athleticExperience: {
-        yearsRunning: 8,
-        weeklyVolume: 85,
-        monthlyVolume: 368
-      },
-      medicalInfo: {
-        healthInsurance: {
-          provider: 'Sanitas',
-          memberNumber: '123456789'
-        },
-        medicalClearance: {
-          hasValidClearance: true,
-          lastCheckupDate: '2024-08-15',
-          expiryDate: '2025-08-15',
-          isExpired: false,
-          certificateFile: 'https://images.unsplash.com/photo-1584820927498-cfe5211fd8bf?w=800',
-          certificateFileName: 'apto-fisico-juan-perez.jpg',
-          uploadDate: '2024-08-15'
-        }
-      },
-      status: 'Activo',
-      joinDate: '2024-01-15',
-      lastActivity: '2024-12-01'
-    },
-    {
-      id: '2',
-      name: 'María García López',
-      email: 'maria.garcia@email.com',
-      phone: '+34 677 888 999',
-      birthYear: 1992,
-      height: 165,
-      weight: 55.0,
-      emergencyContact: {
-        name: 'José García',
-        phone: '+34 611 222 333',
-        relationship: 'Padre'
-      },
-      athleticExperience: {
-        yearsRunning: 6,
-        weeklyVolume: 65,
-        monthlyVolume: 281
-      },
-      medicalInfo: {
-        healthInsurance: {
-          provider: 'Adeslas',
-          memberNumber: 'ADS-987654321'
-        },
-        medicalClearance: {
-          hasValidClearance: true,
-          lastCheckupDate: '2024-09-20',
-          expiryDate: '2025-09-20',
-          isExpired: false,
-          certificateFile: 'https://images.unsplash.com/photo-1576091160550-2173dba999ef?w=800',
-          certificateFileName: 'certificado-maria-garcia.pdf',
-          uploadDate: '2024-09-20'
-        }
-      },
-      status: 'Activo',
-      joinDate: '2024-02-20',
-      lastActivity: '2024-11-29'
-    },
-    {
-      id: '3',
-      name: 'Carlos Ruiz Fernández',
-      email: 'carlos.ruiz@email.com',
-      phone: '+34 688 999 000',
-      birthYear: 1988,
-      height: 180,
-      weight: 72.0,
-      emergencyContact: {
-        name: 'Ana Fernández',
-        phone: '+34 622 333 444',
-        relationship: 'Esposa'
-      },
-      athleticExperience: {
-        yearsRunning: 15,
-        weeklyVolume: 120,
-        monthlyVolume: 520
-      },
-      medicalInfo: {
-        healthInsurance: {
-          provider: 'DKV Seguros',
-          memberNumber: 'DKV-555888999'
-        },
-        medicalClearance: {
-          hasValidClearance: false,
-          lastCheckupDate: '2024-03-10',
-          expiryDate: '2024-09-10',
-          isExpired: true,
-          certificateFile: undefined,
-          certificateFileName: undefined,
-          uploadDate: undefined
-        }
-      },
-      status: 'Lesionado',
-      joinDate: '2023-09-10',
-      lastActivity: '2024-11-15'
-    }
-  ]);
+  const [athletes, setAthletes] = useState<AthleteProfile[]>([]);
+  const [athletesWithRelationships, setAthletesWithRelationships] = useState<Map<string, number>>(new Map()); // Map<athleteId, relationshipId>
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRemovingRelationship, setIsRemovingRelationship] = useState<string | null>(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -204,6 +97,120 @@ export function IndividualAthletesManagement() {
   const [athleteForPerformance, setAthleteForPerformance] = useState<AthleteProfile | null>(null);
   const [isMedicalClearanceModalOpen, setIsMedicalClearanceModalOpen] = useState(false);
   const [athleteForMedicalClearance, setAthleteForMedicalClearance] = useState<AthleteProfile | null>(null);
+
+  // Cargar atletas del backend
+  useEffect(() => {
+    const loadAthletes = async () => {
+      setIsLoading(true);
+      try {
+        const athleteRelationships = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
+        
+        // Mapear los atletas del backend a la estructura AthleteProfile
+        // Nota: El backend solo devuelve información básica, algunos campos pueden ser mock por ahora
+        const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => ({
+          id: athlete.id.toString(),
+          name: athlete.name,
+          email: athlete.email,
+          phone: athlete.phone || '+34 000 000 000',
+          birthYear: 1990, // TODO: Obtener del backend cuando esté disponible
+          height: 175, // TODO: Obtener del backend cuando esté disponible
+          weight: 70, // TODO: Obtener del backend cuando esté disponible
+          emergencyContact: {
+            name: 'Contacto de emergencia', // TODO: Obtener del backend cuando esté disponible
+            phone: '+34 000 000 000',
+            relationship: 'Familiar'
+          },
+          athleticExperience: {
+            yearsRunning: 5, // TODO: Obtener del backend cuando esté disponible
+            weeklyVolume: 50, // TODO: Obtener del backend cuando esté disponible
+            monthlyVolume: 200 // TODO: Obtener del backend cuando esté disponible
+          },
+          medicalInfo: {
+            healthInsurance: {
+              provider: 'Seguro', // TODO: Obtener del backend cuando esté disponible
+              memberNumber: '000000'
+            },
+            medicalClearance: {
+              hasValidClearance: false, // TODO: Obtener del backend cuando esté disponible
+              isExpired: false
+            }
+          },
+          status: 'Activo' as const,
+          joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+        }));
+
+        setAthletes(mappedAthletes);
+        
+        // Guardar el mapeo de athleteId -> relationshipId
+        const relationshipMap = new Map<string, number>();
+        athleteRelationships.forEach((athlete: AthleteResponseDto) => {
+          relationshipMap.set(athlete.id.toString(), athlete.relationshipId);
+        });
+        setAthletesWithRelationships(relationshipMap);
+      } catch (error) {
+        console.error('Error al cargar atletas:', error);
+        toast.error('Error al cargar la lista de atletas');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadAthletes();
+  }, []);
+
+  // Función para recargar atletas (usada después de eliminar o invitar)
+  const reloadAthletes = async () => {
+    setIsLoading(true);
+    try {
+      const athleteRelationships = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
+      
+      const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => ({
+        id: athlete.id.toString(),
+        name: athlete.name,
+        email: athlete.email,
+        phone: athlete.phone || '+34 000 000 000',
+        birthYear: 1990,
+        height: 175,
+        weight: 70,
+        emergencyContact: {
+          name: 'Contacto de emergencia',
+          phone: '+34 000 000 000',
+          relationship: 'Familiar'
+        },
+        athleticExperience: {
+          yearsRunning: 5,
+          weeklyVolume: 50,
+          monthlyVolume: 200
+        },
+        medicalInfo: {
+          healthInsurance: {
+            provider: 'Seguro',
+            memberNumber: '000000'
+          },
+          medicalClearance: {
+            hasValidClearance: false,
+            isExpired: false
+          }
+        },
+        status: 'Activo' as const,
+        joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+      }));
+
+      setAthletes(mappedAthletes);
+      
+      const relationshipMap = new Map<string, number>();
+      athleteRelationships.forEach((athlete: AthleteResponseDto) => {
+        relationshipMap.set(athlete.id.toString(), athlete.relationshipId);
+      });
+      setAthletesWithRelationships(relationshipMap);
+    } catch (error) {
+      console.error('Error al recargar atletas:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const filteredAthletes = athletes.filter(athlete => {
     const matchesSearch = athlete.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -219,6 +226,13 @@ export function IndividualAthletesManagement() {
     setIsInviteModalOpen(true);
   };
 
+  const handleInviteModalClose = async () => {
+    setIsInviteModalOpen(false);
+    // Recargar la lista después de invitar un atleta
+    // para mostrar si el atleta aceptó la invitación inmediatamente
+    await reloadAthletes();
+  };
+
   const handleEditAthlete = (athlete: AthleteProfile) => {
     setSelectedAthlete(athlete);
     setIsProfileModalOpen(true);
@@ -231,9 +245,27 @@ export function IndividualAthletesManagement() {
     toast.success('Perfil actualizado exitosamente');
   };
 
-  const handleDeleteAthlete = (athleteId: string) => {
-    setAthletes(prev => prev.filter(a => a.id !== athleteId));
-    toast.success('Atleta eliminado');
+  const handleDeleteAthlete = async (athleteId: string) => {
+    const relationshipId = athletesWithRelationships.get(athleteId);
+    
+    if (!relationshipId) {
+      toast.error('No se pudo encontrar la relación con este atleta');
+      return;
+    }
+
+    setIsRemovingRelationship(athleteId);
+
+    try {
+      await CoachAthleteRelationshipService.removeRelationship(relationshipId);
+      
+      // Recargar la lista completa desde el backend para asegurar consistencia
+      await reloadAthletes();
+    } catch (error) {
+      console.error('Error al eliminar relación:', error);
+      // El error ya fue manejado por el servicio
+    } finally {
+      setIsRemovingRelationship(null);
+    }
   };
 
   const handleViewAthleteDetails = (athlete: AthleteProfile) => {
@@ -332,6 +364,15 @@ export function IndividualAthletesManagement() {
         onBack={handleBackFromPerformance}
         userType="coach"
       />
+    );
+  }
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-muted-foreground">Cargando atletas...</span>
+      </div>
     );
   }
 
@@ -476,6 +517,37 @@ export function IndividualAthletesManagement() {
                     >
                       Ver Detalles
                     </Button>
+
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 w-8 p-0"
+                        >
+                          <MoreVertical className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          onClick={() => handleDeleteAthlete(athlete.id)}
+                          disabled={isRemovingRelationship === athlete.id}
+                          className="text-destructive focus:text-destructive"
+                        >
+                          {isRemovingRelationship === athlete.id ? (
+                            <>
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                              Eliminando...
+                            </>
+                          ) : (
+                            <>
+                              <UserX className="w-4 h-4 mr-2" />
+                              Eliminar Relación
+                            </>
+                          )}
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
                 </div>
               </CardContent>
@@ -518,7 +590,7 @@ export function IndividualAthletesManagement() {
       {/* Modal de invitación */}
       <AthleteInviteModal
         isOpen={isInviteModalOpen}
-        onClose={() => setIsInviteModalOpen(false)}
+        onClose={handleInviteModalClose}
         coachName="Carlos Martínez" // Este debería venir del contexto del usuario autenticado
       />
 

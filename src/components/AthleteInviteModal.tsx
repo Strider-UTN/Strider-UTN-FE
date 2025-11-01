@@ -12,9 +12,10 @@ import {
   X,
   Users,
   Check,
-  Copy
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
 
 interface AthleteInviteModalProps {
   isOpen: boolean;
@@ -29,27 +30,15 @@ export function AthleteInviteModal({
 }: AthleteInviteModalProps) {
   const [inviteData, setInviteData] = useState({
     email: '',
-    name: '',
-    personalMessage: ''
+    message: ''
   });
   const [isLoading, setIsLoading] = useState(false);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
-
-  const generateInviteLink = () => {
-    // Simular generación de link de invitación
-    const inviteToken = `invite-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    return `${window.location.origin}?invite=${inviteToken}`;
-  };
+  const [invitationSent, setInvitationSent] = useState(false);
 
   const handleSendInvite = async () => {
     // Validaciones
     if (!inviteData.email.trim()) {
       toast.error('El email es obligatorio');
-      return;
-    }
-
-    if (!inviteData.name.trim()) {
-      toast.error('El nombre del atleta es obligatorio');
       return;
     }
 
@@ -63,53 +52,29 @@ export function AthleteInviteModal({
     setIsLoading(true);
 
     try {
-      // Simular envío de invitación
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const generatedLink = generateInviteLink();
-      setInviteLink(generatedLink);
-      
-      toast.success('Invitación enviada exitosamente');
+      await CoachAthleteRelationshipService.inviteAthlete({
+        athleteEmail: inviteData.email.trim(),
+        message: inviteData.message.trim() || undefined
+      });
+
+      setInvitationSent(true);
+      // El toast ya se muestra en el servicio
     } catch (error) {
-      toast.error('Error al enviar la invitación');
+      // El error ya fue manejado por el servicio
+      console.error('Error al enviar invitación:', error);
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const handleCopyLink = () => {
-    if (inviteLink) {
-      navigator.clipboard.writeText(inviteLink);
-      toast.success('Link copiado al portapapeles');
     }
   };
 
   const handleClose = () => {
     setInviteData({
       email: '',
-      name: '',
-      personalMessage: ''
+      message: ''
     });
-    setInviteLink(null);
+    setInvitationSent(false);
     onClose();
   };
-
-  const defaultMessage = `Hola ${inviteData.name || '[Nombre del atleta]'},
-
-${coachName} te ha invitado a unirte a Strider como atleta. 
-
-Strider es una plataforma integral de entrenamiento donde podrás:
-• Ver tus planificaciones de entrenamiento personalizadas
-• Subir y analizar tus entrenamientos
-• Recibir feedback detallado de tu progreso
-• Comunicarte directamente con tu entrenador
-
-Para completar tu registro, simplemente haz clic en el link de invitación que aparecerá en este email.
-
-¡Esperamos verte pronto en Strider!
-
-Saludos,
-El equipo de Strider`;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -120,11 +85,11 @@ El equipo de Strider`;
             Invitar Atleta
           </DialogTitle>
           <DialogDescription>
-            Envía una invitación por email a un atleta para que se una a tu equipo
+            Invita a un atleta por email para que se una a tu equipo. El atleta verá la invitación en su panel.
           </DialogDescription>
         </DialogHeader>
 
-        {!inviteLink ? (
+        {!invitationSent ? (
           <div className="space-y-6">
             {/* Información del atleta */}
             <Card>
@@ -138,31 +103,23 @@ El equipo de Strider`;
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="athleteName">Nombre del Atleta *</Label>
+                <div className="space-y-2">
+                  <Label htmlFor="athleteEmail">Email del Atleta *</Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                     <Input
-                      id="athleteName"
-                      value={inviteData.name}
-                      onChange={(e) => setInviteData(prev => ({ ...prev, name: e.target.value }))}
-                      placeholder="Nombre y apellidos"
+                      id="athleteEmail"
+                      type="email"
+                      value={inviteData.email}
+                      onChange={(e) => setInviteData(prev => ({ ...prev, email: e.target.value }))}
+                      placeholder="atleta@ejemplo.com"
+                      className="pl-10"
+                      disabled={isLoading}
                     />
                   </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="athleteEmail">Email del Atleta *</Label>
-                    <div className="relative">
-                      <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                      <Input
-                        id="athleteEmail"
-                        type="email"
-                        value={inviteData.email}
-                        onChange={(e) => setInviteData(prev => ({ ...prev, email: e.target.value }))}
-                        placeholder="atleta@ejemplo.com"
-                        className="pl-10"
-                      />
-                    </div>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    El atleta debe tener una cuenta registrada en Strider
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -180,16 +137,17 @@ El equipo de Strider`;
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="personalMessage">Mensaje Personal (Opcional)</Label>
+                  <Label htmlFor="message">Mensaje Personal (Opcional)</Label>
                   <Textarea
-                    id="personalMessage"
-                    value={inviteData.personalMessage}
-                    onChange={(e) => setInviteData(prev => ({ ...prev, personalMessage: e.target.value }))}
-                    placeholder="Agrega un mensaje personal..."
+                    id="message"
+                    value={inviteData.message}
+                    onChange={(e) => setInviteData(prev => ({ ...prev, message: e.target.value }))}
+                    placeholder="Agrega un mensaje personal para la invitación..."
                     rows={3}
+                    disabled={isLoading}
                   />
                   <p className="text-xs text-muted-foreground">
-                    Este mensaje se agregará al inicio del email de invitación
+                    Este mensaje se mostrará al atleta cuando vea la invitación en su panel
                   </p>
                 </div>
 
@@ -207,41 +165,12 @@ El equipo de Strider`;
                     <Check className="w-8 h-8 text-green-600" />
                   </div>
                   <div>
-                    <h3 className="text-lg font-medium">¡Invitación Enviada!</h3>
+                    <h3 className="text-lg font-medium">¡Invitación Creada!</h3>
                     <p className="text-muted-foreground">
-                      Se ha enviado una invitación a <strong>{inviteData.email}</strong>
+                      Se ha creado una invitación para <strong>{inviteData.email}</strong>
                     </p>
                   </div>
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Link de Invitación</CardTitle>
-                <CardDescription>
-                  También puedes compartir este link directamente con el atleta
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={inviteLink}
-                    readOnly
-                    className="bg-muted"
-                  />
-                  <Button
-                    variant="outline"
-                    onClick={handleCopyLink}
-                    className="flex-shrink-0"
-                  >
-                    <Copy className="w-4 h-4 mr-2" />
-                    Copiar
-                  </Button>
-                </div>
-                <p className="text-xs text-muted-foreground mt-2">
-                  Este link expirará en 7 días
-                </p>
               </CardContent>
             </Card>
 
@@ -253,8 +182,8 @@ El equipo de Strider`;
                     Próximos pasos
                   </p>
                   <p className="text-sm text-blue-600 mt-1">
-                    El atleta recibirá un email con instrucciones para completar su registro. 
-                    Una vez que se registre, aparecerá automáticamente en tu lista de atletas.
+                    El atleta verá la invitación en su panel de "Invitaciones" dentro de la aplicación. 
+                    Puede aceptar o rechazar la invitación desde allí.
                   </p>
                 </div>
               </div>
@@ -267,12 +196,21 @@ El equipo de Strider`;
         <div className="flex justify-end gap-3">
           <Button variant="outline" onClick={handleClose}>
             <X className="w-4 h-4 mr-2" />
-            {inviteLink ? 'Cerrar' : 'Cancelar'}
+            {invitationSent ? 'Cerrar' : 'Cancelar'}
           </Button>
-          {!inviteLink && (
+          {!invitationSent && (
             <Button onClick={handleSendInvite} disabled={isLoading}>
-              <Send className="w-4 h-4 mr-2" />
-              {isLoading ? 'Enviando...' : 'Enviar Invitación'}
+              {isLoading ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Enviando...
+                </>
+              ) : (
+                <>
+                  <Send className="w-4 h-4 mr-2" />
+                  Enviar Invitación
+                </>
+              )}
             </Button>
           )}
         </div>

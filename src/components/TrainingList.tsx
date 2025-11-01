@@ -48,16 +48,66 @@ interface TrainingSession {
 
 interface TrainingListProps {
   userType: 'athlete' | 'coach';
+  refreshTrigger?: number; // Cuando cambia, recarga las sesiones
 }
 
-export function TrainingList({ userType }: TrainingListProps) {
+export function TrainingList({ userType, refreshTrigger }: TrainingListProps) {
   const [searchTerm, setSearchTerm] = useState('');
   const [typeFilter, setTypeFilter] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
   const [uploadingSession, setUploadingSession] = useState<TrainingSession | null>(null);
+  const [sessions, setSessions] = useState<TrainingSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
 
-  // Datos mock diferentes para entrenadores y atletas
+  // Cargar sesiones del backend para coaches
+  useEffect(() => {
+    if (userType === 'coach') {
+      loadSessions();
+    }
+    // Para atletas, por ahora mantener datos mock hasta tener endpoint específico
+    // TODO: Implementar endpoint para atletas
+  }, [userType, refreshTrigger]); // Agregar refreshTrigger como dependencia
+
+  const loadSessions = async () => {
+    setIsLoading(true);
+    try {
+      const backendSessions = await TrainingSessionService.getAllTrainingSessions();
+      // Convertir del formato del backend al formato del frontend
+      const convertedSessions = backendSessions.map(convertBackendToFrontend);
+      setSessions(convertedSessions);
+    } catch (error) {
+      console.error('Error al cargar sesiones:', error);
+      // En caso de error, usar datos mock como fallback
+      setSessions(mockCoachSessions);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Función para convertir del backend al formato del frontend
+  const convertBackendToFrontend = (backendSession: TrainingSessionResponseDto): TrainingSession => {
+    // Calcular duración total y distancia total desde los intervalos
+    const totalDistance = backendSession.intervals.reduce((sum, interval) => sum + interval.distance, 0) / 1000; // metros a km
+    // Calcular duración aproximada (esto es una simplificación, podrías calcular mejor desde intervalos)
+    const estimatedDuration = Math.ceil(totalDistance * 5); // Estimación simple
+
+    return {
+      id: backendSession.id.toString(),
+      name: backendSession.name,
+      type: 'Intervalos' as const, // Por defecto, podrías inferir desde intervalos
+      date: backendSession.date,
+      duration: estimatedDuration,
+      distance: totalDistance,
+      intensity: 80, // Valor por defecto, podrías calcular desde intervalos
+      pace: '4:30', // Valor por defecto, podrías calcular desde intervalos
+      notes: backendSession.notes,
+      assignedAthletes: backendSession.athletes.map(a => a.athleteId.toString()),
+      athleteNames: backendSession.athletes.map(a => a.athleteName)
+    };
+  };
+
+  // Datos mock para atletas (hasta tener endpoint específico)
   const mockCoachSessions: TrainingSession[] = [
     {
       id: '1',
@@ -172,9 +222,10 @@ export function TrainingList({ userType }: TrainingListProps) {
     }
   ];
 
-  const sessions = userType === 'coach' ? mockCoachSessions : mockAthleteSessions;
+  // Para atletas, usar datos mock hasta tener endpoint
+  const displaySessions = userType === 'coach' ? sessions : mockAthleteSessions;
 
-  const filteredSessions = sessions.filter(session => {
+  const filteredSessions = displaySessions.filter(session => {
     const matchesSearch = session.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          (session.athleteNames && session.athleteNames.some(name => 
                            name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -225,7 +276,25 @@ export function TrainingList({ userType }: TrainingListProps) {
       {/* Filtros */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Filtros</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base">Filtros</CardTitle>
+            {userType === 'coach' && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={loadSessions}
+                disabled={isLoading}
+                className="flex items-center gap-2"
+              >
+                {isLoading ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                Recargar
+              </Button>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -402,9 +471,10 @@ export function TrainingList({ userType }: TrainingListProps) {
             </CardContent>
           </Card>
         ))}
-      </div>
+        </div>
+      )}
 
-      {filteredSessions.length === 0 && (
+      {!isLoading && filteredSessions.length === 0 && (
         <Card>
           <CardContent className="text-center py-12">
             <div className="text-muted-foreground">

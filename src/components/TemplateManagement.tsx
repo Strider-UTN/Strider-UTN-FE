@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -22,19 +22,30 @@ import {
   Star,
   StarOff,
   Timer,
-  Activity
+  Activity,
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { TrainingTemplateService, TrainingTemplateResponseDto, CreateTrainingTemplateDto } from '../services/trainingTemplateService';
+import { translateCategory, translateType } from '../utils/templateTranslations';
+import { mapTrainingTypeFromBackend, mapTrainingTypeToBackend } from '../utils/trainingTypeMapper';
+import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
 
 interface TrainingInterval {
   id: string;
-  type: 'work' | 'rest';
-  duration: number;
-  durationUnit: 'time' | 'distance';
-  pace: string;
-  intensity: string;
-  description: string;
-  distance?: number;
+  type: 'interval' | 'continuous' | 'recovery';
+  repetitions: number;
+  distance: number;
+  targetTime?: string;
+  recoveryTime: string;
+  paceType: 'fixed' | 'vo2max_percentage';
+  pace?: number;
+  vo2maxPercentage?: number;
+  description?: string;
+  intensity?: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  trainingMode?: 'distance' | 'time';
+  duration?: string;
+  targetSpeed?: string;
 }
 
 interface TrainingTemplate {
@@ -42,7 +53,7 @@ interface TrainingTemplate {
   name: string;
   description: string;
   type: 'Continuo' | 'Intervalos' | 'Tempo' | 'Fartlek' | 'Recuperación' | 'Cuestas' | 'Series';
-  category: 'Resistencia' | 'Velocidad' | 'Fuerza' | 'Recuperación' | 'Técnica';
+  category: 'training' | 'prep_competition' | 'main_competition';
   duration: number;
   distance?: number;
   targetPace?: string;
@@ -67,133 +78,85 @@ interface TrainingTemplate {
   tags: string[];
 }
 
-export function TemplateManagement() {
-  const [templates, setTemplates] = useState<TrainingTemplate[]>([
-    {
-      id: '1',
-      name: 'Intervalos 5x1000m',
-      description: 'Sesión de velocidad con 5 repeticiones de 1000m a ritmo de 5K',
-      type: 'Intervalos',
-      category: 'Velocidad',
-      duration: 45,
-      distance: 8,
-      targetPace: '4:30',
-      targetHR: '85-90% FCMax',
-      intervals: [
-        {
-          id: '1',
-          type: 'work',
-          duration: 4,
-          durationUnit: 'time',
-          pace: '4:30',
-          intensity: '85-90% FCMax',
-          description: '1000m a ritmo de 5K',
-          distance: 1
-        },
-        {
-          id: '2',
-          type: 'rest',
-          duration: 2,
-          durationUnit: 'time',
-          pace: '6:00',
-          intensity: '60-70% FCMax',
-          description: 'Trote suave de recuperación'
-        }
-      ],
-      warmUp: {
-        duration: 15,
-        pace: '5:30',
-        description: 'Trote suave + ejercicios de activación'
-      },
-      coolDown: {
-        duration: 10,
-        pace: '6:00',
-        description: 'Trote suave + estiramientos'
-      },
-      notes: 'Mantener ritmo constante en las series. Si no puedes completar todas las series al ritmo objetivo, reduce la intensidad.',
-      difficulty: 4,
-      isFavorite: true,
-      createdAt: '2024-01-10',
-      lastUsed: '2024-01-20',
-      useCount: 15,
-      tags: ['Velocidad', '5K', 'Pista']
-    },
-    {
-      id: '2',
-      name: 'Trote Base 45min',
-      description: 'Carrera continua a ritmo aeróbico para desarrollar resistencia base',
-      type: 'Continuo',
-      category: 'Resistencia',
-      duration: 45,
-      distance: 8,
-      targetPace: '5:30',
-      targetHR: '70-80% FCMax',
-      intervals: [],
-      warmUp: {
-        duration: 5,
-        pace: '6:00',
-        description: 'Inicio progresivo'
-      },
-      coolDown: {
-        duration: 5,
-        pace: '6:00',
-        description: 'Finalización progresiva'
-      },
-      notes: 'Ritmo conversacional durante toda la sesión. Debe sentirse cómodo y controlado.',
-      difficulty: 2,
-      isFavorite: false,
-      createdAt: '2024-01-05',
-      lastUsed: '2024-01-18',
-      useCount: 8,
-      tags: ['Base', 'Aeróbico', 'Fácil']
-    },
-    {
-      id: '3',
-      name: 'Tempo 20min',
-      description: 'Carrera a ritmo de umbral anaeróbico durante 20 minutos',
-      type: 'Tempo',
-      category: 'Resistencia',
-      duration: 40,
-      distance: 7,
-      targetPace: '4:45',
-      targetHR: '80-85% FCMax',
-      intervals: [
-        {
-          id: '1',
-          type: 'work',
-          duration: 20,
-          durationUnit: 'time',
-          pace: '4:45',
-          intensity: '80-85% FCMax',
-          description: 'Bloque tempo a ritmo de media maratón',
-          distance: 4.2
-        }
-      ],
-      warmUp: {
-        duration: 15,
-        pace: '5:30',
-        description: 'Trote progresivo'
-      },
-      coolDown: {
-        duration: 10,
-        pace: '6:00',
-        description: 'Trote de vuelta a la calma'
-      },
-      notes: 'Ritmo sostenido pero controlado. Debe ser un esfuerzo cómodamente duro.',
-      difficulty: 3,
-      isFavorite: true,
-      createdAt: '2024-01-08',
-      lastUsed: '2024-01-19',
-      useCount: 12,
-      tags: ['Tempo', 'Umbral', 'Media']
-    }
-  ]);
 
+// Función helper para convertir del backend al frontend
+function convertBackendToFrontend(backendTemplate: TrainingTemplateResponseDto): TrainingTemplate {
+  return {
+    id: backendTemplate.id.toString(),
+    name: backendTemplate.name,
+    description: backendTemplate.description,
+    type: mapTrainingTypeFromBackend(backendTemplate.type) as any,
+    category: (backendTemplate.category === 'Training'
+      ? 'training'
+      : backendTemplate.category === 'PrepCompetition'
+      ? 'prep_competition'
+      : 'main_competition') as 'training' | 'prep_competition' | 'main_competition',
+    duration: backendTemplate.duration,
+    distance: backendTemplate.distance,
+    targetPace: backendTemplate.targetPace,
+    targetHR: backendTemplate.targetHR,
+    intervals: backendTemplate.intervals.map((interval) => ({
+      id: interval.id.toString(),
+      type: (interval.type === 'Interval' 
+        ? 'interval' 
+        : interval.type === 'Continuous' 
+        ? 'continuous' 
+        : 'recovery') as 'interval' | 'continuous' | 'recovery',
+      repetitions: interval.repetitions,
+      distance: interval.distance,
+      targetTime: interval.targetTime,
+      recoveryTime: interval.recoveryTime,
+      paceType: (interval.paceType === 'Fixed' ? 'fixed' : 'vo2max_percentage') as 'fixed' | 'vo2max_percentage',
+      pace: interval.pace,
+      vo2maxPercentage: interval.vo2maxPercentage,
+      description: interval.description,
+      intensity: interval.intensity 
+        ? (interval.intensity.toLowerCase() as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max')
+        : undefined,
+      trainingMode: interval.trainingMode 
+        ? (interval.trainingMode.toLowerCase() as 'distance' | 'time')
+        : undefined,
+      duration: interval.duration,
+      targetSpeed: interval.targetSpeed
+    })),
+    notes: backendTemplate.notes,
+    difficulty: mapDifficultyFromBackend(backendTemplate.difficulty),
+    isFavorite: backendTemplate.isFavorite,
+    createdAt: new Date(backendTemplate.createdAt).toISOString().split('T')[0],
+    lastUsed: backendTemplate.lastUsed ? new Date(backendTemplate.lastUsed).toISOString().split('T')[0] : undefined,
+    useCount: backendTemplate.useCount,
+    tags: backendTemplate.tags || []
+  };
+}
+
+export function TemplateManagement() {
+  const [templates, setTemplates] = useState<TrainingTemplate[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState<string>('all');
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<TrainingTemplate | null>(null);
+
+  // Cargar plantillas desde el backend
+  useEffect(() => {
+    loadTemplates();
+  }, []);
+
+  const loadTemplates = async () => {
+    setIsLoading(true);
+    try {
+      const backendTemplates = await TrainingTemplateService.getAllTrainingTemplates();
+      const frontendTemplates = backendTemplates.map(convertBackendToFrontend);
+      setTemplates(frontendTemplates);
+    } catch (error) {
+      console.error('Error al cargar plantillas:', error);
+      // Mantener templates vacío en caso de error
+      setTemplates([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const filteredTemplates = templates.filter(template => {
     const matchesSearch = template.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -210,62 +173,116 @@ export function TemplateManagement() {
   const regularTemplates = filteredTemplates.filter(t => !t.isFavorite);
 
   const handleCreateTemplate = (templateData: Omit<TrainingTemplate, 'id' | 'createdAt' | 'useCount' | 'isFavorite'>) => {
-    const newTemplate: TrainingTemplate = {
-      ...templateData,
-      id: `template_${Date.now()}`,
-      createdAt: new Date().toISOString().split('T')[0],
-      useCount: 0,
-      isFavorite: false
-    };
-
-    setTemplates(prev => [newTemplate, ...prev]);
-    toast.success('Plantilla creada exitosamente', {
-      description: `"${templateData.name}" está lista para usar`
-    });
+    // Este método ya no se usa directamente, el servicio maneja la creación
+    // Se mantiene para compatibilidad con el callback
+    // Recargar las plantillas después de crear
+    loadTemplates();
   };
 
-  const handleEditTemplate = (templateData: Omit<TrainingTemplate, 'id' | 'createdAt' | 'useCount'>) => {
+  const handleEditTemplate = async (templateData: Omit<TrainingTemplate, 'id' | 'createdAt' | 'useCount'>) => {
     if (!editingTemplate) return;
 
-    const updatedTemplate: TrainingTemplate = {
-      ...templateData,
-      id: editingTemplate.id,
-      createdAt: editingTemplate.createdAt,
-      useCount: editingTemplate.useCount
-    };
-
-    setTemplates(prev => prev.map(t => t.id === editingTemplate.id ? updatedTemplate : t));
+    // El servicio ya maneja la actualización, solo recargamos las plantillas
+    // Este callback se mantiene para compatibilidad pero ya no es necesario
+    // porque el servicio maneja todo
+    await loadTemplates();
     setEditingTemplate(null);
-    toast.success('Plantilla actualizada exitosamente');
   };
 
-  const handleDeleteTemplate = (templateId: string) => {
+  const handleDeleteTemplate = async (templateId: string) => {
     const template = templates.find(t => t.id === templateId);
-    setTemplates(prev => prev.filter(t => t.id !== templateId));
-    toast.success('Plantilla eliminada', {
-      description: `"${template?.name}" ha sido eliminada`
-    });
+    if (!template) return;
+
+    try {
+      await TrainingTemplateService.deleteTrainingTemplate(parseInt(templateId));
+      // Recargar las plantillas después de eliminar
+      await loadTemplates();
+    } catch (error) {
+      // El error ya se maneja automáticamente en el servicio
+      console.error('Error al eliminar plantilla:', error);
+    }
   };
 
-  const handleDuplicateTemplate = (template: TrainingTemplate) => {
-    const duplicatedTemplate: TrainingTemplate = {
-      ...template,
-      id: `template_${Date.now()}`,
-      name: `${template.name} (Copia)`,
-      createdAt: new Date().toISOString().split('T')[0],
-      useCount: 0,
-      isFavorite: false,
-      lastUsed: undefined
-    };
+  const handleDuplicateTemplate = async (template: TrainingTemplate) => {
+    try {
+      // Convertir la plantilla al formato DTO del backend
+      const dto: CreateTrainingTemplateDto = {
+        name: `${template.name} (Copia)`,
+        description: template.description,
+        type: mapTrainingTypeToBackend(template.type) as any,
+        category: template.category === 'training' 
+          ? 'Training' 
+          : template.category === 'prep_competition'
+          ? 'PrepCompetition'
+          : 'MainCompetition',
+        duration: template.duration,
+        distance: template.distance,
+        targetPace: template.targetPace,
+        targetHR: template.targetHR,
+        notes: template.notes || '',
+        difficulty: template.difficulty,
+        tags: template.tags || [],
+        intervals: template.intervals.map((interval, index) => ({
+          type: interval.type === 'interval' 
+            ? 'Interval' 
+            : interval.type === 'continuous'
+            ? 'Continuous'
+            : 'Recovery',
+          repetitions: interval.repetitions,
+          distance: interval.distance,
+          targetTime: interval.targetTime,
+          recoveryTime: interval.recoveryTime,
+          paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
+          pace: interval.pace,
+          vo2MaxPercentage: interval.vo2maxPercentage,
+          description: interval.description,
+          intensity: interval.intensity 
+            ? (interval.intensity === 'very_hard'
+                ? 'VeryHard'
+                : interval.intensity.charAt(0).toUpperCase() + interval.intensity.slice(1)) as any
+            : undefined,
+          trainingMode: interval.trainingMode 
+            ? (interval.trainingMode.charAt(0).toUpperCase() + interval.trainingMode.slice(1)) as any
+            : undefined,
+          duration: interval.duration,
+          targetSpeed: interval.targetSpeed,
+          orderIndex: index
+        }))
+      };
 
-    setTemplates(prev => [duplicatedTemplate, ...prev]);
-    toast.success('Plantilla duplicada exitosamente');
+      // Llamar al servicio para crear la plantilla duplicada
+      await TrainingTemplateService.createTrainingTemplate(dto);
+      
+      // Recargar las plantillas después de duplicar
+      await loadTemplates();
+    } catch (error) {
+      // El error ya se maneja automáticamente en el servicio
+      console.error('Error al duplicar plantilla:', error);
+    }
   };
 
-  const handleToggleFavorite = (templateId: string) => {
-    setTemplates(prev => prev.map(t => 
-      t.id === templateId ? { ...t, isFavorite: !t.isFavorite } : t
-    ));
+  const handleToggleFavorite = async (templateId: string) => {
+    const template = templates.find(t => t.id === templateId);
+    if (!template) return;
+
+    try {
+      // Llamar al servicio para actualizar el estado de favorito en el backend
+      // El backend hace el toggle automáticamente
+      const updatedTemplate = await TrainingTemplateService.toggleFavoriteTemplate(
+        parseInt(templateId),
+        template.isFavorite
+      );
+
+      // Actualizar el estado local con la respuesta del backend
+      // Convertir la respuesta del backend al formato del frontend
+      const frontendTemplate = convertBackendToFrontend(updatedTemplate);
+      setTemplates(prev => prev.map(t => 
+        t.id === templateId ? frontendTemplate : t
+      ));
+    } catch (error) {
+      // El error ya se maneja automáticamente en el servicio
+      console.error('Error al cambiar estado de favorito:', error);
+    }
   };
 
   const getDifficultyColor = (difficulty: number) => {
@@ -289,6 +306,16 @@ export function TemplateManagement() {
       default: return 'Sin definir';
     }
   };
+
+  // Mostrar loading solo al inicio
+  if (isLoading && templates.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mb-4" />
+        <p className="text-muted-foreground">Cargando plantillas...</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -344,11 +371,9 @@ export function TemplateManagement() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">Todas las Categorías</SelectItem>
-                  <SelectItem value="Resistencia">Resistencia</SelectItem>
-                  <SelectItem value="Velocidad">Velocidad</SelectItem>
-                  <SelectItem value="Fuerza">Fuerza</SelectItem>
-                  <SelectItem value="Recuperación">Recuperación</SelectItem>
-                  <SelectItem value="Técnica">Técnica</SelectItem>
+                  <SelectItem value="training">Entrenamiento</SelectItem>
+                  <SelectItem value="prep_competition">Competencia Preparatoria</SelectItem>
+                  <SelectItem value="main_competition">Competencia Principal</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -455,8 +480,8 @@ export function TemplateManagement() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline">{template.type}</Badge>
-                    <Badge variant="outline">{template.category}</Badge>
+                    <Badge variant="outline">{translateType(template.type)}</Badge>
+                    <Badge variant="outline">{translateCategory(template.category)}</Badge>
                     <Badge className={getDifficultyColor(template.difficulty)}>
                       {getDifficultyLabel(template.difficulty)}
                     </Badge>
@@ -578,8 +603,8 @@ export function TemplateManagement() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <Badge variant="outline">{template.type}</Badge>
-                    <Badge variant="outline">{template.category}</Badge>
+                    <Badge variant="outline">{translateType(template.type)}</Badge>
+                    <Badge variant="outline">{translateCategory(template.category)}</Badge>
                     <Badge className={getDifficultyColor(template.difficulty)}>
                       {getDifficultyLabel(template.difficulty)}
                     </Badge>
@@ -634,6 +659,7 @@ export function TemplateManagement() {
         onSave={editingTemplate ? handleEditTemplate : handleCreateTemplate}
         template={editingTemplate}
         mode={editingTemplate ? 'edit' : 'create'}
+        onTemplateCreated={loadTemplates}
       />
     </div>
   );

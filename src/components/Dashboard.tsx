@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Sidebar, SidebarContent, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarTrigger } from './ui/sidebar';
 import { UserProfile } from './UserProfile';
 import { CreateTrainingSessionModal } from './CreateTrainingSessionModal';
@@ -11,6 +11,8 @@ import { AthleteTrainingPlan } from './AthleteTrainingPlan';
 import { AthleteTrainingHistory } from './AthleteTrainingHistory';
 import { AthletePerformanceView } from './AthletePerformanceView';
 import { AthleteStatusManagement } from './AthleteStatusManagement';
+import { InvitationsView } from './InvitationsView';
+import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
 import { PlanningManagement } from './PlanningManagement';
 import { ReportsView } from './ReportsView';
 import { CreateGroupModal } from './CreateGroupModal';
@@ -37,7 +39,8 @@ import {
   Filter,
   X,
   Upload,
-  Heart
+  Heart,
+  Mail
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -127,7 +130,7 @@ type CoachActiveView =
   | 'feedback'
   | 'templates';
 
-type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status';
+type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations';
 
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
   const [coachActiveView, setCoachActiveView] = useState<CoachActiveView>('my-athletes');
@@ -138,6 +141,8 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   const [isAthleteManagementOpen, setIsAthleteManagementOpen] = useState(false);
   const [selectedGroupForAthletes, setSelectedGroupForAthletes] = useState<TrainingGroup | null>(null);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [sessionRefreshTrigger, setSessionRefreshTrigger] = useState(0);
+  const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
   
   // Estados para filtros de sedes
   const [groupNameFilter, setGroupNameFilter] = useState('');
@@ -179,18 +184,103 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     { id: 'templates', label: 'Plantillas', icon: FileText }
   ];
 
-  const athleteMenuItems = [
+  // Función para cargar el contador de invitaciones pendientes (usada desde InvitationsView también)
+  const loadPendingInvitationsCount = useCallback(async () => {
+    if (userType === 'athlete') {
+      try {
+        const invitations = await CoachAthleteRelationshipService.getPendingInvitations();
+        setPendingInvitationsCount(invitations.length);
+      } catch (error) {
+        // Error silencioso, el usuario verá el error si va a la vista de invitaciones
+        console.error('Error al cargar invitaciones pendientes:', error);
+      }
+    }
+  }, [userType]);
+
+  // Cargar invitaciones pendientes para atletas
+  // Usa Page Visibility API para solo hacer polling cuando la pestaña está visible
+  useEffect(() => {
+    if (userType === 'athlete') {
+
+      // Cargar inmediatamente al montar
+      loadPendingInvitationsCount();
+
+      // Polling solo cuando la pestaña está visible
+      // Intervalo más largo (60 segundos) cuando está visible
+      // No hace polling cuando la pestaña está oculta
+      let interval: NodeJS.Timeout | null = null;
+
+      const startPolling = () => {
+        if (interval) clearInterval(interval);
+        interval = setInterval(() => {
+          // Solo hacer polling si la pestaña está visible
+          if (document.visibilityState === 'visible') {
+            loadPendingInvitationsCount();
+          }
+        }, 60000); // 60 segundos cuando está visible
+      };
+
+      const stopPolling = () => {
+        if (interval) {
+          clearInterval(interval);
+          interval = null;
+        }
+      };
+
+      // Manejar cambios de visibilidad para iniciar/detener polling
+      const handleVisibilityChange = () => {
+        if (document.visibilityState === 'visible') {
+          // Cargar inmediatamente cuando se vuelve visible
+          loadPendingInvitationsCount();
+          startPolling();
+        } else {
+          // Detener polling cuando la pestaña está oculta
+          stopPolling();
+        }
+      };
+
+      // Iniciar polling si la pestaña está visible
+      if (document.visibilityState === 'visible') {
+        startPolling();
+      }
+
+      // Listener para cambios de visibilidad
+      document.addEventListener('visibilitychange', handleVisibilityChange);
+
+      // Cleanup
+      return () => {
+        document.removeEventListener('visibilitychange', handleVisibilityChange);
+        stopPolling();
+      };
+    }
+  }, [userType]);
+
+  // Actualizar contador cuando el usuario entra a la vista de invitaciones
+  useEffect(() => {
+    if (userType === 'athlete' && athleteActiveView === 'invitations') {
+      loadPendingInvitationsCount();
+    }
+  }, [userType, athleteActiveView]);
+
+  const athleteMenuItems: Array<{
+    id: string;
+    label: string;
+    icon: React.ComponentType<{ className?: string }>;
+    badgeCount?: number;
+  }> = [
     { id: 'calendar', label: 'Calendario', icon: Calendar },
     { id: 'training-plan', label: 'Planificación', icon: CalendarDays },
     { id: 'upload-training', label: 'Subir Entrenamientos', icon: Upload },
     { id: 'training-history', label: 'Histórico de entrenamientos', icon: FileText },
     { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
-    { id: 'status', label: 'Estado y Lesiones', icon: Heart }
+    { id: 'status', label: 'Estado y Lesiones', icon: Heart },
+    { id: 'invitations', label: 'Invitaciones', icon: Mail, badgeCount: pendingInvitationsCount }
   ];
 
   const handleCreateSession = (session: any) => {
     console.log('Session created:', session);
-    toast.success('Sesión creada exitosamente');
+    // Trigger refresh de TrainingList incrementando el contador
+    setSessionRefreshTrigger(prev => prev + 1);
     setIsSessionModalOpen(false);
   };
 
@@ -542,6 +632,8 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         );
       case 'status':
         return <AthleteStatusManagement />;
+      case 'invitations':
+        return <InvitationsView onInvitationResponded={loadPendingInvitationsCount} />;
       default:
         return <div>Vista no encontrada</div>;
     }
@@ -588,6 +680,14 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                       >
                         <item.icon className="w-4 h-4" />
                         <span>{item.label}</span>
+                        {'badgeCount' in item && item.badgeCount !== undefined && item.badgeCount > 0 && (
+                          <Badge 
+                            variant="destructive" 
+                            className="ml-auto h-5 min-w-5 px-1.5 flex items-center justify-center text-xs"
+                          >
+                            {item.badgeCount > 99 ? '99+' : item.badgeCount}
+                          </Badge>
+                        )}
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   ))}
@@ -681,6 +781,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
           isOpen={isSessionModalOpen} 
           onClose={() => setIsSessionModalOpen(false)}
           onSubmit={handleCreateSession}
+          onSessionCreated={() => setSessionRefreshTrigger(prev => prev + 1)} // Refrescar listas
           athletes={[
             { id: '1', name: 'Juan Pérez', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 4.2 },
             { id: '2', name: 'María García', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 4.5 },

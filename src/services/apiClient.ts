@@ -205,20 +205,41 @@ class ApiClient {
       (error: AxiosError) => {
         // Si recibimos 401, el token es inválido o expiró
         if (error.response?.status === 401) {
+          const tokenBeforeClear = getAuthToken();
           clearAuthToken();
-          // Opcional: redirigir al login
-          // window.location.href = '/';
+          
+          // Solo redirigir si había un token antes (evitar loops)
+          if (tokenBeforeClear) {
+            // Mostrar mensaje informativo
+            toast.error('Tu sesión ha expirado o no tienes autorización', {
+              description: 'Serás redirigido al login...',
+              duration: 3000
+            });
+            
+            // Redirigir al login después de un breve delay
+            setTimeout(() => {
+              // Verificar que el token sigue sin estar (evitar múltiples redirecciones)
+              if (!getAuthToken()) {
+                // Redirigir a la raíz (donde está el login)
+                // El token ya fue limpiado arriba, así que la app mostrará el login
+                window.location.href = '/';
+              }
+            }, 1500);
+          }
         }
         
         // Extraer y mostrar el mensaje de error del backend automáticamente
-        const errorMessage = extractErrorMessage(error);
-        if (errorMessage) {
-          toast.error(errorMessage);
-        } else if (error.message && !error.response) {
-          // Solo mostrar error.message si es un error de red (sin respuesta del servidor)
-          // Si hay respuesta del servidor pero no mensaje, no mostramos nada
-          // para evitar mensajes genéricos cuando el backend no devuelve mensaje
-          toast.error(error.message);
+        // Solo si no es un 401 (ya manejado arriba)
+        if (error.response?.status !== 401) {
+          const errorMessage = extractErrorMessage(error);
+          if (errorMessage) {
+            toast.error(errorMessage);
+          } else if (error.message && !error.response) {
+            // Solo mostrar error.message si es un error de red (sin respuesta del servidor)
+            // Si hay respuesta del servidor pero no mensaje, no mostramos nada
+            // para evitar mensajes genéricos cuando el backend no devuelve mensaje
+            toast.error(error.message);
+          }
         }
         
         return Promise.reject(error);
