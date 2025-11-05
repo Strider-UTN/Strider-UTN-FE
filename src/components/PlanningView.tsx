@@ -14,12 +14,14 @@ import { Mesocycle, Microcycle } from './types/microcycleTypes';
 interface Planning {
   id: string;
   name: string;
-  description: string;
+  description?: string; // Opcional para coincidir con el backend
   startDate: string;
-  endDate: string | null;
+  endDate?: string | null;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string; // Opcional para coincidir con el backend
   athletes: string[];
+  groups?: string[]; // Opcional para compatibilidad
+  assignmentType?: 'individual' | 'group'; // Opcional para compatibilidad
   status: 'active' | 'completed' | 'draft';
   periodsCount: number;
   groupsCount: number;
@@ -125,9 +127,6 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
           planningId={planning.id}
           userType="coach"
           athletes={athletes}
-          view="microcycle"
-          currentDate={selectedMicrocycle.startDate}
-          microcycle={selectedMicrocycle}
           onSessionCreate={(session) => {
             console.log('Nueva sesión creada:', session);
             // Aquí puedes manejar la creación de la sesión

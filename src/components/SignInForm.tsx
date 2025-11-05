@@ -76,10 +76,10 @@ export function SignInForm({
     
     try {
       // Usar el servicio de autenticación
-      const { userInfo } = await AuthService.handleGoogleLogin(credentialResponse, userType);
+      const { token, userInfo } = await AuthService.handleGoogleLogin(credentialResponse, userType);
 
-      // Construir el objeto User usando el helper
-      const completeUser = AuthService.buildUserFromGoogleInfo(userInfo, userType);
+      // Construir el objeto User usando el helper, pasando el token para extraer el tema
+      const completeUser = AuthService.buildUserFromGoogleInfo(userInfo, userType, token);
       
       onSuccessfulLogin(completeUser);
     } catch (error) {

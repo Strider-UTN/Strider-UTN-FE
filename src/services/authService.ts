@@ -150,8 +150,21 @@ export class AuthService {
    */
   static buildUserFromGoogleInfo(
     userInfo: GoogleUserInfo,
-    userType: 'athlete' | 'coach'
+    userType: 'athlete' | 'coach',
+    backendToken?: string
   ): User {
+    // Si tenemos el token del backend, extraer el tema de ahí
+    let theme: 'light' | 'dark' = 'light';
+    if (backendToken) {
+      try {
+        const decoded: any = jwtDecode(backendToken);
+        const themeFromToken = decoded.theme || decoded.Theme || 'light';
+        theme = (themeFromToken === 'dark' || themeFromToken === 'Dark') ? 'dark' : 'light';
+      } catch (error) {
+        console.error('Error al decodificar el token del backend para obtener el tema:', error);
+      }
+    }
+
     return {
       id: userInfo.sub || Date.now().toString(),
       username: userInfo.given_name 
@@ -164,6 +177,13 @@ export class AuthService {
       lastName: userInfo.family_name,
       profileImage: userInfo.picture,
       location: undefined,
+      preferences: {
+        theme: theme,
+        units: 'metric',
+        notifications: {
+          email: true
+        }
+      }
     };
   }
 
@@ -223,6 +243,10 @@ export class AuthService {
       // Obtener email del token si está disponible, sino usar el email del formulario
       const email = decoded.email || decoded.Email || '';
       
+      // Obtener el tema preferido del token (claim "theme")
+      const themeFromToken = decoded.theme || decoded.Theme || 'light';
+      const preferredTheme = (themeFromToken === 'dark' || themeFromToken === 'Dark') ? 'dark' : 'light';
+      
       return {
         id: id.toString(),
         username: email.split('@')[0] || firstName.toLowerCase() || 'usuario',
@@ -232,6 +256,13 @@ export class AuthService {
         firstName: firstName,
         lastName: lastName,
         location: undefined,
+        preferences: {
+          theme: preferredTheme,
+          units: 'metric',
+          notifications: {
+            email: true
+          }
+        }
       };
     } catch (error) {
       console.error('Error al decodificar el token del backend:', error);

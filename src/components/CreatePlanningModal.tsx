@@ -9,41 +9,33 @@ import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-import { Calendar, X, Save, Users, User, MapPin } from 'lucide-react';
+import { Calendar, X, Save, Users, User, MapPin, Loader2 } from 'lucide-react';
+import { PlanningService } from '../services/planningService';
+import type { CreatePlanningDto } from '../types/planningTypes';
 
 interface TrainingGroup {
-  id: string;
+  id: string | number;
   name: string;
   athleteCount: number;
 }
 
 interface Athlete {
-  id: string;
+  id: string | number;
   name: string;
-  groupId: string;
+  groupId: string | number;
   groupName: string;
-}
-
-interface Planning {
-  name: string;
-  description: string;
-  startDate: string;
-  endDate: string | null;
-  athletes: string[];
-  groups: string[];
-  assignmentType: 'individual' | 'group';
-  status: 'active' | 'completed' | 'draft';
 }
 
 interface CreatePlanningModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit?: (planning: Planning) => void;
+  onSubmit?: () => void; // Callback opcional que se llama después de crear exitosamente
   athletes?: Athlete[];
   groups?: TrainingGroup[];
+  isLoading?: boolean; // Indica si se están cargando los datos
 }
 
-export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], groups = [] }: CreatePlanningModalProps) {
+export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], groups = [], isLoading = false }: CreatePlanningModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -57,13 +49,14 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   const [selectedAthletes, setSelectedAthletes] = useState<string[]>([]);
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
 
   const filteredAthletes = selectedGroup === 'all' 
     ? athletes 
-    : athletes.filter(athlete => athlete.groupId === selectedGroup);
+    : athletes.filter(athlete => athlete.groupId.toString() === selectedGroup);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!formData.name.trim()) {
@@ -79,21 +72,56 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
       return;
     }
 
-    const planning: Planning = {
-      name: formData.name.trim(),
-      description: formData.description.trim(),
-      startDate: formData.startDate,
-      endDate: formData.hasEndDate && formData.endDate ? formData.endDate : null,
-      athletes: formData.assignmentType === 'individual' ? selectedAthletes : [],
-      groups: formData.assignmentType === 'group' ? selectedGroups : [],
-      assignmentType: formData.assignmentType,
-      status: formData.status
-    };
+    setIsSubmitting(true);
 
-    if (onSubmit) {
-      onSubmit(planning);
+    try {
+      // Convertir IDs de string a number
+      const athleteIds = formData.assignmentType === 'individual' 
+        ? selectedAthletes.map(id => Number(id))
+        : undefined;
+
+      const groupIds = formData.assignmentType === 'group'
+        ? selectedGroups.map(id => Number(id))
+        : undefined;
+
+      // Preparar el DTO para el backend
+      // Convertir fechas a formato ISO con hora UTC (medianoche) para evitar problemas con PostgreSQL
+      const startDateUtc = formData.startDate 
+        ? new Date(`${formData.startDate}T00:00:00Z`).toISOString()
+        : new Date().toISOString(); // Fallback (no debería pasar)
+      
+      const endDateUtc = formData.hasEndDate && formData.endDate
+        ? new Date(`${formData.endDate}T00:00:00Z`).toISOString()
+        : null;
+
+      const createDto: CreatePlanningDto = {
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        startDate: startDateUtc, // ISO string con hora UTC (ej: "2025-11-28T00:00:00.000Z")
+        endDate: endDateUtc, // ISO string con hora UTC o null
+        status: formData.status,
+        athleteIds: athleteIds,
+        groupIds: groupIds
+      };
+
+      // Crear la planificación en el backend
+      await PlanningService.createPlanning(createDto);
+
+      // Si hay un callback, llamarlo
+      if (onSubmit) {
+        onSubmit();
+      }
+
+      // Resetear el formulario y cerrar el modal
+      handleReset();
+      onClose();
+    } catch (error) {
+      // El error ya fue manejado por el interceptor de apiClient y el servicio
+      console.error('Error al crear planificación:', error);
+      // No resetear el formulario si hay error, para que el usuario pueda corregir
+    } finally {
+      setIsSubmitting(false);
     }
-    handleReset();
   };
 
   const handleReset = () => {
@@ -117,24 +145,26 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
     onClose();
   };
 
-  const handleAthleteToggle = (athleteId: string) => {
+  const handleAthleteToggle = (athleteId: string | number) => {
+    const athleteIdStr = athleteId.toString();
     setSelectedAthletes(prev => 
-      prev.includes(athleteId)
-        ? prev.filter(id => id !== athleteId)
-        : [...prev, athleteId]
+      prev.includes(athleteIdStr)
+        ? prev.filter(id => id !== athleteIdStr)
+        : [...prev, athleteIdStr]
     );
   };
 
-  const handleGroupToggle = (groupId: string) => {
+  const handleGroupToggle = (groupId: string | number) => {
+    const groupIdStr = groupId.toString();
     setSelectedGroups(prev => 
-      prev.includes(groupId)
-        ? prev.filter(id => id !== groupId)
-        : [...prev, groupId]
+      prev.includes(groupIdStr)
+        ? prev.filter(id => id !== groupIdStr)
+        : [...prev, groupIdStr]
     );
   };
 
   const handleSelectAllInGroup = () => {
-    const athleteIds = filteredAthletes.map(a => a.id);
+    const athleteIds = filteredAthletes.map(a => a.id.toString());
     const allSelected = athleteIds.every(id => selectedAthletes.includes(id));
     
     if (allSelected) {
@@ -147,15 +177,15 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   };
 
   const getSelectedAthletesInGroup = () => {
-    const athleteIds = filteredAthletes.map(a => a.id);
+    const athleteIds = filteredAthletes.map(a => a.id.toString());
     return selectedAthletes.filter(id => athleteIds.includes(id)).length;
   };
 
   const getSelectedAssignments = () => {
     if (formData.assignmentType === 'individual') {
-      return athletes.filter(a => selectedAthletes.includes(a.id));
+      return athletes.filter(a => selectedAthletes.includes(a.id.toString()));
     } else {
-      return groups.filter(g => selectedGroups.includes(g.id));
+      return groups.filter(g => selectedGroups.includes(g.id.toString()));
     }
   };
 
@@ -243,7 +273,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                       <Checkbox
                         id="hasEndDate"
                         checked={formData.hasEndDate}
-                        onCheckedChange={(checked) => 
+                        onCheckedChange={(checked: boolean) => 
                           setFormData(prev => ({ 
                             ...prev, 
                             hasEndDate: !!checked,
@@ -357,7 +387,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                         <SelectContent>
                           <SelectItem value="all">Todas las sedes</SelectItem>
                           {groups.map(group => (
-                            <SelectItem key={group.id} value={group.id}>
+                            <SelectItem key={group.id} value={group.id.toString()}>
                               {group.name} ({group.athleteCount})
                             </SelectItem>
                           ))}
@@ -377,29 +407,38 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
 
                   {/* Lista de atletas */}
                   <div className="max-h-48 overflow-y-auto border rounded-md p-3 space-y-2">
-                    {filteredAthletes.map(athlete => (
-                      <div key={athlete.id} className="flex items-center space-x-3">
-                        <Checkbox
-                          id={`athlete-${athlete.id}`}
-                          checked={selectedAthletes.includes(athlete.id)}
-                          onCheckedChange={() => handleAthleteToggle(athlete.id)}
-                        />
-                        <div className="flex-1">
-                          <label 
-                            htmlFor={`athlete-${athlete.id}`}
-                            className="text-sm cursor-pointer"
-                          >
-                            {athlete.name}
-                          </label>
-                          <p className="text-xs text-muted-foreground">{athlete.groupName}</p>
-                        </div>
+                    {isLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                        <span className="text-sm text-muted-foreground">Cargando atletas...</span>
                       </div>
-                    ))}
-                    
-                    {filteredAthletes.length === 0 && (
+                    ) : filteredAthletes.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-4">
-                        No hay atletas en la sede seleccionada
+                        {selectedGroup === 'all' 
+                          ? 'No hay atletas asignados al entrenador'
+                          : 'No hay atletas en la sede seleccionada'}
                       </p>
+                    ) : (
+                      filteredAthletes.map(athlete => (
+                        <div key={athlete.id} className="flex items-center space-x-3">
+                          <Checkbox
+                            id={`athlete-${athlete.id}`}
+                            checked={selectedAthletes.includes(athlete.id.toString())}
+                            onCheckedChange={() => handleAthleteToggle(athlete.id)}
+                          />
+                          <div className="flex-1">
+                            <label 
+                              htmlFor={`athlete-${athlete.id}`}
+                              className="text-sm cursor-pointer"
+                            >
+                              {athlete.name}
+                            </label>
+                            <p className="text-xs text-muted-foreground">
+                              {athlete.groupName || 'Sin grupo'}
+                            </p>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
@@ -420,31 +459,36 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
 
                   {/* Lista de sedes */}
                   <div className="max-h-48 overflow-y-auto border rounded-md p-3 space-y-2">
-                    {groups.map(group => (
-                      <div key={group.id} className="flex items-center space-x-3">
-                        <Checkbox
-                          id={`group-${group.id}`}
-                          checked={selectedGroups.includes(group.id)}
-                          onCheckedChange={() => handleGroupToggle(group.id)}
-                        />
-                        <div className="flex-1">
-                          <label 
-                            htmlFor={`group-${group.id}`}
-                            className="text-sm cursor-pointer font-medium"
-                          >
-                            {group.name}
-                          </label>
-                          <p className="text-xs text-muted-foreground">
-                            {group.athleteCount} atletas
-                          </p>
-                        </div>
+                    {isLoading ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                        <span className="text-sm text-muted-foreground">Cargando sedes...</span>
                       </div>
-                    ))}
-                    
-                    {groups.length === 0 && (
+                    ) : groups.length === 0 ? (
                       <p className="text-sm text-muted-foreground text-center py-4">
                         No hay sedes disponibles
                       </p>
+                    ) : (
+                      groups.map(group => (
+                        <div key={group.id} className="flex items-center space-x-3">
+                          <Checkbox
+                            id={`group-${group.id}`}
+                            checked={selectedGroups.includes(group.id.toString())}
+                            onCheckedChange={() => handleGroupToggle(group.id)}
+                          />
+                          <div className="flex-1">
+                            <label 
+                              htmlFor={`group-${group.id}`}
+                              className="text-sm cursor-pointer font-medium"
+                            >
+                              {group.name}
+                            </label>
+                            <p className="text-xs text-muted-foreground">
+                              {group.athleteCount} atletas
+                            </p>
+                          </div>
+                        </div>
+                      ))
                     )}
                   </div>
                 </div>
@@ -492,11 +536,20 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
           </Button>
           <Button 
             onClick={handleSubmit}
-            disabled={!isFormValid}
+            disabled={!isFormValid || isSubmitting || isLoading}
             className="bg-accent hover:bg-accent/90"
           >
-            <Save className="w-4 h-4 mr-2" />
-            Crear Planificación
+            {isSubmitting ? (
+              <>
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                Creando...
+              </>
+            ) : (
+              <>
+                <Save className="w-4 h-4 mr-2" />
+                Crear Planificación
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -6,6 +6,9 @@ import { Textarea } from './ui/textarea';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Badge } from './ui/badge';
 import { X, Plus, MapPin, Calendar } from 'lucide-react';
+import { GroupService } from '../services/groupService';
+import { toast } from 'sonner';
+import type { CreateTrainingGroupDto } from '../types/groupTypes';
 
 interface TrainingGroup {
   name: string;
@@ -16,10 +19,11 @@ interface TrainingGroup {
 interface CreateGroupModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onCreateGroup: (group: TrainingGroup) => void;
+  onCreateGroup?: (group: TrainingGroup) => void; // Opcional para retrocompatibilidad
+  onGroupCreated?: () => void; // Callback para refrescar la lista en el Dashboard
 }
 
-export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroupModalProps) {
+export function CreateGroupModal({ isOpen, onClose, onCreateGroup, onGroupCreated }: CreateGroupModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     trainingPoints: [] as string[],
@@ -62,36 +66,61 @@ export function CreateGroupModal({ isOpen, onClose, onCreateGroup }: CreateGroup
     e.preventDefault();
     
     if (!formData.name.trim()) {
+      toast.error('El nombre de la sede es requerido');
       return;
     }
     
     if (formData.trainingPoints.length === 0) {
+      toast.error('Debes agregar al menos un punto de entrenamiento');
       return;
     }
 
     setIsSubmitting(true);
     
-    // Simular tiempo de procesamiento
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    
-    const newGroup: TrainingGroup = {
-      name: formData.name.trim(),
-      trainingPoints: formData.trainingPoints,
-      createdDate: formData.createdDate
-    };
-    
-    onCreateGroup(newGroup);
-    
-    // Reset form
-    setFormData({
-      name: '',
-      trainingPoints: [],
-      currentPoint: '',
-      createdDate: new Date().toISOString().split('T')[0]
-    });
-    
-    setIsSubmitting(false);
-    onClose();
+    try {
+      // Crear DTO para el backend
+      const createDto: CreateTrainingGroupDto = {
+        name: formData.name.trim(),
+        trainingPoints: formData.trainingPoints,
+        description: undefined, // Puedes agregar un campo de descripción al formulario si lo necesitas
+        maxMembers: undefined,
+        isPublic: false,
+        allowSelfJoin: false,
+        requireApproval: true
+      };
+
+      // Llamar al servicio para crear la sede en el backend
+      const newGroup = await GroupService.createGroup(createDto);
+      
+      // Si hay un callback legacy, mantenerlo por retrocompatibilidad
+      if (onCreateGroup) {
+        onCreateGroup({
+          name: newGroup.name,
+          trainingPoints: newGroup.trainingPoints,
+          createdDate: newGroup.createdDate
+        });
+      }
+
+      // Notificar al Dashboard para refrescar la lista
+      if (onGroupCreated) {
+        onGroupCreated();
+      }
+      
+      // Reset form
+      setFormData({
+        name: '',
+        trainingPoints: [],
+        currentPoint: '',
+        createdDate: new Date().toISOString().split('T')[0]
+      });
+      
+      onClose();
+    } catch (error) {
+      // El error ya fue manejado por el servicio (toast)
+      console.error('Error al crear sede:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleClose = () => {

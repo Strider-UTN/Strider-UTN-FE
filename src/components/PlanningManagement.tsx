@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -12,6 +12,10 @@ import { Checkbox } from './ui/checkbox';
 import { PlusCircle, Calendar, Users, Target, Trash2, Settings, Eye, Search, Filter, Edit, X } from 'lucide-react';
 import { PlanningView } from './PlanningView';
 import { CreatePlanningModal } from './CreatePlanningModal';
+import { PlanningService } from '../services/planningService';
+import { CoachAthleteRelationshipService, type AthleteResponseDto } from '../services/coachAthleteRelationshipService';
+import { GroupService } from '../services/groupService';
+import type { TrainingGroup as GroupServiceTrainingGroup } from '../types/groupTypes';
 import { toast } from 'sonner';
 
 interface TrainingGroup {
@@ -30,15 +34,16 @@ interface Athlete {
 interface Planning {
   id: string;
   name: string;
-  description: string;
+  description?: string; // Opcional para coincidir con el backend
   startDate: string;
-  endDate: string | null; // null = indefinido
+  endDate?: string | null; // null = indefinido
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string; // Opcional para coincidir con el backend
   athletes: string[]; // IDs de atletas
   groups: string[]; // IDs de sedes
   assignmentType: 'individual' | 'group';
   status: 'active' | 'completed' | 'draft';
+  athletesCount?: number; // ✅ Conteo de atletas asignados desde el backend
   periodsCount: number;
   groupsCount: number;
 }
@@ -113,13 +118,21 @@ interface PlanningManagementProps {
 
 export function PlanningManagement({ onBack }: PlanningManagementProps) {
   const [selectedPlanning, setSelectedPlanning] = useState<Planning | null>(null);
-  const [plannings, setPlannings] = useState<Planning[]>(mockPlannings);
+  const [plannings, setPlannings] = useState<Planning[]>([]);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [editingPlanning, setEditingPlanning] = useState<Planning | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [athletes, setAthletes] = useState<Athlete[]>([]);
+  const [groups, setGroups] = useState<TrainingGroup[]>([]);
+  const [isLoadingAthletes, setIsLoadingAthletes] = useState(false);
+  const [selectedPlanningForAthletes, setSelectedPlanningForAthletes] = useState<Planning | null>(null);
+  const [assignedAthletes, setAssignedAthletes] = useState<Athlete[]>([]);
+  const [isLoadingAssignedAthletes, setIsLoadingAssignedAthletes] = useState(false);
+  const [isAthletesModalOpen, setIsAthletesModalOpen] = useState(false);
   const [editForm, setEditForm] = useState({
     name: '',
     description: '',
@@ -130,9 +143,117 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     athletes: [] as string[]
   });
 
+  // Cargar planificaciones al montar el componente
+  useEffect(() => {
+    loadPlannings();
+    loadAthletesAndGroups();
+  }, []);
+
+  // Cargar atletas y grupos cuando se abre el modal de creación
+  useEffect(() => {
+    if (isCreateModalOpen) {
+      loadAthletesAndGroups();
+    }
+  }, [isCreateModalOpen]);
+
+  const loadAthletesAndGroups = async () => {
+    setIsLoadingAthletes(true);
+    try {
+      // Cargar atletas y grupos en paralelo
+      const [athletesData, groupsData] = await Promise.all([
+        CoachAthleteRelationshipService.getMyAthletes('Accepted'),
+        GroupService.getAllGroups()
+      ]);
+
+      // Mapear grupos
+      const mappedGroups: TrainingGroup[] = groupsData.map(g => ({
+        id: g.id.toString(),
+        name: g.name,
+        athleteCount: g.memberCount || 0
+      }));
+
+      setGroups(mappedGroups);
+
+      // Obtener información de grupos para cada atleta
+      // Para cada grupo, obtener sus miembros y mapear atletas
+      const athleteGroupMap = new Map<number, { groupId: string; groupName: string }>();
+      
+      // Cargar miembros de cada grupo para mapear atletas a grupos
+      const groupMembersPromises = groupsData.map(async (group) => {
+        try {
+          const members = await GroupService.getGroupMembers(group.id.toString());
+          // Mapear miembros activos a sus grupos
+          members
+            .filter(m => m.status === 'active')
+            .forEach(member => {
+              athleteGroupMap.set(member.userId, {
+                groupId: group.id.toString(),
+                groupName: group.name
+              });
+            });
+        } catch (error) {
+          console.error(`Error al obtener miembros del grupo ${group.id}:`, error);
+        }
+      });
+
+      await Promise.all(groupMembersPromises);
+
+      // Mapear atletas con información de grupo
+      const mappedAthletes: Athlete[] = athletesData.map(athlete => {
+        const groupInfo = athleteGroupMap.get(athlete.id);
+        return {
+          id: athlete.id.toString(),
+          name: athlete.name,
+          groupId: groupInfo?.groupId || '',
+          groupName: groupInfo?.groupName || 'Sin grupo'
+        };
+      });
+
+      setAthletes(mappedAthletes);
+    } catch (error) {
+      console.error('Error al cargar atletas y grupos:', error);
+      toast.error('Error al cargar atletas y grupos');
+    } finally {
+      setIsLoadingAthletes(false);
+    }
+  };
+
+  const loadPlannings = async () => {
+    setIsLoading(true);
+    try {
+      const loadedPlannings = await PlanningService.getAllPlannings();
+      // Convertir los IDs de number a string para compatibilidad con el código existente
+      setPlannings(loadedPlannings.map((p): Planning => {
+        // p es de tipo Planning del servicio, pero necesitamos acceder a períodosCount y athletesCount del DTO
+        const planningDto = p as any; // Usar 'as any' para acceder a períodosCount y athletesCount que vienen del DTO
+        return {
+          id: p.id.toString(),
+          name: p.name,
+          description: p.description, // Puede ser undefined
+          startDate: p.startDate,
+          endDate: p.endDate ?? null,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt, // Puede ser undefined
+          athletes: (p.athleteIds || []).map(id => id.toString()),
+          groups: [], // Los grupos no vienen en la respuesta, se manejan individualmente
+          assignmentType: (p.athleteIds && p.athleteIds.length > 0) ? 'individual' : 'group' as 'individual' | 'group',
+          status: p.status,
+          athletesCount: planningDto.athletesCount ?? 0, // ✅ Usar athletesCount del backend
+          periodsCount: planningDto.periodsCount || 0,
+          groupsCount: 0 // No se cuenta en la respuesta del backend
+        };
+      }));
+    } catch (error) {
+      console.error('Error al cargar planificaciones:', error);
+      toast.error('Error al cargar las planificaciones');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   const filteredPlannings = plannings.filter(planning => {
     const matchesSearch = planning.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         planning.description.toLowerCase().includes(searchTerm.toLowerCase());
+                         (planning.description || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesStatus = statusFilter === 'all' || planning.status === statusFilter;
     return matchesSearch && matchesStatus;
   });
@@ -155,21 +276,10 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     }
   };
 
-  const handleCreatePlanning = (planningData: Omit<Planning, 'id' | 'createdAt' | 'updatedAt' | 'periodsCount' | 'groupsCount'>) => {
-    const newPlanning: Planning = {
-      ...planningData,
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      periodsCount: 0,
-      groupsCount: 0
-    };
-
-    setPlannings(prev => [newPlanning, ...prev]);
+  const handleCreatePlanning = async () => {
+    // Recargar las planificaciones desde el backend
+    await loadPlannings();
     setIsCreateModalOpen(false);
-    
-    const type = planningData.assignmentType === 'individual' ? 'individual' : 'grupal';
-    toast.success(`Planificación ${type} creada exitosamente`);
   };
 
   const handleDeletePlanning = (planningId: string) => {
@@ -182,7 +292,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     setEditingPlanning(planning);
     setEditForm({
       name: planning.name,
-      description: planning.description,
+      description: planning.description || '',
       status: planning.status,
       startDate: planning.startDate,
       endDate: planning.endDate || '',
@@ -240,6 +350,12 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
   };
 
   const getTotalAthletesInPlanning = (planning: Planning) => {
+    // ✅ Usar athletesCount del backend si está disponible
+    if (planning.athletesCount !== undefined && planning.athletesCount !== null) {
+      return planning.athletesCount;
+    }
+    
+    // Fallback al cálculo anterior si no está disponible
     if (planning.assignmentType === 'individual') {
       return planning.athletes.length;
     } else {
@@ -247,6 +363,60 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
         const group = mockGroups.find(g => g.id === groupId);
         return total + (group?.athleteCount || 0);
       }, 0);
+    }
+  };
+
+  const handleViewAssignedAthletes = async (planning: Planning) => {
+    setSelectedPlanningForAthletes(planning);
+    setIsAthletesModalOpen(true);
+    setIsLoadingAssignedAthletes(true);
+
+    try {
+      // Obtener los atletas asignados directamente desde el backend usando el nuevo endpoint
+      const assignedAthletesData = await PlanningService.getAssignedAthletes(Number(planning.id));
+      
+      // Obtener grupos para mapear la información de grupo de cada atleta
+      const groupsData = await GroupService.getAllGroups();
+      
+      // Crear mapa de atletas a grupos
+      const athleteGroupMap = new Map<number, { groupId: string; groupName: string }>();
+      
+      // Cargar miembros de cada grupo para mapear atletas a grupos
+      const groupMembersPromises = groupsData.map(async (group) => {
+        try {
+          const members = await GroupService.getGroupMembers(group.id.toString());
+          members
+            .filter(m => m.status === 'active')
+            .forEach(member => {
+              athleteGroupMap.set(member.userId, {
+                groupId: group.id.toString(),
+                groupName: group.name
+              });
+            });
+        } catch (error) {
+          console.error(`Error al obtener miembros del grupo ${group.id}:`, error);
+        }
+      });
+      await Promise.all(groupMembersPromises);
+      
+      // Mapear los atletas asignados con información de grupo
+      const assigned = assignedAthletesData.map(athleteData => {
+        const groupInfo = athleteGroupMap.get(athleteData.athleteId);
+        return {
+          id: athleteData.athleteId.toString(),
+          name: athleteData.athleteName,
+          groupId: groupInfo?.groupId || '',
+          groupName: groupInfo?.groupName || 'Sin grupo'
+        };
+      });
+      
+      setAssignedAthletes(assigned);
+    } catch (error) {
+      console.error('Error al cargar atletas asignados:', error);
+      toast.error('Error al cargar los atletas asignados');
+      setIsAthletesModalOpen(false);
+    } finally {
+      setIsLoadingAssignedAthletes(false);
     }
   };
 
@@ -286,8 +456,16 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
         athletes={getAthletesInPlanning(selectedPlanning)}
         onBack={() => setSelectedPlanning(null)}
         onUpdate={(updatedPlanning) => {
-          setPlannings(prev => prev.map(p => p.id === updatedPlanning.id ? updatedPlanning : p));
-          setSelectedPlanning(updatedPlanning);
+          // Asegurar que la planificación actualizada tenga todos los campos necesarios
+          const fullUpdatedPlanning: Planning = {
+            ...updatedPlanning,
+            groups: updatedPlanning.groups || [],
+            assignmentType: updatedPlanning.assignmentType || 'individual',
+            periodsCount: updatedPlanning.periodsCount || 0,
+            groupsCount: updatedPlanning.groupsCount || 0
+          };
+          setPlannings(prev => prev.map(p => p.id === fullUpdatedPlanning.id ? fullUpdatedPlanning : p));
+          setSelectedPlanning(fullUpdatedPlanning);
         }}
       />
     );
@@ -388,44 +566,29 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
                 <div>
                   <span className="text-muted-foreground">Fin:</span>
                   <div className="font-medium">
-                    {planning.endDate ? formatDate(planning.endDate) : 'Indefinido'}
+                    {planning.endDate ? (
+                      formatDate(planning.endDate)
+                    ) : (
+                      <span className="flex items-center gap-1 text-muted-foreground italic">
+                        <Calendar className="w-3 h-3" />
+                        Sin fecha fin
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-4 text-sm">
+              {planning.athletesCount && planning.athletesCount > 0 && (
                 <div>
-                  <span className="text-muted-foreground">
-                    {planning.assignmentType === 'individual' ? 'Atletas:' : 'Total atletas:'}
-                  </span>
-                  <div className="font-medium">{getTotalAthletesInPlanning(planning)}</div>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">Tipo:</span>
-                  <div className="font-medium">
-                    {planning.assignmentType === 'individual' ? 'Individual' : 'Grupal'}
-                  </div>
-                </div>
-              </div>
-
-              {(planning.athletes.length > 0 || planning.groups.length > 0) && (
-                <div>
-                  <span className="text-sm text-muted-foreground">
-                    {planning.assignmentType === 'individual' ? 'Atletas asignados:' : 'Sedes asignadas:'}
-                  </span>
+                  <span className="text-sm text-muted-foreground">Atletas asignados:</span>
                   <div className="flex flex-wrap gap-1 mt-1">
-                    {planning.assignmentType === 'individual' 
-                      ? getAthletesInPlanning(planning).map(athlete => (
-                          <Badge key={athlete.id} variant="outline" className="text-xs">
-                            {athlete.name}
-                          </Badge>
-                        ))
-                      : getGroupsInPlanning(planning.groups).map(group => (
-                          <Badge key={group.id} variant="outline" className="text-xs">
-                            {group.name} ({group.athleteCount})
-                          </Badge>
-                        ))
-                    }
+                    <Badge 
+                      variant="outline" 
+                      className="text-xs cursor-pointer hover:bg-accent transition-colors"
+                      onClick={() => handleViewAssignedAthletes(planning)}
+                    >
+                      {planning.athletesCount} atleta{planning.athletesCount > 1 ? 's' : ''}
+                    </Badge>
                   </div>
                 </div>
               )}
@@ -458,29 +621,43 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
         ))}
       </div>
 
-      {filteredPlannings.length === 0 && (
+      {isLoading ? (
+        <Card className="text-center py-12">
+          <CardContent>
+            <div className="flex items-center justify-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-3 text-muted-foreground">Cargando planificaciones...</span>
+            </div>
+          </CardContent>
+        </Card>
+      ) : filteredPlannings.length === 0 ? (
         <Card className="text-center py-12">
           <CardContent>
             <Calendar className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
             <h3 className="text-lg font-semibold mb-2">No se encontraron planificaciones</h3>
             <p className="text-muted-foreground mb-4">
-              Ajusta los filtros o crea una nueva planificación
+              {searchTerm || statusFilter !== 'all' 
+                ? 'Ajusta los filtros para ver más resultados'
+                : 'Crea tu primera planificación para comenzar'}
             </p>
-            <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90">
-              <PlusCircle className="w-4 h-4 mr-2" />
-              Crear Primera Planificación
-            </Button>
+            {!searchTerm && statusFilter === 'all' && (
+              <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90">
+                <PlusCircle className="w-4 h-4 mr-2" />
+                Crear Primera Planificación
+              </Button>
+            )}
           </CardContent>
         </Card>
-      )}
+      ) : null}
 
       {/* Modal de creación */}
       <CreatePlanningModal
         isOpen={isCreateModalOpen}
         onClose={() => setIsCreateModalOpen(false)}
         onSubmit={handleCreatePlanning}
-        athletes={mockAthletes}
-        groups={mockGroups}
+        athletes={athletes}
+        groups={groups}
+        isLoading={isLoadingAthletes}
       />
 
       {/* Modal de edición */}
@@ -574,9 +751,9 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
                     <Checkbox
                       id="has-end-date"
                       checked={editForm.hasEndDate}
-                      onCheckedChange={(checked) => setEditForm(prev => ({ 
+                      onCheckedChange={(checked: boolean) => setEditForm(prev => ({ 
                         ...prev, 
-                        hasEndDate: !!checked,
+                        hasEndDate: checked,
                         endDate: checked ? prev.endDate : ''
                       }))}
                     />
@@ -677,6 +854,66 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Modal de atletas asignados */}
+      <Dialog open={isAthletesModalOpen} onOpenChange={setIsAthletesModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5" />
+              Atletas Asignados
+            </DialogTitle>
+            <DialogDescription>
+              {selectedPlanningForAthletes && (
+                <span>
+                  Lista de atletas asignados a la planificación "{selectedPlanningForAthletes.name}"
+                </span>
+              )}
+            </DialogDescription>
+          </DialogHeader>
+
+          {isLoadingAssignedAthletes ? (
+            <div className="flex items-center justify-center py-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+              <span className="ml-3 text-muted-foreground">Cargando atletas...</span>
+            </div>
+          ) : assignedAthletes.length > 0 ? (
+            <div className="space-y-2">
+              <div className="text-sm text-muted-foreground mb-4">
+                {assignedAthletes.length} atleta{assignedAthletes.length > 1 ? 's' : ''} asignado{assignedAthletes.length > 1 ? 's' : ''}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {assignedAthletes.map(athlete => (
+                  <Card key={athlete.id} className="p-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="font-medium">{athlete.name}</div>
+                        <div className="text-sm text-muted-foreground">
+                          {athlete.groupName}
+                        </div>
+                      </div>
+                    </div>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div className="text-center py-12">
+              <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
+              <h3 className="font-semibold mb-2">No hay atletas asignados</h3>
+              <p className="text-muted-foreground">
+                Esta planificación no tiene atletas asignados aún
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsAthletesModalOpen(false)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

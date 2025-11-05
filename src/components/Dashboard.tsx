@@ -13,11 +13,13 @@ import { AthletePerformanceView } from './AthletePerformanceView';
 import { AthleteStatusManagement } from './AthleteStatusManagement';
 import { InvitationsView } from './InvitationsView';
 import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
+import { GroupService } from '../services/groupService';
 import { PlanningManagement } from './PlanningManagement';
 import { ReportsView } from './ReportsView';
 import { CreateGroupModal } from './CreateGroupModal';
 import { GroupConfigurationModal } from './GroupConfigurationModal';
 import { GroupAthleteManagementModal } from './GroupAthleteManagementModal';
+import { InviteAthleteToGroupModal } from './InviteAthleteToGroupModal';
 import { FeedbackManagement } from './FeedbackManagement';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { 
@@ -40,7 +42,8 @@ import {
   X,
   Upload,
   Heart,
-  Mail
+  Mail,
+  UserPlus
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -147,32 +150,12 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   // Estados para filtros de sedes
   const [groupNameFilter, setGroupNameFilter] = useState('');
   const [trainingPointFilter, setTrainingPointFilter] = useState('all');
-  const [trainingGroups, setTrainingGroups] = useState<TrainingGroup[]>([
-    {
-      id: 'group1',
-      name: 'Sede Madrid Centro',
-      trainingPoints: ['Pista Municipal Madrid', 'Parque del Retiro'],
-      createdDate: '2024-01-15',
-      memberCount: 12,
-      description: 'Grupo principal de fondistas en el centro de Madrid'
-    },
-    {
-      id: 'group2',
-      name: 'Sede Madrid Norte',
-      trainingPoints: ['Pista Vallehermoso', 'Monte de El Pardo'],
-      createdDate: '2024-02-20',
-      memberCount: 8,
-      description: 'Sede especializada en entrenamientos de montaña'
-    },
-    {
-      id: 'group3',
-      name: 'Sede Madrid Sur',
-      trainingPoints: ['Pista de Leganes', 'Cerro de los Ángeles'],
-      createdDate: '2024-03-10',
-      memberCount: 15,
-      description: 'Sede con enfoque en medio fondo y velocidad'
-    }
-  ]);
+  const [trainingGroups, setTrainingGroups] = useState<TrainingGroup[]>([]);
+  const [isLoadingGroups, setIsLoadingGroups] = useState(false);
+  
+  // Estados para invitaciones a grupos
+  const [isInviteAthleteToGroupModalOpen, setIsInviteAthleteToGroupModalOpen] = useState(false);
+  const [selectedGroupForInvitation, setSelectedGroupForInvitation] = useState<TrainingGroup | null>(null);
 
   // Menú reorganizado sin sesiones: mis atletas, mis sedes, planificación, reportes, retroalimentación, plantillas
   const coachMenuItems = [
@@ -188,12 +171,33 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   const loadPendingInvitationsCount = useCallback(async () => {
     if (userType === 'athlete') {
       try {
-        const invitations = await CoachAthleteRelationshipService.getPendingInvitations();
-        setPendingInvitationsCount(invitations.length);
+        // Cargar invitaciones de coaches y sedes en paralelo
+        const [coachInvitations, groupInvitations] = await Promise.all([
+          CoachAthleteRelationshipService.getPendingInvitations(),
+          GroupService.getPendingInvitations()
+        ]);
+        // Sumar ambas cantidades
+        setPendingInvitationsCount(coachInvitations.length + groupInvitations.length);
       } catch (error) {
         // Error silencioso, el usuario verá el error si va a la vista de invitaciones
         console.error('Error al cargar invitaciones pendientes:', error);
       }
+    }
+  }, [userType]);
+
+  // Función para recargar las sedes desde el backend
+  const loadTrainingGroups = useCallback(async () => {
+    if (userType !== 'coach') return;
+    
+    setIsLoadingGroups(true);
+    try {
+      const groups = await GroupService.getAllGroups();
+      setTrainingGroups(groups);
+    } catch (error) {
+      console.error('Error al cargar sedes:', error);
+      // El error ya fue manejado por el servicio
+    } finally {
+      setIsLoadingGroups(false);
     }
   }, [userType]);
 
@@ -255,6 +259,13 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     }
   }, [userType]);
 
+  // Cargar sedes al montar el componente si es coach
+  useEffect(() => {
+    if (userType === 'coach') {
+      loadTrainingGroups();
+    }
+  }, [userType, loadTrainingGroups]);
+
   // Actualizar contador cuando el usuario entra a la vista de invitaciones
   useEffect(() => {
     if (userType === 'athlete' && athleteActiveView === 'invitations') {
@@ -284,29 +295,41 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     setIsSessionModalOpen(false);
   };
 
-  const handleCreateGroup = (groupData: { name: string; trainingPoints: string[]; createdDate: string }) => {
-    const newGroup: TrainingGroup = {
-      id: `group-${Date.now()}`,
-      name: groupData.name,
-      trainingPoints: groupData.trainingPoints,
-      createdDate: groupData.createdDate,
-      memberCount: 0,
-      description: `Nueva sede: ${groupData.name}`
-    };
-    
-    setTrainingGroups(prev => [...prev, newGroup]);
-    toast.success(`Sede "${groupData.name}" creada exitosamente`);
+  const handleCreateGroup = async (groupData?: { name: string; trainingPoints: string[]; createdDate: string }) => {
+    // El modal ahora maneja la creación directamente con el servicio
+    // Este callback es solo para retrocompatibilidad
+    if (groupData) {
+      // Recargar las sedes desde el backend
+      await loadTrainingGroups();
+    }
+  };
+
+  const handleGroupCreated = async () => {
+    // Recargar las sedes después de crear una nueva
+    await loadTrainingGroups();
     setIsGroupModalOpen(false);
   };
 
-  const handleUpdateGroup = (updatedGroup: TrainingGroup) => {
-    setTrainingGroups(prev => prev.map(group => 
-      group.id === updatedGroup.id ? updatedGroup : group
-    ));
+  const handleUpdateGroup = async (updatedGroup: TrainingGroup) => {
+    try {
+      // El modal de configuración debería llamar directamente a GroupService.updateGroup()
+      // Este callback es solo para retrocompatibilidad
+      // Recargar las sedes desde el backend
+      await loadTrainingGroups();
+    } catch (error) {
+      console.error('Error al actualizar sede:', error);
+    }
   };
 
-  const handleDeleteGroup = (groupId: string) => {
-    setTrainingGroups(prev => prev.filter(group => group.id !== groupId));
+  const handleDeleteGroup = async (groupId: string) => {
+    try {
+      await GroupService.deleteGroup(groupId);
+      // Recargar las sedes desde el backend
+      await loadTrainingGroups();
+    } catch (error) {
+      // El error ya fue manejado por el servicio
+      console.error('Error al eliminar sede:', error);
+    }
   };
 
   const handleProfileClick = () => {
@@ -491,17 +514,30 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
               </div>
               <div className="flex items-center justify-between text-sm text-muted-foreground">
                 <span>Creada el {formatDate(group.createdDate)}</span>
-                <Button 
-                  variant="outline" 
-                  size="sm"
-                  onClick={() => {
-                    setSelectedGroupForAthletes(group);
-                    setIsAthleteManagementOpen(true);
-                  }}
-                >
-                  <Users className="w-4 h-4 mr-1" />
-                  Gestionar Atletas
-                </Button>
+                <div className="flex gap-2">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setSelectedGroupForInvitation(group);
+                      setIsInviteAthleteToGroupModalOpen(true);
+                    }}
+                  >
+                    <UserPlus className="w-4 h-4 mr-1" />
+                    Invitar Atletas
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => {
+                      setSelectedGroupForAthletes(group);
+                      setIsAthleteManagementOpen(true);
+                    }}
+                  >
+                    <Users className="w-4 h-4 mr-1" />
+                    Gestionar Atletas
+                  </Button>
+                </div>
               </div>
             </div>
           </CardContent>
@@ -793,10 +829,11 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         />
       )}
       
-      <CreateGroupModal 
-        isOpen={isGroupModalOpen} 
-        onClose={() => setIsGroupModalOpen(false)} 
+      <CreateGroupModal
+        isOpen={isGroupModalOpen}
+        onClose={() => setIsGroupModalOpen(false)}
         onCreateGroup={handleCreateGroup}
+        onGroupCreated={handleGroupCreated}
       />
       
       <GroupConfigurationModal 
@@ -810,6 +847,19 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         isOpen={isAthleteManagementOpen} 
         onClose={() => setIsAthleteManagementOpen(false)}
         group={selectedGroupForAthletes}
+      />
+
+      <InviteAthleteToGroupModal
+        isOpen={isInviteAthleteToGroupModalOpen}
+        onClose={() => {
+          setIsInviteAthleteToGroupModalOpen(false);
+          setSelectedGroupForInvitation(null);
+        }}
+        group={selectedGroupForInvitation}
+        onInvitationSent={() => {
+          // Recargar grupos y miembros si es necesario
+          loadTrainingGroups();
+        }}
       />
 
       {/* Modal de Perfil de Usuario */}

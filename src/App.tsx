@@ -108,11 +108,11 @@ export default function App() {
   }, []);
 
   const handleSuccessfulAuth = (userData: User) => {
-    // Asegurar que siempre tenga preferencias con tema por defecto
+    // Asegurar que siempre tenga preferencias con tema (preferir el que viene del token, sino 'light' por defecto)
     const userWithDefaults: User = {
       ...userData,
       preferences: {
-        theme: 'light', // Por defecto siempre claro
+        theme: userData.preferences?.theme || 'light', // Usar el tema del token si existe, sino 'light'
         units: 'metric',
         notifications: {
           email: true
@@ -159,17 +159,28 @@ export default function App() {
     setCurrentUser(updatedUser);
   };
 
-  const handleToggleTheme = () => {
+  const handleToggleTheme = async () => {
     if (currentUser) {
       const newTheme = currentUser.preferences?.theme === 'dark' ? 'light' : 'dark';
-      const updatedUser: User = {
-        ...currentUser,
-        preferences: {
-          ...currentUser.preferences,
-          theme: newTheme
-        }
-      };
-      setCurrentUser(updatedUser);
+      
+      // Actualizar en el backend
+      try {
+        const { UserService } = await import('./services/userService');
+        await UserService.updateTheme(newTheme);
+        
+        // Actualizar el estado local
+        const updatedUser: User = {
+          ...currentUser,
+          preferences: {
+            ...currentUser.preferences,
+            theme: newTheme
+          }
+        };
+        setCurrentUser(updatedUser);
+      } catch (error) {
+        console.error('Error al actualizar el tema:', error);
+        // El error ya fue manejado por el servicio
+      }
     }
   };
 
