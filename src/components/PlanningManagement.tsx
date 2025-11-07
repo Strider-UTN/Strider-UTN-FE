@@ -124,7 +124,6 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
   const [editingPlanning, setEditingPlanning] = useState<Planning | null>(null);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [groups, setGroups] = useState<TrainingGroup[]>([]);
@@ -133,15 +132,6 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
   const [assignedAthletes, setAssignedAthletes] = useState<Athlete[]>([]);
   const [isLoadingAssignedAthletes, setIsLoadingAssignedAthletes] = useState(false);
   const [isAthletesModalOpen, setIsAthletesModalOpen] = useState(false);
-  const [editForm, setEditForm] = useState({
-    name: '',
-    description: '',
-    status: 'draft' as 'active' | 'completed' | 'draft',
-    startDate: '',
-    endDate: '',
-    hasEndDate: false,
-    athletes: [] as string[]
-  });
 
   // Cargar planificaciones al montar el componente
   useEffect(() => {
@@ -149,12 +139,12 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     loadAthletesAndGroups();
   }, []);
 
-  // Cargar atletas y grupos cuando se abre el modal de creación
+  // Cargar atletas y grupos cuando se abre el modal de creación o edición
   useEffect(() => {
-    if (isCreateModalOpen) {
+    if (isCreateModalOpen || editingPlanning) {
       loadAthletesAndGroups();
     }
-  }, [isCreateModalOpen]);
+  }, [isCreateModalOpen, editingPlanning]);
 
   const loadAthletesAndGroups = async () => {
     setIsLoadingAthletes(true);
@@ -280,61 +270,29 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     // Recargar las planificaciones desde el backend
     await loadPlannings();
     setIsCreateModalOpen(false);
+    setEditingPlanning(null);
   };
 
-  const handleDeletePlanning = (planningId: string) => {
-    setPlannings(prev => prev.filter(p => p.id !== planningId));
-    setDeleteConfirmId(null);
-    toast.success('Planificación eliminada');
+  const handleDeletePlanning = async (planningId: string) => {
+    try {
+      await PlanningService.deletePlanning(Number(planningId));
+      // Recargar las planificaciones desde el backend
+      await loadPlannings();
+      setDeleteConfirmId(null);
+    } catch (error) {
+      // El error ya fue manejado por el servicio
+      console.error('Error al eliminar planificación:', error);
+    }
   };
 
   const handleEditPlanning = (planning: Planning) => {
     setEditingPlanning(planning);
-    setEditForm({
-      name: planning.name,
-      description: planning.description || '',
-      status: planning.status,
-      startDate: planning.startDate,
-      endDate: planning.endDate || '',
-      hasEndDate: !!planning.endDate,
-      athletes: planning.athletes
-    });
-    setIsEditModalOpen(true);
+    setIsCreateModalOpen(true);
   };
 
-  const handleUpdatePlanning = () => {
-    if (!editingPlanning) return;
-
-    if (!editForm.name.trim()) {
-      toast.error('El nombre es obligatorio');
-      return;
-    }
-
-    if (!editForm.startDate) {
-      toast.error('La fecha de inicio es obligatoria');
-      return;
-    }
-
-    if (editForm.hasEndDate && editForm.endDate && new Date(editForm.endDate) <= new Date(editForm.startDate)) {
-      toast.error('La fecha de fin debe ser posterior a la fecha de inicio');
-      return;
-    }
-
-    const updatedPlanning: Planning = {
-      ...editingPlanning,
-      name: editForm.name.trim(),
-      description: editForm.description.trim(),
-      status: editForm.status,
-      startDate: editForm.startDate,
-      endDate: editForm.hasEndDate ? editForm.endDate : null,
-      athletes: editForm.athletes,
-      updatedAt: new Date().toISOString()
-    };
-
-    setPlannings(prev => prev.map(p => p.id === updatedPlanning.id ? updatedPlanning : p));
-    setIsEditModalOpen(false);
+  const handleCloseModal = () => {
+    setIsCreateModalOpen(false);
     setEditingPlanning(null);
-    toast.success('Planificación actualizada exitosamente');
   };
 
   const getAthletesInPlanning = (planning: Planning) => {
@@ -420,25 +378,6 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
     }
   };
 
-  const handleAthleteToggle = (athleteId: string) => {
-    setEditForm(prev => ({
-      ...prev,
-      athletes: prev.athletes.includes(athleteId)
-        ? prev.athletes.filter(id => id !== athleteId)
-        : [...prev.athletes, athleteId]
-    }));
-  };
-
-  const getGroupedAthletes = () => {
-    const grouped: { [key: string]: Athlete[] } = {};
-    mockAthletes.forEach(athlete => {
-      if (!grouped[athlete.groupName]) {
-        grouped[athlete.groupName] = [];
-      }
-      grouped[athlete.groupName].push(athlete);
-    });
-    return grouped;
-  };
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-ES', {
@@ -477,7 +416,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <div className="flex items-center space-x-3">
-            <Button variant="outline" onClick={onBack}>
+            <Button variant="outline" onClick={onBack} className="cursor-pointer">
               ← Volver
             </Button>
             <div>
@@ -489,7 +428,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
           </div>
         </div>
         
-        <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90">
+        <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90 dark:hover:bg-accent/80 cursor-pointer">
           <PlusCircle className="w-4 h-4 mr-2" />
           Nueva Planificación
         </Button>
@@ -542,7 +481,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
       {/* Lista de planificaciones */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {filteredPlannings.map((planning) => (
-          <Card key={planning.id} className="hover:shadow-lg transition-shadow duration-200">
+          <Card key={planning.id} className="hover:shadow-lg dark:hover:shadow-xl dark:hover:shadow-cyan-500/10 dark:hover:border-accent/30 transition-all duration-200 flex flex-col border border-transparent">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -557,46 +496,52 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
               </div>
             </CardHeader>
             
-            <CardContent className="space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <span className="text-muted-foreground">Inicio:</span>
-                  <div className="font-medium">{formatDate(planning.startDate)}</div>
+            <CardContent className="flex flex-col flex-1 space-y-4">
+              <div className="flex-1 space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <span className="text-muted-foreground">Inicio:</span>
+                    <div className="font-medium">{formatDate(planning.startDate)}</div>
+                  </div>
+                  <div>
+                    <span className="text-muted-foreground">Fin:</span>
+                    <div className="font-medium">
+                      {planning.endDate ? (
+                        formatDate(planning.endDate)
+                      ) : (
+                        <span className="flex items-center gap-1 text-muted-foreground italic">
+                          <Calendar className="w-3 h-3" />
+                          Sin fecha fin
+                        </span>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
                 <div>
-                  <span className="text-muted-foreground">Fin:</span>
-                  <div className="font-medium">
-                    {planning.endDate ? (
-                      formatDate(planning.endDate)
+                  <span className="text-sm text-muted-foreground">Atletas asignados:</span>
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {planning.athletesCount && planning.athletesCount > 0 ? (
+                      <Badge 
+                        variant="outline" 
+                        className="text-xs cursor-pointer hover:bg-accent dark:hover:bg-accent/80 dark:hover:border-accent/50 transition-colors"
+                        onClick={() => handleViewAssignedAthletes(planning)}
+                      >
+                        {planning.athletesCount} atleta{planning.athletesCount > 1 ? 's' : ''}
+                      </Badge>
                     ) : (
-                      <span className="flex items-center gap-1 text-muted-foreground italic">
-                        <Calendar className="w-3 h-3" />
-                        Sin fecha fin
+                      <span className="text-xs text-muted-foreground italic">
+                        Sin atletas asignados
                       </span>
                     )}
                   </div>
                 </div>
               </div>
 
-              {planning.athletesCount && planning.athletesCount > 0 && (
-                <div>
-                  <span className="text-sm text-muted-foreground">Atletas asignados:</span>
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    <Badge 
-                      variant="outline" 
-                      className="text-xs cursor-pointer hover:bg-accent transition-colors"
-                      onClick={() => handleViewAssignedAthletes(planning)}
-                    >
-                      {planning.athletesCount} atleta{planning.athletesCount > 1 ? 's' : ''}
-                    </Badge>
-                  </div>
-                </div>
-              )}
-
-              <div className="flex space-x-2 pt-2">
+              <div className="flex space-x-2 pt-2 border-t">
                 <Button
                   onClick={() => setSelectedPlanning(planning)}
-                  className="flex-1 bg-accent hover:bg-accent/90"
+                  className="flex-1 bg-accent hover:bg-accent/90 dark:hover:bg-accent/80 cursor-pointer"
                 >
                   <Eye className="w-4 h-4 mr-2" />
                   Ver Detalle
@@ -604,14 +549,14 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
                 <Button
                   variant="outline"
                   onClick={() => handleEditPlanning(planning)}
-                  className="text-primary hover:text-primary"
+                  className="text-primary hover:text-primary cursor-pointer"
                 >
                   <Edit className="w-4 h-4" />
                 </Button>
                 <Button
                   variant="outline"
                   onClick={() => setDeleteConfirmId(planning.id)}
-                  className="text-destructive hover:text-destructive"
+                  className="text-destructive hover:text-destructive cursor-pointer"
                 >
                   <Trash2 className="w-4 h-4" />
                 </Button>
@@ -641,7 +586,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
                 : 'Crea tu primera planificación para comenzar'}
             </p>
             {!searchTerm && statusFilter === 'all' && (
-              <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90">
+              <Button onClick={() => setIsCreateModalOpen(true)} className="bg-accent hover:bg-accent/90 dark:hover:bg-accent/80 cursor-pointer">
                 <PlusCircle className="w-4 h-4 mr-2" />
                 Crear Primera Planificación
               </Button>
@@ -650,188 +595,16 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
         </Card>
       ) : null}
 
-      {/* Modal de creación */}
+      {/* Modal de creación/edición */}
       <CreatePlanningModal
         isOpen={isCreateModalOpen}
-        onClose={() => setIsCreateModalOpen(false)}
+        onClose={handleCloseModal}
         onSubmit={handleCreatePlanning}
         athletes={athletes}
         groups={groups}
         isLoading={isLoadingAthletes}
+        editingPlanning={editingPlanning}
       />
-
-      {/* Modal de edición */}
-      <Dialog open={isEditModalOpen} onOpenChange={setIsEditModalOpen}>
-        <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>Editar Planificación</DialogTitle>
-            <DialogDescription>
-              Modifica la información, fechas y atletas asignados a la planificación
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            {/* Información básica */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Información Básica</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-name">Nombre *</Label>
-                  <Input
-                    id="edit-name"
-                    value={editForm.name}
-                    onChange={(e) => setEditForm(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="Nombre de la planificación"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="edit-status">Estado *</Label>
-                  <Select
-                    value={editForm.status}
-                    onValueChange={(value: any) => setEditForm(prev => ({ ...prev, status: value }))}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="draft">
-                        <div className="flex items-center">
-                          <div className="w-2 h-2 rounded-full bg-gray-500 mr-2" />
-                          Borrador
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="active">
-                        <div className="flex items-center">
-                          <div className="w-2 h-2 rounded-full bg-green-500 mr-2" />
-                          Activa
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="completed">
-                        <div className="flex items-center">
-                          <div className="w-2 h-2 rounded-full bg-blue-500 mr-2" />
-                          Completada
-                        </div>
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="edit-description">Descripción</Label>
-                <Textarea
-                  id="edit-description"
-                  value={editForm.description}
-                  onChange={(e) => setEditForm(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Descripción de la planificación"
-                  rows={3}
-                />
-              </div>
-            </div>
-
-            {/* Fechas */}
-            <div className="space-y-4">
-              <h3 className="text-lg font-semibold">Fechas</h3>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="edit-start-date">Fecha de Inicio *</Label>
-                  <Input
-                    id="edit-start-date"
-                    type="date"
-                    value={editForm.startDate}
-                    onChange={(e) => setEditForm(prev => ({ ...prev, startDate: e.target.value }))}
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="has-end-date"
-                      checked={editForm.hasEndDate}
-                      onCheckedChange={(checked: boolean) => setEditForm(prev => ({ 
-                        ...prev, 
-                        hasEndDate: checked,
-                        endDate: checked ? prev.endDate : ''
-                      }))}
-                    />
-                    <Label htmlFor="has-end-date">¿Tiene fecha de fin?</Label>
-                  </div>
-                  {editForm.hasEndDate && (
-                    <Input
-                      type="date"
-                      value={editForm.endDate}
-                      onChange={(e) => setEditForm(prev => ({ ...prev, endDate: e.target.value }))}
-                      min={editForm.startDate}
-                    />
-                  )}
-                </div>
-              </div>
-            </div>
-
-            {/* Atletas */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold">Atletas Asignados</h3>
-                <Badge variant="outline">
-                  {editForm.athletes.length} seleccionados
-                </Badge>
-              </div>
-
-              {editForm.athletes.length > 0 && (
-                <div className="flex flex-wrap gap-2 p-3 bg-muted rounded-lg">
-                  {mockAthletes.filter(a => editForm.athletes.includes(a.id)).map(athlete => (
-                    <Badge key={athlete.id} variant="secondary" className="flex items-center gap-1">
-                      {athlete.name}
-                      <button
-                        onClick={() => handleAthleteToggle(athlete.id)}
-                        className="ml-1 hover:text-destructive"
-                      >
-                        <X className="w-3 h-3" />
-                      </button>
-                    </Badge>
-                  ))}
-                </div>
-              )}
-
-              <div className="space-y-4 max-h-48 overflow-y-auto border rounded-lg p-3">
-                {Object.entries(getGroupedAthletes()).map(([groupName, athletes]) => (
-                  <div key={groupName} className="space-y-2">
-                    <h4 className="text-sm font-medium text-muted-foreground border-b pb-1">
-                      {groupName}
-                    </h4>
-                    <div className="grid grid-cols-1 gap-2">
-                      {athletes.map(athlete => (
-                        <div key={athlete.id} className="flex items-center space-x-2">
-                          <Checkbox
-                            id={`athlete-${athlete.id}`}
-                            checked={editForm.athletes.includes(athlete.id)}
-                            onCheckedChange={() => handleAthleteToggle(athlete.id)}
-                          />
-                          <Label htmlFor={`athlete-${athlete.id}`} className="text-sm cursor-pointer">
-                            {athlete.name}
-                          </Label>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsEditModalOpen(false)}>
-              Cancelar
-            </Button>
-            <Button onClick={handleUpdatePlanning} className="bg-accent hover:bg-accent/90">
-              Guardar Cambios
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
 
       {/* Diálogo de confirmación de eliminación */}
       <AlertDialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
@@ -908,7 +681,7 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
           )}
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setIsAthletesModalOpen(false)}>
+            <Button variant="outline" onClick={() => setIsAthletesModalOpen(false)} className="cursor-pointer">
               Cerrar
             </Button>
           </DialogFooter>

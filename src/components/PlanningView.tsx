@@ -1,15 +1,22 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Calendar, Users, Settings, ArrowLeft } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from './ui/alert-dialog';
+import { Checkbox } from './ui/checkbox';
+import { Calendar, Users, Settings, ArrowLeft, Loader2, Plus, Trash2 } from 'lucide-react';
 import { PlanningCalendar } from './PlanningCalendar';
 import { PlanningConfigurationModal } from './PlanningConfigurationModal';
 import { MacrocycleView } from './MacrocycleView';
 import { MicrocycleView } from './MicrocycleView';
 import { Mesocycle, Microcycle } from './types/microcycleTypes';
+import { PlanningService } from '../services/planningService';
+import { GroupService } from '../services/groupService';
+import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
+import { toast } from 'sonner';
 
 interface Planning {
   id: string;
@@ -50,6 +57,210 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
   const [currentView, setCurrentView] = useState<'main' | 'microcycle' | 'weekly-calendar'>('main');
   const [selectedMicrocycle, setSelectedMicrocycle] = useState<Microcycle | null>(null);
   const [selectedMesocycle, setSelectedMesocycle] = useState<Mesocycle | null>(null);
+  const [calendarMesocycleFilter, setCalendarMesocycleFilter] = useState<{ id: string; name: string; startWeek?: number; endWeek?: number; startDate?: string; endDate?: string } | null>(null);
+  const [calendarMicrocycleFilter, setCalendarMicrocycleFilter] = useState<{ id: string; name: string; startDate: string; endDate: string } | null>(null);
+  const [isNavigatingFromMesocycle, setIsNavigatingFromMesocycle] = useState(false);
+  const [isNavigatingFromMicrocycle, setIsNavigatingFromMicrocycle] = useState(false);
+  const [assignedAthletes, setAssignedAthletes] = useState<Athlete[]>([]);
+  const [isLoadingAthletes, setIsLoadingAthletes] = useState(true);
+  const [isAddAthletesModalOpen, setIsAddAthletesModalOpen] = useState(false);
+  const [availableAthletes, setAvailableAthletes] = useState<Athlete[]>([]);
+  const [selectedAthletesToAdd, setSelectedAthletesToAdd] = useState<string[]>([]);
+  const [isLoadingAvailableAthletes, setIsLoadingAvailableAthletes] = useState(false);
+  const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
+  const [isRemovingAthlete, setIsRemovingAthlete] = useState<string | null>(null);
+  const [athleteToRemove, setAthleteToRemove] = useState<{ id: string; name: string } | null>(null);
+
+  // Cargar atletas asignados desde el backend
+  const loadAssignedAthletes = useCallback(async () => {
+    setIsLoadingAthletes(true);
+    try {
+      // Obtener los atletas asignados directamente desde el backend
+      const assignedAthletesData = await PlanningService.getAssignedAthletes(Number(planning.id));
+      
+      // Obtener grupos para mapear la información de grupo de cada atleta
+      const groupsData = await GroupService.getAllGroups();
+      
+      // Crear mapa de atletas a grupos
+      const athleteGroupMap = new Map<number, { groupId: string; groupName: string }>();
+      
+      // Cargar miembros de cada grupo para mapear atletas a grupos
+      const groupMembersPromises = groupsData.map(async (group) => {
+        try {
+          const members = await GroupService.getGroupMembers(group.id.toString());
+          members
+            .filter(m => m.status === 'active')
+            .forEach(member => {
+              athleteGroupMap.set(member.userId, {
+                groupId: group.id.toString(),
+                groupName: group.name
+              });
+            });
+        } catch (error) {
+          console.error(`Error al obtener miembros del grupo ${group.id}:`, error);
+        }
+      });
+      await Promise.all(groupMembersPromises);
+      
+      // Mapear los atletas asignados con información de grupo
+      const assigned = assignedAthletesData.map(athleteData => {
+        const groupInfo = athleteGroupMap.get(athleteData.athleteId);
+        return {
+          id: athleteData.athleteId.toString(),
+          name: athleteData.athleteName,
+          groupId: groupInfo?.groupId || '',
+          groupName: groupInfo?.groupName || 'Sin grupo'
+        };
+      });
+      
+      setAssignedAthletes(assigned);
+    } catch (error) {
+      console.error('Error al cargar atletas asignados:', error);
+      setAssignedAthletes([]);
+    } finally {
+      setIsLoadingAthletes(false);
+    }
+  }, [planning.id]);
+
+  // Cargar atletas cuando se monta el componente o cambia el planning.id
+  useEffect(() => {
+    loadAssignedAthletes();
+  }, [loadAssignedAthletes]);
+
+  // Cargar atletas disponibles para agregar
+  const loadAvailableAthletes = useCallback(async () => {
+    setIsLoadingAvailableAthletes(true);
+    try {
+      // Obtener atletas del entrenador
+      const athletesData = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
+      
+      // Obtener grupos para mapear la información de grupo
+      const groupsData = await GroupService.getAllGroups();
+      
+      // Crear mapa de atletas a grupos
+      const athleteGroupMap = new Map<number, { groupId: string; groupName: string }>();
+      
+      // Cargar miembros de cada grupo
+      const groupMembersPromises = groupsData.map(async (group) => {
+        try {
+          const members = await GroupService.getGroupMembers(group.id.toString());
+          members
+            .filter(m => m.status === 'active')
+            .forEach(member => {
+              athleteGroupMap.set(member.userId, {
+                groupId: group.id.toString(),
+                groupName: group.name
+              });
+            });
+        } catch (error) {
+          console.error(`Error al obtener miembros del grupo ${group.id}:`, error);
+        }
+      });
+      await Promise.all(groupMembersPromises);
+      
+      // Mapear atletas con información de grupo
+      const mapped = athletesData.map(athlete => {
+        const groupInfo = athleteGroupMap.get(athlete.id);
+        return {
+          id: athlete.id.toString(),
+          name: athlete.name,
+          groupId: groupInfo?.groupId || '',
+          groupName: groupInfo?.groupName || 'Sin grupo'
+        };
+      });
+      
+      // Filtrar atletas que ya están asignados
+      const assignedIds = new Set(assignedAthletes.map(a => a.id));
+      const available = mapped.filter(athlete => !assignedIds.has(athlete.id));
+      
+      setAvailableAthletes(available);
+    } catch (error) {
+      console.error('Error al cargar atletas disponibles:', error);
+      setAvailableAthletes([]);
+    } finally {
+      setIsLoadingAvailableAthletes(false);
+    }
+  }, [assignedAthletes]);
+
+  // Cargar atletas disponibles cuando se abre el modal
+  useEffect(() => {
+    if (isAddAthletesModalOpen) {
+      loadAvailableAthletes();
+      setSelectedAthletesToAdd([]);
+      setSelectedGroupFilter('all');
+    }
+  }, [isAddAthletesModalOpen, loadAvailableAthletes]);
+
+  // Abrir modal de confirmación para eliminar atleta
+  const handleRemoveAthleteClick = (athleteId: string, athleteName: string) => {
+    setAthleteToRemove({ id: athleteId, name: athleteName });
+  };
+
+  // Eliminar atleta de la planificación (confirmado)
+  const handleConfirmRemoveAthlete = async () => {
+    if (!athleteToRemove) return;
+
+    const athleteId = athleteToRemove.id;
+    setIsRemovingAthlete(athleteId);
+    setAthleteToRemove(null); // Cerrar el modal
+
+    try {
+      await PlanningService.removeAthlete(Number(planning.id), Number(athleteId));
+      // Recargar lista de atletas asignados
+      await loadAssignedAthletes();
+      // El servicio PlanningService.removeAthlete ya muestra un toast de éxito
+    } catch (error) {
+      console.error('Error al eliminar atleta:', error);
+      // El error ya fue manejado por el servicio
+    } finally {
+      setIsRemovingAthlete(null);
+    }
+  };
+
+  // Agregar atletas a la planificación
+  const handleAddAthletes = async () => {
+    if (selectedAthletesToAdd.length === 0) {
+      toast.error('Por favor selecciona al menos un atleta');
+      return;
+    }
+
+    try {
+      const athleteIds = selectedAthletesToAdd.map(id => Number(id));
+      await PlanningService.assignAthletes(Number(planning.id), athleteIds);
+      // Recargar lista de atletas asignados (esto actualizará también los disponibles)
+      await loadAssignedAthletes();
+      // Cerrar modal y limpiar selección
+      setIsAddAthletesModalOpen(false);
+      setSelectedAthletesToAdd([]);
+      // El servicio PlanningService.assignAthletes ya muestra un toast de éxito
+    } catch (error) {
+      console.error('Error al agregar atletas:', error);
+      // El error ya fue manejado por el servicio
+    }
+  };
+
+  // Toggle selección de atleta
+  const handleToggleAthleteSelection = (athleteId: string) => {
+    setSelectedAthletesToAdd(prev => 
+      prev.includes(athleteId)
+        ? prev.filter(id => id !== athleteId)
+        : [...prev, athleteId]
+    );
+  };
+
+  // Filtrar atletas disponibles por grupo
+  const filteredAvailableAthletes = selectedGroupFilter === 'all'
+    ? availableAthletes
+    : availableAthletes.filter(athlete => athlete.groupId === selectedGroupFilter);
+
+  // Obtener grupos únicos de los atletas disponibles
+  const availableGroups = Array.from(
+    new Map(
+      availableAthletes
+        .filter(a => a.groupId)
+        .map(a => [a.groupId, { id: a.groupId, name: a.groupName }])
+    ).values()
+  );
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString('es-ES', {
@@ -71,6 +282,47 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
     setCurrentView('weekly-calendar');
   };
 
+  const handleViewMesocycleCalendar = (mesocycle: Mesocycle) => {
+    // Navegar a la pestaña de calendario y establecer el filtro del mesociclo
+    setIsNavigatingFromMesocycle(true);
+    setCalendarMicrocycleFilter(null); // Limpiar filtro de microciclo si existe
+    setActiveTab('calendar');
+    setCalendarMesocycleFilter({
+      id: mesocycle.id,
+      name: mesocycle.name,
+      startWeek: mesocycle.startWeek,
+      endWeek: mesocycle.endWeek,
+      startDate: mesocycle.startDate, // Usar fechas reales si están disponibles
+      endDate: mesocycle.endDate
+    });
+    // Resetear el flag después de un breve delay para permitir que el cambio de pestaña se complete
+    setTimeout(() => setIsNavigatingFromMesocycle(false), 100);
+  };
+
+  const handleViewMicrocycleCalendar = (microcycle: Microcycle) => {
+    // Navegar a la pestaña de calendario y establecer el filtro del microciclo
+    setIsNavigatingFromMicrocycle(true);
+    setCalendarMesocycleFilter(null); // Limpiar filtro de mesociclo si existe
+    setActiveTab('calendar');
+    
+    // Asegurar que las fechas estén en formato ISO
+    const startDate = microcycle.startDate.includes('T') 
+      ? microcycle.startDate 
+      : `${microcycle.startDate}T00:00:00Z`;
+    const endDate = microcycle.endDate.includes('T') 
+      ? microcycle.endDate 
+      : `${microcycle.endDate}T23:59:59Z`;
+    
+    setCalendarMicrocycleFilter({
+      id: microcycle.id,
+      name: microcycle.name || `Semana ${microcycle.weekNumber}`,
+      startDate: startDate,
+      endDate: endDate
+    });
+    // Resetear el flag después de un breve delay para permitir que el cambio de pestaña se complete
+    setTimeout(() => setIsNavigatingFromMicrocycle(false), 100);
+  };
+
   const handleBackToMain = () => {
     setCurrentView('main');
     setSelectedMicrocycle(null);
@@ -82,7 +334,7 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
     return (
       <MicrocycleView
         mesocycle={selectedMesocycle}
-        athletes={athletes}
+        athletes={assignedAthletes}
         onBack={handleBackToMain}
         onCreateSession={(session) => {
           console.log('Nueva sesión creada:', session);
@@ -126,7 +378,7 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
         <PlanningCalendar
           planningId={planning.id}
           userType="coach"
-          athletes={athletes}
+          athletes={assignedAthletes}
           onSessionCreate={(session) => {
             console.log('Nueva sesión creada:', session);
             // Aquí puedes manejar la creación de la sesión
@@ -185,7 +437,14 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
                 </span>
               )}
               <span>
-                {athletes.length} atletas asignados
+                {isLoadingAthletes ? (
+                  <span className="flex items-center gap-1">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    Cargando...
+                  </span>
+                ) : (
+                  `${assignedAthletes.length} atletas asignados`
+                )}
               </span>
             </div>
           </div>
@@ -204,17 +463,38 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
 
 
       {/* Tabs para diferentes vistas */}
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+      <Tabs 
+        value={activeTab} 
+        onValueChange={(value) => {
+          setActiveTab(value);
+          // Limpiar los filtros cuando se accede directamente a la pestaña de calendario
+          // (no cuando viene desde un mesociclo o microciclo)
+          if (value === 'calendar' && !isNavigatingFromMesocycle && !isNavigatingFromMicrocycle) {
+            setCalendarMesocycleFilter(null);
+            setCalendarMicrocycleFilter(null);
+          }
+        }} 
+        className="space-y-6"
+      >
         <TabsList className="grid w-full grid-cols-3 max-w-2xl">
-          <TabsTrigger value="macrocycle" className="flex items-center gap-2">
+          <TabsTrigger 
+            value="macrocycle" 
+            className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 transition-colors duration-200"
+          >
             <Calendar className="w-4 h-4" />
             Macrociclo
           </TabsTrigger>
-          <TabsTrigger value="calendar" className="flex items-center gap-2">
+          <TabsTrigger 
+            value="calendar" 
+            className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 transition-colors duration-200"
+          >
             <Calendar className="w-4 h-4" />
             Calendario
           </TabsTrigger>
-          <TabsTrigger value="athletes" className="flex items-center gap-2">
+          <TabsTrigger 
+            value="athletes" 
+            className="flex items-center gap-2 cursor-pointer hover:bg-accent/50 transition-colors duration-200"
+          >
             <Users className="w-4 h-4" />
             Atletas
           </TabsTrigger>
@@ -224,9 +504,13 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
           <MacrocycleView 
             planningId={planning.id}
             year={new Date(planning.startDate).getFullYear()}
-            athletes={athletes}
+            planningStartDate={planning.startDate}
+            planningEndDate={planning.endDate}
+            athletes={assignedAthletes}
             onViewWeeklyPlanning={handleViewWeeklyPlanning}
             onViewWeeklyCalendar={handleViewWeeklyCalendar}
+            onViewMesocycleCalendar={handleViewMesocycleCalendar}
+            onViewMicrocycleCalendar={handleViewMicrocycleCalendar}
           />
         </TabsContent>
 
@@ -245,7 +529,16 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
               <PlanningCalendar
                 planningId={planning.id}
                 userType="coach"
-                athletes={athletes}
+                year={calendarMicrocycleFilter 
+                  ? new Date(calendarMicrocycleFilter.startDate).getFullYear()
+                  : calendarMesocycleFilter && calendarMesocycleFilter.startDate
+                    ? new Date(calendarMesocycleFilter.startDate).getFullYear()
+                    : new Date(planning.startDate).getFullYear()}
+                athletes={assignedAthletes}
+                mesocycleFilter={calendarMesocycleFilter || undefined}
+                microcycleFilter={calendarMicrocycleFilter || undefined}
+                planningStartDate={planning.startDate}
+                planningEndDate={planning.endDate || null}
                 onSessionCreate={(session) => {
                   console.log('Nueva sesión creada:', session);
                   // Aquí puedes manejar la creación de la sesión
@@ -258,21 +551,37 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
         <TabsContent value="athletes" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center">
-                <Users className="w-5 h-5 mr-2" />
-                Atletas Asignados
-              </CardTitle>
-              <CardDescription>
-                Atletas que participan en esta planificación
-              </CardDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center">
+                    <Users className="w-5 h-5 mr-2" />
+                    Atletas Asignados
+                  </CardTitle>
+                  <CardDescription>
+                    Atletas que participan en esta planificación
+                  </CardDescription>
+                </div>
+                <Button
+                  onClick={() => setIsAddAthletesModalOpen(true)}
+                  className="bg-accent hover:bg-accent/90"
+                >
+                  <Plus className="w-4 h-4 mr-2" />
+                  Agregar Atletas
+                </Button>
+              </div>
             </CardHeader>
             <CardContent>
-              {athletes.length > 0 ? (
+              {isLoadingAthletes ? (
+                <div className="flex items-center justify-center py-12">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mr-3" />
+                  <span className="text-muted-foreground">Cargando atletas asignados...</span>
+                </div>
+              ) : assignedAthletes.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {athletes.map(athlete => (
+                  {assignedAthletes.map(athlete => (
                     <Card key={athlete.id} className="p-4">
                       <div className="flex items-center justify-between">
-                        <div>
+                        <div className="flex-1">
                           <h4 className="font-medium">{athlete.name}</h4>
                           <p className="text-sm text-muted-foreground">
                             {athlete.groupName}
@@ -283,7 +592,19 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
                             </p>
                           )}
                         </div>
-
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => handleRemoveAthleteClick(athlete.id, athlete.name)}
+                          disabled={isRemovingAthlete === athlete.id}
+                          className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                        >
+                          {isRemovingAthlete === athlete.id ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="w-4 h-4" />
+                          )}
+                        </Button>
                       </div>
                     </Card>
                   ))}
@@ -292,9 +613,16 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
                 <div className="text-center py-12">
                   <Users className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                   <h3 className="font-semibold mb-2">No hay atletas asignados</h3>
-                  <p className="text-muted-foreground">
+                  <p className="text-muted-foreground mb-4">
                     Agrega atletas a esta planificación para comenzar
                   </p>
+                  <Button
+                    onClick={() => setIsAddAthletesModalOpen(true)}
+                    className="bg-accent hover:bg-accent/90"
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Agregar Primer Atleta
+                  </Button>
                 </div>
               )}
             </CardContent>
@@ -309,6 +637,129 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
         isOpen={isConfigurationModalOpen}
         onClose={() => setIsConfigurationModalOpen(false)}
       />
+
+      {/* Modal para Agregar Atletas */}
+      <Dialog open={isAddAthletesModalOpen} onOpenChange={setIsAddAthletesModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[80vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle>Agregar Atletas a la Planificación</DialogTitle>
+            <DialogDescription>
+              Selecciona los atletas que deseas agregar a esta planificación
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="flex-1 overflow-y-auto space-y-4">
+            {/* Filtro por grupo */}
+            {availableGroups.length > 0 && (
+              <div className="space-y-2">
+                <label className="text-sm font-medium">Filtrar por sede:</label>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant={selectedGroupFilter === 'all' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setSelectedGroupFilter('all')}
+                  >
+                    Todos
+                  </Button>
+                  {availableGroups.map(group => (
+                    <Button
+                      key={group.id}
+                      variant={selectedGroupFilter === group.id ? 'default' : 'outline'}
+                      size="sm"
+                      onClick={() => setSelectedGroupFilter(group.id)}
+                    >
+                      {group.name}
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Lista de atletas disponibles */}
+            <div className="space-y-2">
+              <label className="text-sm font-medium">
+                Atletas disponibles ({selectedAthletesToAdd.length} seleccionado{selectedAthletesToAdd.length !== 1 ? 's' : ''})
+              </label>
+              <div className="max-h-64 overflow-y-auto border rounded-md p-3 space-y-2">
+                {isLoadingAvailableAthletes ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                    <span className="text-sm text-muted-foreground">Cargando atletas...</span>
+                  </div>
+                ) : filteredAvailableAthletes.length === 0 ? (
+                  <p className="text-sm text-muted-foreground text-center py-4">
+                    {selectedGroupFilter === 'all'
+                      ? 'No hay atletas disponibles para agregar'
+                      : 'No hay atletas en la sede seleccionada'}
+                  </p>
+                ) : (
+                  filteredAvailableAthletes.map(athlete => (
+                    <div key={athlete.id} className="flex items-center space-x-3 p-2 hover:bg-muted rounded-md">
+                      <Checkbox
+                        id={`add-athlete-${athlete.id}`}
+                        checked={selectedAthletesToAdd.includes(athlete.id)}
+                        onCheckedChange={() => handleToggleAthleteSelection(athlete.id)}
+                      />
+                      <div className="flex-1">
+                        <label
+                          htmlFor={`add-athlete-${athlete.id}`}
+                          className="text-sm font-medium cursor-pointer"
+                        >
+                          {athlete.name}
+                        </label>
+                        <p className="text-xs text-muted-foreground">
+                          {athlete.groupName}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsAddAthletesModalOpen(false);
+                setSelectedAthletesToAdd([]);
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              onClick={handleAddAthletes}
+              disabled={selectedAthletesToAdd.length === 0 || isLoadingAvailableAthletes}
+            >
+              Agregar {selectedAthletesToAdd.length > 0 ? `(${selectedAthletesToAdd.length})` : ''}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal de Confirmación para Eliminar Atleta */}
+      <AlertDialog open={athleteToRemove !== null} onOpenChange={(open) => !open && setAthleteToRemove(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar eliminación</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Está seguro que quiere eliminar al atleta <strong>{athleteToRemove?.name}</strong> de la planificación <strong>{planning.name}</strong>?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setAthleteToRemove(null)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmRemoveAthlete}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

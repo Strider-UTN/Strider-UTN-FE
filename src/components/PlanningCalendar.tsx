@@ -2,9 +2,23 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Edit } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Edit, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CreateTrainingSessionModal } from './CreateTrainingSessionModal';
+import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
+import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleService';
+import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 
 interface PeriodGroup {
   id: string;
@@ -43,8 +57,17 @@ interface Athlete {
 interface MesocycleFilter {
   id: string;
   name: string;
-  startWeek: number;
-  endWeek: number;
+  startWeek?: number; // Opcional - para compatibilidad
+  endWeek?: number; // Opcional - para compatibilidad
+  startDate?: string; // Fecha de inicio (ISO string) - preferido
+  endDate?: string; // Fecha de fin (ISO string) - preferido
+}
+
+interface MicrocycleFilter {
+  id: string;
+  name: string;
+  startDate: string; // Fecha de inicio (ISO string)
+  endDate: string; // Fecha de fin (ISO string)
 }
 
 interface PlanningCalendarProps {
@@ -54,6 +77,9 @@ interface PlanningCalendarProps {
   periodGroups?: PeriodGroup[];
   athletes?: Athlete[];
   mesocycleFilter?: MesocycleFilter;
+  microcycleFilter?: MicrocycleFilter;
+  planningStartDate?: string; // Fecha de inicio de la planificación (ISO string)
+  planningEndDate?: string | null; // Fecha de fin de la planificación (ISO string) o null
   onPeriodSelect?: (periodId: string) => void;
   onSessionCreate?: (session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'>) => void;
 }
@@ -61,6 +87,10 @@ interface PlanningCalendarProps {
 const monthNames = [
   'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+];
+
+const dayNames = [
+  'domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'
 ];
 
 const getCategoryColor = (category: string) => {
@@ -88,14 +118,41 @@ export function PlanningCalendar({
   periodGroups = [], 
   athletes = [], 
   mesocycleFilter,
+  microcycleFilter,
+  planningStartDate,
+  planningEndDate,
   onPeriodSelect = () => {}, 
   onSessionCreate 
 }: PlanningCalendarProps) {
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'overview' | 'month'>('overview');
+  const [currentYear, setCurrentYear] = useState<number>(year);
+
+  // Sincronizar currentYear cuando cambie el prop year o el filtro de microciclo
+  useEffect(() => {
+    if (microcycleFilter) {
+      // Si hay filtro de microciclo, usar el año de su fecha de inicio
+      const startDateStr = microcycleFilter.startDate.includes('T') 
+        ? microcycleFilter.startDate.split('T')[0] 
+        : microcycleFilter.startDate;
+      const [startYear] = startDateStr.split('-').map(Number);
+      setCurrentYear(startYear);
+    } else {
+      setCurrentYear(year);
+    }
+  }, [year, microcycleFilter]);
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>('');
+  const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
+  const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [sessionToDelete, setSessionToDelete] = useState<TrainingSession | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [trainingSessions, setTrainingSessions] = useState<TrainingSession[]>([]);
+  const [mesocycleSessionsCount, setMesocycleSessionsCount] = useState<number>(0);
+  const [isLoadingMesocycleSessions, setIsLoadingMesocycleSessions] = useState<boolean>(false);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [availableMicrocycles, setAvailableMicrocycles] = useState<MicrocycleResponseDto[]>([]);
+  const [isLoadingMicrocycles, setIsLoadingMicrocycles] = useState(false);
 
   // Atletas por defecto con VO2 Max
   const defaultAthletes: Athlete[] = athletes.length > 0 ? athletes : [
@@ -124,94 +181,147 @@ export function PlanningCalendar({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [userType]);
 
-  useEffect(() => {
-    if (trainingSessions.length === 0 && planningId) {
-      const exampleSessions: TrainingSession[] = [
-        {
-          id: '1',
-          date: `${year}-${String(new Date().getMonth() + 1).padStart(2, '0')}-05`,
-          name: 'Intervalos de Velocidad',
-          description: 'Sesión de intervalos para mejorar velocidad aeróbica',
-          category: 'training',
-          athletes: ['1', '2'],
-          intervals: [
-            {
-              id: 'i1',
-              type: 'work',
-              paceType: 'vo2max_percentage',
-              vo2maxPercentage: 90,
-              durationType: 'time',
-              duration: 3,
-              description: 'Intervalo intenso',
-              repetitions: 6
-            },
-            {
-              id: 'i2',
-              type: 'rest',
-              paceType: 'fixed',
-              durationType: 'time',
-              duration: 1.5,
-              description: 'Recuperación activa',
-              repetitions: 5
-            }
-          ],
-          warmup: '15 minutos de trote suave y ejercicios de movilidad',
-          cooldown: '10 minutos de trote suave y estiramientos',
-          notes: 'Mantener hidratación constante',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: '2',
-          date: `${year}-${String(new Date().getMonth() + 1).padStart(2, '0')}-12`,
-          name: 'Test de Evaluación 5K',
-          description: 'Prueba de tiempo en 5000 metros',
-          category: 'prep_competition',
-          athletes: ['1'],
-          intervals: [
-            {
-              id: 'i3',
-              type: 'work',
-              paceType: 'fixed',
-              pace: 4.2,
-              durationType: 'distance',
-              duration: 5,
-              description: 'Esfuerzo máximo sostenido'
-            }
-          ],
-          warmup: '20 minutos de calentamiento progresivo',
-          cooldown: '15 minutos de vuelta a la calma',
-          notes: 'Registrar tiempo y frecuencia cardíaca',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
-        {
-          id: '3',
-          date: `${year}-${String(new Date().getMonth() + 1).padStart(2, '0')}-18`,
-          name: 'Entrenamiento de Fondo',
-          description: 'Carrera continua para desarrollar resistencia aeróbica',
-          category: 'training',
-          athletes: ['1', '2', '3'],
-          intervals: [
-            {
-              id: 'i4',
-              type: 'work',
-              paceType: 'vo2max_percentage',
-              vo2maxPercentage: 70,
-              durationType: 'time',
-              duration: 45,
-              description: 'Ritmo aeróbico cómodo'
-            }
-          ],
-          warmup: '10 minutos de activación',
-          cooldown: '10 minutos de relajación',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
+  // Cargar sesiones desde el backend
+  const loadTrainingSessions = async () => {
+    if (!planningId) return;
+    
+    setIsLoadingSessions(true);
+    try {
+      const sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planningId));
+      
+      // Validar que sessions sea un array antes de procesar
+      if (!sessions || !Array.isArray(sessions)) {
+        console.warn('No se recibieron sesiones válidas del backend');
+        setTrainingSessions([]);
+        return;
+      }
+      
+      // Convertir sesiones del backend al formato del frontend
+      const convertedSessions: TrainingSession[] = sessions.map(session => {
+        // Manejar tanto athleteIds (array de números) como athletes (array de objetos)
+        let athleteIds: string[] = [];
+        if (session.athleteIds && Array.isArray(session.athleteIds)) {
+          // Si viene athleteIds directamente (array de números)
+          athleteIds = session.athleteIds.map(id => id.toString());
+        } else if (session.athletes && Array.isArray(session.athletes)) {
+          // Si viene athletes (array de objetos con athleteId)
+          athleteIds = session.athletes.map(a => a.athleteId.toString());
         }
-      ];
-      setTrainingSessions(exampleSessions);
+        
+        return {
+        id: session.id.toString(),
+        date: session.date && session.date.includes('T') ? session.date.split('T')[0] : (session.date || ''), // Solo la fecha (YYYY-MM-DD)
+        name: session.name || '',
+        description: session.description,
+        category: mapTrainingCategoryFromBackend(session.category) as 'training' | 'prep_competition' | 'main_competition',
+        athletes: athleteIds,
+        intervals: (session.intervals && Array.isArray(session.intervals)) ? session.intervals.map(interval => ({
+          id: interval.id.toString(),
+          type: interval.type?.toLowerCase() as 'work' | 'rest' | 'interval' || 'interval',
+          paceType: interval.paceType?.toLowerCase() as 'fixed' | 'vo2max_percentage' || 'fixed',
+          pace: interval.pace,
+          vo2maxPercentage: interval.vo2MaxPercentage,
+          durationType: interval.trainingMode?.toLowerCase() as 'time' | 'distance' | undefined,
+          duration: interval.duration ? parseFloat(interval.duration) : undefined,
+          distance: interval.distance || 0,
+          description: interval.description,
+          repetitions: interval.repetitions || 1
+        })) : [],
+        notes: session.notes,
+        createdAt: session.createdAt || new Date().toISOString(),
+        updatedAt: session.updatedAt
+        };
+      });
+      
+      setTrainingSessions(convertedSessions);
+    } catch (error) {
+      console.error('Error al cargar sesiones:', error);
+      setTrainingSessions([]);
+    } finally {
+      setIsLoadingSessions(false);
     }
-  }, [planningId, year, trainingSessions.length]);
+  };
+
+  // Calcular atletas únicos de todas las sesiones
+  const getUniqueAthletesFromSessions = (): number => {
+    const uniqueAthleteIds = new Set<string>();
+    trainingSessions.forEach(session => {
+      if (session.athletes && Array.isArray(session.athletes)) {
+        session.athletes.forEach(athleteId => uniqueAthleteIds.add(athleteId));
+      }
+    });
+    return uniqueAthleteIds.size;
+  };
+
+  // Usar atletas de la planificación si están disponibles, sino calcular de las sesiones
+  const totalAthletes = athletes.length > 0 ? athletes.length : getUniqueAthletesFromSessions();
+
+  // Cargar microciclos disponibles para validar fechas
+  const loadAvailableMicrocycles = async () => {
+    if (!planningId) return;
+    
+    setIsLoadingMicrocycles(true);
+    try {
+      // Cargar mesociclos de la planificación
+      const mesocyclesData = await MesocycleService.getMesocyclesByPlanningId(Number(planningId));
+      
+      // Cargar microciclos de todos los mesociclos
+      const allMicrocycles: MicrocycleResponseDto[] = [];
+      for (const mesocycle of mesocyclesData) {
+        const microcyclesData = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycle.id);
+        allMicrocycles.push(...microcyclesData);
+      }
+      
+      setAvailableMicrocycles(allMicrocycles);
+    } catch (error) {
+      console.error('Error al cargar microciclos:', error);
+      setAvailableMicrocycles([]);
+    } finally {
+      setIsLoadingMicrocycles(false);
+    }
+  };
+
+  // Cargar sesiones cuando cambia el planningId
+  useEffect(() => {
+    if (planningId) {
+      loadTrainingSessions();
+      loadAvailableMicrocycles();
+    } else {
+      setTrainingSessions([]);
+      setAvailableMicrocycles([]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [planningId]);
+
+  // Cargar sesiones del mesociclo cuando hay un filtro activo
+  useEffect(() => {
+    const loadMesocycleSessions = async () => {
+      if (!mesocycleFilter?.id) {
+        setMesocycleSessionsCount(0);
+        return;
+      }
+
+      setIsLoadingMesocycleSessions(true);
+      try {
+        const mesocycleId = parseInt(mesocycleFilter.id, 10);
+        if (isNaN(mesocycleId)) {
+          setMesocycleSessionsCount(0);
+          return;
+        }
+
+        const microcycles = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycleId);
+        const totalSessions = microcycles.reduce((sum, microcycle) => sum + (microcycle.trainingSessionsCount || 0), 0);
+        setMesocycleSessionsCount(totalSessions);
+      } catch (error) {
+        console.error('Error al cargar sesiones del mesociclo:', error);
+        setMesocycleSessionsCount(0);
+      } finally {
+        setIsLoadingMesocycleSessions(false);
+      }
+    };
+
+    loadMesocycleSessions();
+  }, [mesocycleFilter?.id]);
 
   // Obtener sesiones existentes para una fecha específica
   const getSessionsForDate = (date: string): TrainingSession[] => {
@@ -225,7 +335,7 @@ export function PlanningCalendar({
     
     // Mensaje de confirmación visual
     if (viewMode === 'month') {
-      toast.success(`Creando sesión para ${new Date(date).toLocaleDateString('es-ES')}`, {
+      toast.success(`Creando sesión para ${formatSessionDate(date)}`, {
         duration: 2000
       });
     }
@@ -259,6 +369,145 @@ export function PlanningCalendar({
     console.log('❌ Cerrando modal de creación de sesión');
     setIsSessionModalOpen(false);
     setSelectedDate('');
+    setEditingSession(null);
+  };
+
+  // Verificar si una fecha es pasada
+  const isDateInPast = (dateString: string): boolean => {
+    const date = new Date(dateString);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    date.setHours(0, 0, 0, 0);
+    return date < today;
+  };
+
+  // Encontrar la fecha más cercana válida (no pasada y dentro de un microciclo)
+  const findNearestValidDate = (): string | null => {
+    if (!planningId || availableMicrocycles.length === 0) {
+      // Si no hay planningId o microciclos, usar la fecha de hoy
+      const today = new Date();
+      return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    // Recopilar todas las fechas válidas de los microciclos
+    const validDates: Date[] = [];
+    
+    for (const microcycle of availableMicrocycles) {
+      const startDateStr = microcycle.startDate.includes('T') 
+        ? microcycle.startDate.split('T')[0] 
+        : microcycle.startDate;
+      const endDateStr = microcycle.endDate.includes('T') 
+        ? microcycle.endDate.split('T')[0] 
+        : microcycle.endDate;
+      
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+      
+      const startDate = new Date(startYear, startMonth - 1, startDay);
+      const endDate = new Date(endYear, endMonth - 1, endDay);
+      
+      // Agregar todas las fechas del microciclo que no sean pasadas
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        if (currentDate >= today) {
+          validDates.push(new Date(currentDate));
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    }
+
+    // Ordenar fechas y encontrar la más cercana
+    if (validDates.length === 0) {
+      return null; // No hay fechas válidas
+    }
+
+    validDates.sort((a, b) => a.getTime() - b.getTime());
+    const nearestDate = validDates[0];
+    
+    return `${nearestDate.getFullYear()}-${String(nearestDate.getMonth() + 1).padStart(2, '0')}-${String(nearestDate.getDate()).padStart(2, '0')}`;
+  };
+
+  // Formatear fecha para mostrar
+  const formatSessionDate = (dateString: string): string => {
+    if (!dateString) return '';
+    
+    // Parsear la fecha como fecha local (sin conversión de timezone)
+    // Si viene en formato YYYY-MM-DD, extraer los componentes directamente
+    let date: Date;
+    if (dateString.includes('T')) {
+      // Si tiene 'T', es una fecha ISO con hora
+      const dateOnly = dateString.split('T')[0];
+      const [year, month, day] = dateOnly.split('-').map(Number);
+      date = new Date(year, month - 1, day);
+    } else {
+      // Si es solo YYYY-MM-DD, parsear directamente
+      const [year, month, day] = dateString.split('-').map(Number);
+      date = new Date(year, month - 1, day);
+    }
+    
+    const dayName = dayNames[date.getDay()];
+    const dayNum = date.getDate();
+    const monthName = monthNames[date.getMonth()].toLowerCase();
+    const yearNum = date.getFullYear();
+    return `${dayName} ${dayNum} de ${monthName} de ${yearNum}`;
+  };
+
+  // Manejar edición de sesión
+  const handleEditSession = (session: TrainingSession) => {
+    // Validar que la sesión no sea pasada
+    if (isDateInPast(session.date)) {
+      toast.error('No se puede editar una sesión pasada');
+      return;
+    }
+    
+    setEditingSession(session);
+    setSelectedDate(session.date);
+    setIsSessionModalOpen(true);
+  };
+
+  // Manejar solicitud de eliminación de sesión (abre el modal)
+  const handleDeleteSession = (sessionId: string) => {
+    const session = trainingSessions.find(s => s.id === sessionId);
+    if (!session) {
+      console.log('❌ Sesión no encontrada:', sessionId);
+      return;
+    }
+
+    // Validar que la sesión no sea pasada
+    if (isDateInPast(session.date)) {
+      toast.error('No se puede eliminar una sesión pasada');
+      return;
+    }
+
+    // Abrir el modal de confirmación
+    console.log('🗑️ Abriendo modal de confirmación para eliminar sesión:', session.name);
+    setSessionToDelete(session);
+    setIsDeleteDialogOpen(true);
+  };
+
+  // Confirmar eliminación de sesión
+  const handleConfirmDelete = async () => {
+    if (!sessionToDelete) return;
+
+    setDeletingSessionId(sessionToDelete.id);
+    setIsDeleteDialogOpen(false);
+    
+    try {
+      await TrainingSessionService.deleteTrainingSession(Number(sessionToDelete.id));
+      // Recargar sesiones después de eliminar
+      if (planningId) {
+        await loadTrainingSessions();
+      }
+      setSessionToDelete(null);
+      setDeletingSessionId(null);
+    } catch (error) {
+      console.error('Error al eliminar sesión:', error);
+      setSessionToDelete(null);
+      setDeletingSessionId(null);
+    }
   };
 
   const yearGroup = periodGroups.find(group => group.type === 'year');
@@ -280,9 +529,17 @@ export function PlanningCalendar({
     console.log('📅 Seleccionando mes:', monthIndex);
     setSelectedMonth(monthIndex);
     setViewMode('month');
-    const monthPeriod = defaultMonths.find(m => new Date(m.startDate).getMonth() === monthIndex);
+    const monthPeriod = defaultMonths.find(m => {
+      const periodDate = new Date(m.startDate);
+      return periodDate.getMonth() === monthIndex && periodDate.getFullYear() === currentYear;
+    });
     if (monthPeriod) {
       onPeriodSelect(monthPeriod.id);
+      // Actualizar el año actual si el período está en un año diferente
+      const periodDate = new Date(monthPeriod.startDate);
+      if (periodDate.getFullYear() !== currentYear) {
+        setCurrentYear(periodDate.getFullYear());
+      }
     }
   };
 
@@ -292,9 +549,205 @@ export function PlanningCalendar({
     onPeriodSelect('all');
   };
 
+  // Función helper para verificar si una fecha está dentro del rango del microciclo
+  const isDateInMicrocycleRange = (dateString: string): boolean => {
+    if (!microcycleFilter) {
+      return true;
+    }
+    
+    // Parsear las fechas del microciclo
+    const startDateStr = microcycleFilter.startDate.includes('T') 
+      ? microcycleFilter.startDate.split('T')[0] 
+      : microcycleFilter.startDate;
+    const endDateStr = microcycleFilter.endDate.includes('T') 
+      ? microcycleFilter.endDate.split('T')[0] 
+      : microcycleFilter.endDate;
+    
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+    
+    // Parsear la fecha a verificar (formato: YYYY-MM-DD)
+    const [checkYear, checkMonth, checkDay] = dateString.split('-').map(Number);
+    
+    // Comparar año, mes y día directamente
+    // Primero verificar si el año es válido
+    if (checkYear < startYear || checkYear > endYear) {
+      return false;
+    }
+    
+    // Si el año es igual al año de inicio, verificar mes y día
+    if (checkYear === startYear) {
+      if (checkMonth < startMonth) return false;
+      if (checkMonth === startMonth && checkDay < startDay) return false;
+    }
+    
+    // Si el año es igual al año de fin, verificar mes y día
+    if (checkYear === endYear) {
+      if (checkMonth > endMonth) return false;
+      if (checkMonth === endMonth && checkDay > endDay) return false;
+    }
+    
+    // Si llegamos aquí, la fecha está en el rango
+    return true;
+  };
+
+  // Función helper para verificar si una fecha está dentro del rango del mesociclo o planificación
+  const isDateInMesocycleRange = (dateString: string): boolean => {
+    let startDate: Date;
+    let endDate: Date;
+    
+    if (mesocycleFilter) {
+      // Si hay filtro de mesociclo, usar sus fechas
+      if (mesocycleFilter.startDate && mesocycleFilter.endDate) {
+        // Usar fechas reales del mesociclo
+        const startDateStr = mesocycleFilter.startDate.split('T')[0];
+        const endDateStr = mesocycleFilter.endDate.split('T')[0];
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        
+        startDate = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
+        endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+      } else if (mesocycleFilter.startWeek && mesocycleFilter.endWeek) {
+        // Fallback: calcular fecha aproximada de semanas del mesociclo
+        startDate = new Date(year, 0, 1 + (mesocycleFilter.startWeek - 1) * 7, 0, 0, 0, 0);
+        endDate = new Date(year, 0, 1 + mesocycleFilter.endWeek * 7, 23, 59, 59, 999);
+      } else {
+        return true; // Si no hay fechas ni semanas, mostrar todos los días
+      }
+    } else if (planningStartDate) {
+      // Si no hay filtro de mesociclo pero hay fechas de planificación, usar esas
+      const startDateStr = planningStartDate.split('T')[0];
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      startDate = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
+      
+      if (planningEndDate) {
+        const endDateStr = planningEndDate.split('T')[0];
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+      } else {
+        // Si no hay fecha de fin, permitir todos los días desde la fecha de inicio
+        endDate = new Date(9999, 11, 31, 23, 59, 59, 999);
+      }
+    } else {
+      // Si no hay filtro ni fechas de planificación, mostrar todos los días
+      return true;
+    }
+    
+    // Parsear la fecha a verificar (formato: YYYY-MM-DD)
+    const [checkYear, checkMonth, checkDay] = dateString.split('-').map(Number);
+    const checkDate = new Date(checkYear, checkMonth - 1, checkDay, 0, 0, 0, 0);
+    
+    // Comparar fechas
+    return checkDate >= startDate && checkDate <= endDate;
+  };
+
+  // Función para navegar al mes anterior/siguiente
+  const navigateMonth = (direction: 'prev' | 'next') => {
+    if (selectedMonth === null) return;
+    
+    let newMonth = selectedMonth;
+    let newYear = currentYear;
+    
+    if (direction === 'prev') {
+      if (newMonth === 0) {
+        newMonth = 11;
+        newYear--;
+      } else {
+        newMonth--;
+      }
+    } else {
+      if (newMonth === 11) {
+        newMonth = 0;
+        newYear++;
+      } else {
+        newMonth++;
+      }
+    }
+    
+    setSelectedMonth(newMonth);
+    setCurrentYear(newYear);
+    
+    // Actualizar el período seleccionado si existe
+    const monthPeriod = defaultMonths.find(m => {
+      const periodDate = new Date(m.startDate);
+      return periodDate.getFullYear() === newYear && periodDate.getMonth() === newMonth;
+    });
+    if (monthPeriod) {
+      onPeriodSelect(monthPeriod.id);
+    }
+  };
+
+  // Calcular si hay meses anteriores/siguientes disponibles dentro del rango del mesociclo
+  // Si no hay filtro, permitir navegación libre
+  const canNavigatePrev = () => {
+    if (selectedMonth === null) return false;
+    
+    let startDate: Date | null = null;
+    
+    if (microcycleFilter) {
+      // Si hay filtro de microciclo, usar sus fechas (prioridad más alta)
+      const startDateStr = microcycleFilter.startDate.split('T')[0];
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      startDate = new Date(startYear, startMonth - 1, startDay);
+    } else if (mesocycleFilter) {
+      // Si hay filtro de mesociclo, usar sus fechas
+      if (mesocycleFilter.startDate) {
+        const startDateStr = mesocycleFilter.startDate.split('T')[0];
+        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+        startDate = new Date(startYear, startMonth - 1, startDay);
+      } else if (mesocycleFilter.startWeek) {
+        startDate = new Date(currentYear, 0, 1 + (mesocycleFilter.startWeek - 1) * 7);
+      }
+    } else if (planningStartDate) {
+      // Si no hay filtro de mesociclo/microciclo pero hay fechas de planificación, usar esas
+      const startDateStr = planningStartDate.split('T')[0];
+      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+      startDate = new Date(startYear, startMonth - 1, startDay);
+    }
+    
+    // Si no hay fecha de inicio definida, permitir navegación libre
+    if (!startDate) return true;
+    
+    const currentMonthStart = new Date(currentYear, selectedMonth, 1);
+    return currentMonthStart > startDate;
+  };
+
+  const canNavigateNext = () => {
+    if (selectedMonth === null) return false;
+    
+    let endDate: Date | null = null;
+    
+    if (microcycleFilter) {
+      // Si hay filtro de microciclo, usar sus fechas (prioridad más alta)
+      const endDateStr = microcycleFilter.endDate.split('T')[0];
+      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+      endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+    } else if (mesocycleFilter) {
+      // Si hay filtro de mesociclo, usar sus fechas
+      if (mesocycleFilter.endDate) {
+        const endDateStr = mesocycleFilter.endDate.split('T')[0];
+        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+        endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+      } else if (mesocycleFilter.endWeek) {
+        endDate = new Date(currentYear, 0, 1 + mesocycleFilter.endWeek * 7);
+      }
+    } else if (planningEndDate) {
+      // Si no hay filtro de mesociclo/microciclo pero hay fecha de fin de planificación, usar esa
+      const endDateStr = planningEndDate.split('T')[0];
+      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+      endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+    }
+    
+    // Si no hay fecha de fin definida, permitir navegación libre
+    if (!endDate) return true;
+    
+    const currentMonthEnd = new Date(currentYear, selectedMonth + 1, 0, 23, 59, 59, 999);
+    return currentMonthEnd < endDate;
+  };
+
   if (viewMode === 'month' && selectedMonth !== null) {
-    const daysInMonth = new Date(year, selectedMonth + 1, 0).getDate();
-    const firstDayOfMonth = new Date(year, selectedMonth, 1).getDay();
+    const daysInMonth = new Date(currentYear, selectedMonth + 1, 0).getDate();
+    const firstDayOfMonth = new Date(currentYear, selectedMonth, 1).getDay();
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1; // Lunes = 0
 
     const days = [];
@@ -306,9 +759,13 @@ export function PlanningCalendar({
     
     // Días del mes
     for (let day = 1; day <= daysInMonth; day++) {
-      const dayString = `${year}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dayString = `${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const daySessions = getSessionsForDate(dayString);
-      days.push({ day, sessions: daySessions, date: dayString });
+      // Si hay filtro de microciclo, usar su función específica; si no, usar la de mesociclo/planificación
+      const isInRange = microcycleFilter 
+        ? isDateInMicrocycleRange(dayString)
+        : isDateInMesocycleRange(dayString);
+      days.push({ day, sessions: daySessions, date: dayString, isInRange });
     }
 
     return (
@@ -319,18 +776,42 @@ export function PlanningCalendar({
               <ChevronLeft className="w-4 h-4 mr-2" />
               Volver
             </Button>
+            {/* Botón de navegación al mes anterior */}
+            {canNavigatePrev() && (
+              <Button 
+                variant="outline" 
+                size="icon"
+                onClick={() => navigateMonth('prev')}
+                title="Mes anterior"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+            )}
             <h3 className="text-xl font-semibold text-primary">
-              {monthNames[selectedMonth]} {year}
+              {monthNames[selectedMonth]} {currentYear}
             </h3>
+            {/* Botón de navegación al mes siguiente */}
+            {canNavigateNext() && (
+              <Button 
+                variant="outline" 
+                size="icon"
+                onClick={() => navigateMonth('next')}
+                title="Mes siguiente"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </Button>
+            )}
           </div>
           
           <Button 
             onClick={() => {
-              const today = new Date();
-              const currentMonth = selectedMonth;
-              const dateForSession = `${year}-${String(currentMonth + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-              console.log('🎯 Botón "Agregar Sesión" clickeado. Fecha:', dateForSession);
-              handleCreateSession(dateForSession);
+              const validDate = findNearestValidDate();
+              if (!validDate) {
+                toast.error('No hay fechas válidas disponibles para crear sesiones');
+                return;
+              }
+              console.log('🎯 Botón "Agregar Sesión" clickeado. Fecha:', validDate);
+              handleCreateSession(validDate);
             }}
             className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105 hover:shadow-lg"
             disabled={userType === 'athlete'}
@@ -349,7 +830,7 @@ export function PlanningCalendar({
               Vista Mensual
             </CardTitle>
             <CardDescription>
-              {defaultAthletes.length} atletas • {trainingSessions.filter(s => s.date.startsWith(`${year}-${String(selectedMonth + 1).padStart(2, '0')}`)).length} sesiones programadas
+              {totalAthletes} atletas • {trainingSessions.filter(s => s.date.startsWith(`${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}`)).length} sesiones programadas
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -364,63 +845,119 @@ export function PlanningCalendar({
             
             {/* Días del calendario */}
             <div className="grid grid-cols-7 gap-2">
-              {days.map((dayData, index) => (
-                <div 
-                  key={index} 
-                  className={`min-h-32 p-2 border rounded-lg transition-all duration-200 ${
-                    dayData && userType === 'coach' 
-                      ? 'bg-background hover:bg-accent/5 hover:border-accent/30 cursor-pointer hover:shadow-sm' 
-                      : dayData 
-                        ? 'bg-background cursor-default'
-                        : 'bg-muted/20'
-                  }`}
-                  onClick={() => {
-                    if (dayData && userType === 'coach') {
-                      console.log('🖱️ Click en día del calendario:', dayData.date);
-                      handleCreateSession(dayData.date);
+              {days.map((dayData, index) => {
+                // Si hay un filtro de mesociclo y el día no está en el rango, deshabilitarlo visualmente
+                const isDayInRange = dayData ? (dayData.isInRange !== false) : true;
+                const isDayDisabled = (mesocycleFilter || microcycleFilter) && dayData && !dayData.isInRange;
+                
+                return (
+                  <div 
+                    key={index} 
+                    className={`min-h-32 p-2 border rounded-lg transition-all duration-200 ${
+                      !dayData 
+                        ? 'bg-muted/20'
+                        : isDayDisabled
+                          ? 'bg-muted/30 opacity-40 cursor-not-allowed'
+                          : dayData && userType === 'coach' 
+                            ? 'bg-background hover:bg-accent/5 hover:border-accent/30 cursor-pointer hover:shadow-sm' 
+                            : 'bg-background cursor-default'
+                    } ${dayData && dayData.isInRange && (mesocycleFilter || microcycleFilter) ? 'ring-2 ring-primary/20' : ''}`}
+                    onClick={() => {
+                      if (dayData && userType === 'coach' && isDayInRange) {
+                        console.log('🖱️ Click en día del calendario:', dayData.date);
+                        handleCreateSession(dayData.date);
+                      }
+                    }}
+                    title={
+                      dayData 
+                        ? isDayDisabled 
+                          ? microcycleFilter
+                            ? `Este día está fuera del rango del microciclo "${microcycleFilter.name}"`
+                            : mesocycleFilter
+                              ? `Este día está fuera del rango del mesociclo "${mesocycleFilter.name}"`
+                              : undefined
+                          : userType === 'coach' 
+                            ? `Hacer clic para agregar sesión el ${dayData.date}`
+                            : undefined
+                        : undefined
                     }
-                  }}
-                  title={dayData && userType === 'coach' ? `Hacer clic para agregar sesión el ${dayData.date}` : undefined}
-                >
-                  {dayData && (
-                    <>
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="font-medium text-primary">{dayData.day}</div>
-                        {dayData.sessions.length === 0 && userType === 'coach' && (
-                          <Plus className="w-4 h-4 text-muted-foreground opacity-60 hover:opacity-100 transition-opacity" />
-                        )}
-                      </div>
-                      <div className="space-y-1">
-                        {dayData.sessions.slice(0, 3).map(session => (
-                          <div
-                            key={session.id}
-                            className="text-xs p-2 rounded-md flex items-center space-x-2"
-                            style={{ backgroundColor: `${getCategoryColor(session.category)}20` }}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <div 
-                              className={`w-2 h-2 rounded-full ${getCategoryColor(session.category)}`}
-                            />
-                            <span className="truncate flex-1 font-medium">
-                              {session.name}
-                            </span>
+                  >
+                    {dayData && (
+                      <>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className={`font-medium ${isDayDisabled ? 'text-muted-foreground' : 'text-primary'}`}>
+                            {dayData.day}
                           </div>
-                        ))}
-                        {dayData.sessions.length > 3 && (
-                          <div className="text-xs text-muted-foreground font-medium">
-                            +{dayData.sessions.length - 3} más
-                          </div>
-                        )}
-                        {dayData.sessions.length > 0 && (
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {dayData.sessions.reduce((total, session) => total + session.athletes.length, 0)} atletas
-                          </div>
-                        )}
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
+                          {dayData.sessions.length === 0 && userType === 'coach' && isDayInRange && (
+                            <Plus className="w-4 h-4 text-muted-foreground opacity-60 hover:opacity-100 transition-opacity" />
+                          )}
+                        </div>
+                        <div className="space-y-1">
+                          {dayData.sessions.slice(0, 3).map(session => {
+                            const isSessionPast = isDateInPast(session.date);
+                            return (
+                              <div
+                                key={session.id}
+                                className={`text-xs p-2 rounded-md flex items-center space-x-2 group ${
+                                  isDayDisabled ? 'opacity-50' : ''
+                                }`}
+                                style={{ backgroundColor: `${getCategoryColor(session.category)}20` }}
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                <div 
+                                  className={`w-2 h-2 rounded-full ${getCategoryColor(session.category)}`}
+                                />
+                                <span className={`truncate flex-1 font-medium ${isDayDisabled ? 'text-muted-foreground' : ''}`}>
+                                  {session.name}
+                                </span>
+                                {userType === 'coach' && !isSessionPast && (
+                                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 w-5 p-0 hover:bg-accent"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleEditSession(session);
+                                      }}
+                                      title="Editar sesión"
+                                    >
+                                      <Edit className="h-3 w-3" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="h-5 w-5 p-0 hover:bg-destructive hover:text-destructive-foreground"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeleteSession(session.id);
+                                      }}
+                                      disabled={deletingSessionId === session.id}
+                                      title="Eliminar sesión"
+                                    >
+                                      <Trash2 className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                          {dayData.sessions.length > 3 && (
+                            <div className="text-xs text-muted-foreground font-medium">
+                              +{dayData.sessions.length - 3} más
+                            </div>
+                          )}
+                          {dayData.sessions.length > 0 && (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              {dayData.sessions.reduce((total, session) => total + session.athletes.length, 0)} atletas
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -451,13 +988,70 @@ export function PlanningCalendar({
           isOpen={isSessionModalOpen}
           onClose={handleCloseModal}
           onSubmit={handleSessionSubmit}
-          athletes={defaultAthletes}
+          athletes={athletes}
           selectedDate={selectedDate}
           existingSessions={getSessionsForDate(selectedDate)}
-          userType={userType}
-        />
-      </div>
-    );
+          planningId={planningId ? Number(planningId) : undefined}
+          editingSession={editingSession}
+          onSessionCreated={() => {
+            // Recargar sesiones después de crear
+            if (planningId) {
+              loadTrainingSessions();
+            }
+          }}
+          onSessionUpdated={() => {
+            // Recargar sesiones después de actualizar
+            if (planningId) {
+              loadTrainingSessions();
+            }
+        }}
+      />
+
+      {/* Modal de confirmación para eliminar sesión */}
+      <AlertDialog 
+        open={isDeleteDialogOpen} 
+        onOpenChange={(open) => {
+          console.log('🔄 onOpenChange del AlertDialog:', open);
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            // Si se cierra el modal, limpiar la sesión a eliminar
+            setSessionToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar sesión?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <div>
+                Esta acción eliminará permanentemente la sesión <strong>"{sessionToDelete?.name}"</strong>.
+              </div>
+              {sessionToDelete?.date && (
+                <div className="text-muted-foreground">
+                  Fecha: {formatSessionDate(sessionToDelete.date)}
+                </div>
+              )}
+              <div className="text-sm text-muted-foreground mt-2">
+                Esta acción no se puede deshacer.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+              disabled={deletingSessionId !== null}
+            >
+              {deletingSessionId ? 'Eliminando...' : 'Sí, eliminar sesión'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
   }
 
   // Vista general del año
@@ -465,15 +1059,22 @@ export function PlanningCalendar({
     <div className="space-y-6 p-6">
       <div className="flex items-center justify-between">
         <h3 className="text-xl font-semibold text-primary">
-          {mesocycleFilter ? `${mesocycleFilter.name} - ${year}` : `Vista General - ${year}`}
+          {microcycleFilter 
+            ? `${microcycleFilter.name} - ${year}` 
+            : mesocycleFilter 
+              ? `${mesocycleFilter.name} - ${year}` 
+              : `Vista General - ${year}`}
         </h3>
         <div className="flex gap-2">
           <Button 
             onClick={() => {
-              const today = new Date();
-              const dateForSession = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
-              console.log('🎯 Botón "Crear Sesión" de vista general clickeado. Fecha:', dateForSession);
-              handleCreateSession(dateForSession);
+              const validDate = findNearestValidDate();
+              if (!validDate) {
+                toast.error('No hay fechas válidas disponibles para crear sesiones');
+                return;
+              }
+              console.log('🎯 Botón "Crear Sesión" de vista general clickeado. Fecha:', validDate);
+              handleCreateSession(validDate);
             }}
             className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105"
             disabled={userType === 'athlete'}
@@ -490,19 +1091,81 @@ export function PlanningCalendar({
         {monthNames.map((monthName, index) => {
           const monthPeriod = defaultMonths.find(m => new Date(m.startDate).getMonth() === index);
           
-          // Si hay filtro de mesociclo, verificar si el mes está dentro del rango
+          // Verificar si el mes está dentro del rango (mesociclo, microciclo o planificación)
           let isActive = monthPeriod !== undefined;
           let isInMesocycleRange = true;
           
-          if (mesocycleFilter) {
-            // Calcular fecha aproximada de semanas del mesociclo
-            const startWeekDate = new Date(year, 0, 1 + (mesocycleFilter.startWeek - 1) * 7);
-            const endWeekDate = new Date(year, 0, 1 + mesocycleFilter.endWeek * 7);
-            const monthStart = new Date(year, index, 1);
-            const monthEnd = new Date(year, index + 1, 0);
+          let startDate: Date | null = null;
+          let endDate: Date | null = null;
+          const isMicrocycleFilter = !!microcycleFilter;
+          
+          if (microcycleFilter) {
+            // Si hay filtro de microciclo, usar sus fechas (prioridad más alta)
+            const startDateStr = microcycleFilter.startDate.split('T')[0];
+            const endDateStr = microcycleFilter.endDate.split('T')[0];
+            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+            const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
             
-            // Verificar si el mes se solapa con el rango del mesociclo
-            isInMesocycleRange = monthStart <= endWeekDate && monthEnd >= startWeekDate;
+            startDate = new Date(startYear, startMonth - 1, startDay);
+            endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+          } else if (mesocycleFilter) {
+            // Si hay filtro de mesociclo, usar sus fechas
+            if (mesocycleFilter.startDate && mesocycleFilter.endDate) {
+              // Usar fechas reales del mesociclo
+              const startDateStr = mesocycleFilter.startDate.split('T')[0];
+              const endDateStr = mesocycleFilter.endDate.split('T')[0];
+              const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+              const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+              
+              startDate = new Date(startYear, startMonth - 1, startDay);
+              endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+            } else if (mesocycleFilter.startWeek && mesocycleFilter.endWeek) {
+              // Fallback: calcular fecha aproximada de semanas del mesociclo
+              startDate = new Date(year, 0, 1 + (mesocycleFilter.startWeek - 1) * 7);
+              endDate = new Date(year, 0, 1 + mesocycleFilter.endWeek * 7);
+            } else {
+              // Si no hay fechas ni semanas, no resaltar
+              isInMesocycleRange = false;
+              isActive = false;
+            }
+          } else if (planningStartDate) {
+            // Si no hay filtro de mesociclo/microciclo pero hay fechas de planificación, usar esas
+            const startDateStr = planningStartDate.split('T')[0];
+            const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+            startDate = new Date(startYear, startMonth - 1, startDay);
+            
+            if (planningEndDate) {
+              const endDateStr = planningEndDate.split('T')[0];
+              const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+              endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+            } else {
+              // Si no hay fecha de fin, permitir todos los meses desde la fecha de inicio
+              endDate = new Date(9999, 11, 31, 23, 59, 59, 999);
+            }
+          }
+          
+          if (startDate && endDate) {
+            const monthStart = new Date(year, index, 1);
+            const monthEnd = new Date(year, index + 1, 0, 23, 59, 59, 999);
+            
+            if (isMicrocycleFilter) {
+              // Para microciclos, solo habilitar meses que realmente contienen días del microciclo
+              // El mes debe contener al menos un día del rango del microciclo
+              // Y el mes debe estar en el mismo año que el filtro
+              const filterYear = startDate.getFullYear();
+              const monthYear = monthStart.getFullYear();
+              
+              if (filterYear !== monthYear) {
+                // Si el mes está en un año diferente, no está en el rango
+                isInMesocycleRange = false;
+              } else {
+                // Verificar si el mes se solapa con el rango del microciclo
+                isInMesocycleRange = monthStart <= endDate && monthEnd >= startDate;
+              }
+            } else {
+              // Para mesociclos y planificación, verificar si el mes se solapa con el rango
+              isInMesocycleRange = monthStart <= endDate && monthEnd >= startDate;
+            }
             isActive = isActive && isInMesocycleRange;
           }
           
@@ -525,15 +1188,9 @@ export function PlanningCalendar({
                     </Badge>
                   )}
                 </div>
-                {monthPeriod && (
-                  <CardDescription>
-                    {new Date(monthPeriod.startDate).toLocaleDateString('es-ES', { day: '2-digit' })} - {' '}
-                    {new Date(monthPeriod.endDate).toLocaleDateString('es-ES', { day: '2-digit' })}
-                  </CardDescription>
-                )}
               </CardHeader>
               
-              <CardContent>
+              <CardContent className="flex flex-col min-h-[180px]">
                 {!isActive ? (
                   <p className="text-sm text-muted-foreground">
                     {mesocycleFilter && !isInMesocycleRange 
@@ -542,41 +1199,43 @@ export function PlanningCalendar({
                     }
                   </p>
                 ) : (
-                  <div className="space-y-3">
-                    {monthSessions.length > 0 ? (
-                      <>
-                        {/* Distribución por categoría */}
-                        <div className="space-y-2">
-                          <p className="text-sm font-medium">Distribución de sesiones:</p>
-                          <div className="space-y-1">
-                            {['training', 'prep_competition', 'main_competition'].map(category => {
-                              const count = monthSessions.filter(s => s.category === category).length;
-                              if (count === 0) return null;
-                              
-                              return (
-                                <div key={category} className="flex items-center justify-between text-xs">
-                                  <div className="flex items-center space-x-2">
-                                    <div className={`w-2 h-2 rounded-full ${getCategoryColor(category)}`} />
-                                    <span>{getCategoryName(category)}</span>
+                  <div className="flex flex-col flex-1 space-y-3">
+                    <div className="flex-1">
+                      {monthSessions.length > 0 ? (
+                        <>
+                          {/* Distribución por categoría */}
+                          <div className="space-y-2">
+                            <p className="text-sm font-medium">Distribución de sesiones:</p>
+                            <div className="space-y-1">
+                              {['training', 'prep_competition', 'main_competition'].map(category => {
+                                const count = monthSessions.filter(s => s.category === category).length;
+                                if (count === 0) return null;
+                                
+                                return (
+                                  <div key={category} className="flex items-center justify-between text-xs">
+                                    <div className="flex items-center space-x-2">
+                                      <div className={`w-2 h-2 rounded-full ${getCategoryColor(category)}`} />
+                                      <span>{getCategoryName(category)}</span>
+                                    </div>
+                                    <span className="font-medium">{count}</span>
                                   </div>
-                                  <span className="font-medium">{count}</span>
-                                </div>
-                              );
-                            })}
+                                );
+                              })}
+                            </div>
                           </div>
-                        </div>
-                      </>
-                    ) : (
-                      <p className="text-sm text-muted-foreground">
-                        No hay sesiones programadas
-                      </p>
-                    )}
+                        </>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No hay sesiones programadas
+                        </p>
+                      )}
+                    </div>
 
-                    {/* Botón de edición */}
+                    {/* Botón de edición - siempre al final */}
                     <Button 
                       variant="outline" 
                       size="sm" 
-                      className="w-full"
+                      className="w-full mt-auto"
                       onClick={(e) => {
                         e.stopPropagation();
                         handleMonthClick(index);
@@ -597,31 +1256,96 @@ export function PlanningCalendar({
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">
-            {mesocycleFilter ? `Resumen del ${mesocycleFilter.name}` : 'Resumen de Atletas'}
+            {microcycleFilter 
+              ? `Resumen del ${microcycleFilter.name}` 
+              : mesocycleFilter 
+                ? `Resumen del ${mesocycleFilter.name}` 
+                : 'Resumen de Atletas'}
           </CardTitle>
-          {mesocycleFilter && (
-            <CardDescription>
-              Semanas {mesocycleFilter.startWeek} - {mesocycleFilter.endWeek} del año {year}
-            </CardDescription>
-          )}
+          {(microcycleFilter || mesocycleFilter) && (() => {
+            // Obtener fechas de inicio y fin (microciclo tiene prioridad)
+            let startDate: Date;
+            let endDate: Date;
+            
+            if (microcycleFilter) {
+              // Usar fechas del microciclo
+              const startDateStr = microcycleFilter.startDate.includes('T') 
+                ? microcycleFilter.startDate.split('T')[0] 
+                : microcycleFilter.startDate;
+              const endDateStr = microcycleFilter.endDate.includes('T') 
+                ? microcycleFilter.endDate.split('T')[0] 
+                : microcycleFilter.endDate;
+              const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+              const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+              
+              startDate = new Date(startYear, startMonth - 1, startDay);
+              endDate = new Date(endYear, endMonth - 1, endDay);
+            } else if (mesocycleFilter) {
+              // Usar fechas del mesociclo
+              if (mesocycleFilter.startDate && mesocycleFilter.endDate) {
+                // Usar fechas reales del mesociclo
+                const startDateStr = mesocycleFilter.startDate.split('T')[0];
+                const endDateStr = mesocycleFilter.endDate.split('T')[0];
+                const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+                const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+                
+                startDate = new Date(startYear, startMonth - 1, startDay);
+                endDate = new Date(endYear, endMonth - 1, endDay);
+              } else if (mesocycleFilter.startWeek && mesocycleFilter.endWeek) {
+                // Fallback: calcular fecha aproximada de semanas del mesociclo
+                startDate = new Date(year, 0, 1 + (mesocycleFilter.startWeek - 1) * 7);
+                endDate = new Date(year, 0, 1 + mesocycleFilter.endWeek * 7);
+              } else {
+                return null;
+              }
+            } else {
+              return null;
+            }
+            
+            // Formatear fechas en español
+            const formatDateRange = (start: Date, end: Date): string => {
+              const startDayName = dayNames[start.getDay()];
+              const startDay = start.getDate();
+              const startMonthName = monthNames[start.getMonth()].toLowerCase();
+              const startYear = start.getFullYear();
+              
+              const endDayName = dayNames[end.getDay()];
+              const endDay = end.getDate();
+              const endMonthName = monthNames[end.getMonth()].toLowerCase();
+              const endYear = end.getFullYear();
+              
+              // Si es el mismo año, solo mostrar el año al final
+              if (startYear === endYear) {
+                return `Del ${startDayName} ${startDay} de ${startMonthName} al ${endDayName} ${endDay} de ${endMonthName} de ${startYear}`;
+              } else {
+                return `Del ${startDayName} ${startDay} de ${startMonthName} de ${startYear} al ${endDayName} ${endDay} de ${endMonthName} de ${endYear}`;
+              }
+            };
+            
+            return (
+              <CardDescription>
+                {formatDateRange(startDate, endDate)}
+              </CardDescription>
+            );
+          })()}
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">Total atletas:</span>
-              <div className="font-medium text-primary">{defaultAthletes.length}</div>
-            </div>
-            <div>
-              <span className="text-muted-foreground">Grupos activos:</span>
-              <div className="font-medium text-primary">
-                {new Set(defaultAthletes.map(a => a.groupId)).size}
-              </div>
+              <div className="font-medium text-primary">{totalAthletes}</div>
             </div>
             <div>
               <span className="text-muted-foreground">
                 {mesocycleFilter ? 'Sesiones del mesociclo:' : 'Sesiones totales:'}
               </span>
-              <div className="font-medium text-primary">{trainingSessions.length}</div>
+              <div className="font-medium text-primary">
+                {isLoadingMesocycleSessions ? (
+                  <span className="text-muted-foreground">Cargando...</span>
+                ) : (
+                  mesocycleFilter ? mesocycleSessionsCount : trainingSessions.length
+                )}
+              </div>
             </div>
           </div>
         </CardContent>
@@ -632,11 +1356,68 @@ export function PlanningCalendar({
         isOpen={isSessionModalOpen}
         onClose={handleCloseModal}
         onSubmit={handleSessionSubmit}
-        athletes={defaultAthletes}
+        athletes={athletes}
         selectedDate={selectedDate}
         existingSessions={getSessionsForDate(selectedDate)}
-        userType={userType}
+        planningId={planningId ? Number(planningId) : undefined}
+        editingSession={editingSession}
+        onSessionCreated={() => {
+          // Recargar sesiones después de crear
+          if (planningId) {
+            loadTrainingSessions();
+          }
+        }}
+        onSessionUpdated={() => {
+          // Recargar sesiones después de actualizar
+          if (planningId) {
+            loadTrainingSessions();
+          }
+        }}
       />
+
+      {/* Modal de confirmación para eliminar sesión */}
+      <AlertDialog 
+        open={isDeleteDialogOpen} 
+        onOpenChange={(open) => {
+          console.log('🔄 onOpenChange del AlertDialog:', open);
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            // Si se cierra el modal, limpiar la sesión a eliminar
+            setSessionToDelete(null);
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Eliminar sesión?</AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <div>
+                Esta acción eliminará permanentemente la sesión <strong>"{sessionToDelete?.name}"</strong>.
+              </div>
+              {sessionToDelete?.date && (
+                <div className="text-muted-foreground">
+                  Fecha: {formatSessionDate(sessionToDelete.date)}
+                </div>
+              )}
+              <div className="text-sm text-muted-foreground mt-2">
+                Esta acción no se puede deshacer.
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleConfirmDelete}
+              className="bg-red-600 text-white hover:bg-red-700 focus:ring-red-600"
+              disabled={deletingSessionId !== null}
+            >
+              {deletingSessionId ? 'Eliminando...' : 'Sí, eliminar sesión'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -10,6 +10,17 @@ export interface CreateTrainingSessionDto {
   category: string; // 'Training' | 'PrepCompetition' | 'MainCompetition' (PascalCase para el backend)
   notes?: string;
   templateId?: number;
+  planningId: number; // ID de la planificación (requerido)
+  athleteIds: number[]; // IDs de los atletas
+  intervals: CreateTrainingIntervalDto[];
+}
+
+export interface UpdateTrainingSessionDto {
+  name: string;
+  description?: string;
+  date: string; // ISO string format
+  category: string; // 'Training' | 'PrepCompetition' | 'MainCompetition' (PascalCase para el backend)
+  notes?: string;
   athleteIds: number[]; // IDs de los atletas
   intervals: CreateTrainingIntervalDto[];
 }
@@ -38,14 +49,18 @@ export interface TrainingSessionResponseDto {
   date: string; // ISO string format
   category: string; // 'Training' | 'PrepCompetition' | 'MainCompetition' (del backend)
   notes?: string;
-  createdByUserId: number;
-  createdByName: string;
+  createdByUserId?: number;
+  createdByName?: string;
   templateId?: number;
   templateName?: string;
   createdAt: string;
   updatedAt?: string;
-  athletes: TrainingSessionAthleteResponseDto[];
+  athleteIds?: number[]; // Array de IDs de atletas (formato simplificado)
+  athletes?: TrainingSessionAthleteResponseDto[]; // Array de objetos con información completa (formato completo)
   intervals: TrainingIntervalResponseDto[];
+  planningId?: number;
+  microcycleId?: number;
+  volume?: number;
 }
 
 export interface TrainingSessionAthleteResponseDto {
@@ -87,7 +102,7 @@ export class TrainingSessionService {
   ): Promise<TrainingSessionResponseDto> {
     try {
       const { data } = await apiClient.post<TrainingSessionResponseDto>(
-        '/api/TrainingSessions',
+        '/api/TrainingSession',
         dto
       );
 
@@ -108,7 +123,7 @@ export class TrainingSessionService {
   static async getAllTrainingSessions(): Promise<TrainingSessionResponseDto[]> {
     try {
       const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
-        '/api/TrainingSessions'
+        '/api/TrainingSession'
       );
       return data;
     } catch (error) {
@@ -123,7 +138,7 @@ export class TrainingSessionService {
   static async getTrainingSessionById(id: number): Promise<TrainingSessionResponseDto | null> {
     try {
       const { data } = await apiClient.get<TrainingSessionResponseDto>(
-        `/api/TrainingSessions/${id}`
+        `/api/TrainingSession/${id}`
       );
       return data;
     } catch (error: any) {
@@ -136,14 +151,74 @@ export class TrainingSessionService {
   }
 
   /**
-   * Obtiene todas las sesiones de una fecha específica
+   * Obtiene todas las sesiones de una planificación
+   * @param planningId ID de la planificación
    */
-  static async getTrainingSessionsByDate(date: string): Promise<TrainingSessionResponseDto[]> {
+  static async getTrainingSessionsByPlanningId(planningId: number): Promise<TrainingSessionResponseDto[]> {
     try {
       const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
-        `/api/TrainingSessions/date/${date}`
+        `/api/TrainingSession/planning/${planningId}`
       );
       return data;
+    } catch (error) {
+      // El error ya se maneja automáticamente en apiClient.ts
+      throw error;
+    }
+  }
+
+  /**
+   * Obtiene todas las sesiones de un microciclo
+   * @param microcycleId ID del microciclo
+   */
+  static async getTrainingSessionsByMicrocycleId(microcycleId: number): Promise<TrainingSessionResponseDto[]> {
+    try {
+      const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
+        `/api/TrainingSession/microcycle/${microcycleId}`
+      );
+      return data;
+    } catch (error) {
+      // El error ya se maneja automáticamente en apiClient.ts
+      throw error;
+    }
+  }
+
+  /**
+   * Actualiza una sesión de entrenamiento existente
+   * @param id ID de la sesión a actualizar
+   * @param dto Datos actualizados de la sesión
+   */
+  static async updateTrainingSession(
+    id: number,
+    dto: UpdateTrainingSessionDto
+  ): Promise<TrainingSessionResponseDto> {
+    try {
+      const { data } = await apiClient.put<TrainingSessionResponseDto>(
+        `/api/TrainingSession/${id}`,
+        dto
+      );
+
+      toast.success('Sesión actualizada exitosamente', {
+        description: `"${dto.name}" ha sido actualizada correctamente`
+      });
+
+      return data;
+    } catch (error) {
+      // El error ya se maneja automáticamente en apiClient.ts
+      throw error;
+    }
+  }
+
+  /**
+   * Elimina una sesión de entrenamiento
+   * @param id ID de la sesión a eliminar
+   */
+  static async deleteTrainingSession(id: number): Promise<void> {
+    try {
+      await apiClient.delete(`/api/TrainingSession/${id}`);
+      
+      toast.success('Sesión eliminada exitosamente', {
+        description: 'La sesión ha sido eliminada correctamente'
+      });
     } catch (error) {
       // El error ya se maneja automáticamente en apiClient.ts
       throw error;

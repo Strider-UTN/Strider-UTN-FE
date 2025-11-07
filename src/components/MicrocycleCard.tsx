@@ -13,7 +13,7 @@ interface MicrocycleCardProps {
   onViewCalendar: (microcycle: Microcycle) => void;
   onCreateSession?: (microcycleId: string, date: string) => void;
   onEditMicrocycle?: (microcycle: Microcycle) => void;
-  onDeleteMicrocycle: (microcycleId: string) => void;
+  onDeleteMicrocycle?: (microcycleId: string) => void; // Opcional - Los microciclos NO se pueden eliminar desde el menú
 }
 
 export function MicrocycleCard({
@@ -38,9 +38,19 @@ export function MicrocycleCard({
     <Card className="hover:shadow-md transition-shadow border-l-4 border-l-accent">
       <CardHeader>
         <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg">Semana {microcycle.weekNumber}</CardTitle>
-            <CardDescription>
+          <div className="flex-1 min-w-0">
+            {/* ✅ NUEVO - Nombre del microciclo (más grande y con más peso) */}
+            <CardTitle className="text-lg font-semibold truncate">
+              {microcycle.name || `Semana ${microcycle.weekNumber}`}
+            </CardTitle>
+            {/* ✅ NUEVO - Descripción (gris más tenue, alineada a la izquierda) */}
+            {microcycle.description && (
+              <CardDescription className="text-sm text-muted-foreground/70 mt-1 text-left">
+                {microcycle.description}
+              </CardDescription>
+            )}
+            {/* Fecha del microciclo */}
+            <CardDescription className="text-xs mt-1">
               {formatDateRange(microcycle.startDate, microcycle.endDate)}
             </CardDescription>
           </div>
@@ -174,7 +184,9 @@ export function MicrocycleCard({
             </Tooltip>
           )}
 
-          <Tooltip>
+          {/* ❌ REMOVIDO - Los microciclos NO se pueden eliminar desde el menú */}
+          {/* Solo se eliminan automáticamente al ajustar la cantidad de semanas en el mesociclo */}
+          {/* <Tooltip>
             <TooltipTrigger asChild>
               <Button
                 variant="ghost"
@@ -188,7 +200,7 @@ export function MicrocycleCard({
             <TooltipContent>
               <p>Eliminar microciclo</p>
             </TooltipContent>
-          </Tooltip>
+          </Tooltip> */}
         </div>
       </CardContent>
     </Card>

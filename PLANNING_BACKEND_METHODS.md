@@ -404,8 +404,9 @@ public class MesocycleResponseDto
 // Request DTOs (NO hay CreateMicrocycleDto porque se crean automáticamente)
 public class UpdateMicrocycleDto
 {
-    public int Sessions { get; set; }
-    public decimal Volume { get; set; } // Se actualiza automáticamente, pero puede ajustarse manualmente
+    public string Name { get; set; } = string.Empty; // ✅ NUEVO
+    public string? Description { get; set; } // ✅ NUEVO (opcional)
+    // Sessions y Volume NO deben estar aquí - se calculan automáticamente desde las sesiones
     public MicrocycleIntensity Intensity { get; set; }
     public MicrocycleFocus? Focus { get; set; }
 }
@@ -414,16 +415,18 @@ public class UpdateMicrocycleDto
 public class MicrocycleResponseDto
 {
     public int Id { get; set; }
+    public string Name { get; set; } = string.Empty; // ✅ NUEVO
+    public string? Description { get; set; } // ✅ NUEVO (opcional)
     public int WeekNumber { get; set; }
     public DateTime StartDate { get; set; }
     public DateTime EndDate { get; set; }
-    public int Sessions { get; set; }
-    public decimal Volume { get; set; }
+    public int Sessions { get; set; } // Calculado automáticamente desde TrainingSessions
+    public decimal Volume { get; set; } // Calculado automáticamente desde TrainingSessions
     public MicrocycleIntensity Intensity { get; set; }
     public MicrocycleFocus? Focus { get; set; }
     public int MesocycleId { get; set; }
     public int PeriodId { get; set; }
-    public int TrainingSessionsCount { get; set; }
+    public int TrainingSessionsCount { get; set; } // Cantidad real de sesiones asignadas
     public DateTime CreatedAt { get; set; }
     public DateTime UpdatedAt { get; set; }
 }

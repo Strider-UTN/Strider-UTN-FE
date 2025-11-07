@@ -10,14 +10,15 @@ import { toast } from 'sonner';
 
 interface Microcycle {
   id: string;
+  name: string; // ✅ NUEVO - Nombre del microciclo
+  description?: string; // ✅ NUEVO - Descripción del microciclo (opcional)
   weekNumber: number;
   startDate: string;
   endDate: string;
   focus: string;
   intensity: 'baja' | 'media' | 'alta';
-  volume: number;
-  sessions: number;
-  notes?: string;
+  volume: number; // Calculado automáticamente - readonly
+  sessions: number; // Calculado automáticamente - readonly
 }
 
 interface EditMicrocycleModalProps {
@@ -35,40 +36,85 @@ export function EditMicrocycleModal({
   onSave,
   mesocycleName 
 }: EditMicrocycleModalProps) {
-  const [formData, setFormData] = useState<Microcycle>(microcycle);
+  // Función helper para convertir fecha ISO a formato YYYY-MM-DD para inputs type="date"
+  // IMPORTANTE: Evitar problemas de timezone parseando directamente la fecha sin conversión
+  const formatDateForInput = (dateString: string): string => {
+    if (!dateString) return '';
+    // Si ya está en formato YYYY-MM-DD, devolverlo tal cual
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      return dateString;
+    }
+    // Si viene en formato ISO (con hora y timezone), extraer solo la parte de la fecha
+    // Ejemplo: "2025-12-01T00:00:00Z" -> "2025-12-01"
+    if (dateString.includes('T')) {
+      const [datePart] = dateString.split('T');
+      // Verificar que tenga el formato correcto YYYY-MM-DD
+      if (/^\d{4}-\d{2}-\d{2}$/.test(datePart)) {
+        return datePart;
+      }
+    }
+    // Si no se pudo extraer directamente, parsear como fecha local (sin conversión de timezone)
+    // Esto evita que se muestre un día menos
+    const date = new Date(dateString);
+    if (isNaN(date.getTime())) return '';
+    
+    // Usar UTC para evitar problemas de timezone
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Inicializar formData con valores por defecto si faltan
+  const initializeFormData = (microcycle: Microcycle): Microcycle => {
+    const initialized = {
+      id: microcycle.id,
+      name: microcycle.name || `Semana ${microcycle.weekNumber}`,
+      description: microcycle.description || '',
+      weekNumber: microcycle.weekNumber,
+      startDate: formatDateForInput(microcycle.startDate),
+      endDate: formatDateForInput(microcycle.endDate),
+      focus: microcycle.focus || '',
+      intensity: (microcycle.intensity || 'media') as 'baja' | 'media' | 'alta',
+      volume: microcycle.volume || 0,
+      sessions: microcycle.sessions || 0
+    };
+    
+    // Debug: verificar que los valores se están inicializando correctamente
+    console.log('Initializing formData:', {
+      original: microcycle,
+      initialized: initialized
+    });
+    
+    return initialized;
+  };
+
+  const [formData, setFormData] = useState<Microcycle>(() => initializeFormData(microcycle));
   const [isLoading, setIsLoading] = useState(false);
 
-  // Actualizar formData cuando cambie el microciclo
+  // Actualizar formData cuando cambie el microciclo o cuando se abra el modal
   useEffect(() => {
-    setFormData(microcycle);
-  }, [microcycle]);
+    if (isOpen && microcycle) {
+      const initialized = initializeFormData(microcycle);
+      setFormData(initialized);
+    }
+  }, [microcycle, isOpen]);
 
   const handleSave = async () => {
     setIsLoading(true);
     
     try {
       // Validaciones básicas
-      if (!formData.focus.trim()) {
-        toast.error('El enfoque del microciclo es obligatorio');
+      if (!formData.name.trim()) {
+        toast.error('El nombre del microciclo es obligatorio');
         return;
       }
 
-      if (formData.volume <= 0) {
-        toast.error('El volumen debe ser mayor a 0');
-        return;
-      }
+      // Focus es opcional - si está vacío, se enviará como null al backend
+      // El backend espera un enum MicrocycleFocus o null, no un string libre
 
-      if (formData.sessions <= 0) {
-        toast.error('El número de sesiones debe ser mayor a 0');
-        return;
-      }
-
-      // Simular guardado
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      // Guardar cambios (sessions y volume se calculan automáticamente en el backend)
       onSave(formData);
-      toast.success(`Semana ${formData.weekNumber} actualizada exitosamente`);
-      onClose();
     } catch (error) {
       toast.error('Error al guardar los cambios del microciclo');
     } finally {
@@ -116,6 +162,42 @@ export function EditMicrocycleModal({
 
         <div className="space-y-6">
           {/* Información básica */}
+          <div className="space-y-4">
+            {/* ✅ NUEVO - Nombre del microciclo */}
+            <div className="space-y-2">
+              <Label htmlFor="name">Nombre del Microciclo *</Label>
+              <Input
+                id="name"
+                type="text"
+                value={formData.name}
+                onChange={(e) => handleInputChange('name', e.target.value)}
+                placeholder="Ej: Semana 1, Semana de Base, etc."
+                className="w-full"
+                maxLength={200}
+              />
+              <p className="text-xs text-muted-foreground">
+                Este nombre se mostrará de forma destacada en las tarjetas del microciclo
+              </p>
+            </div>
+
+            {/* ✅ NUEVO - Descripción del microciclo */}
+            <div className="space-y-2">
+              <Label htmlFor="description">Descripción</Label>
+              <Textarea
+                id="description"
+                placeholder="Descripción breve del microciclo (opcional)"
+                value={formData.description || ''}
+                onChange={(e) => handleInputChange('description', e.target.value)}
+                className="min-h-20"
+                maxLength={1000}
+              />
+              <p className="text-xs text-muted-foreground">
+                Esta descripción se mostrará en gris más tenue debajo del nombre
+              </p>
+            </div>
+          </div>
+
+          {/* Información adicional */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="weekNumber">Número de Semana</Label>
@@ -127,13 +209,15 @@ export function EditMicrocycleModal({
                 value={formData.weekNumber}
                 onChange={(e) => handleInputChange('weekNumber', parseInt(e.target.value))}
                 className="w-full"
+                disabled
               />
+              <p className="text-xs text-muted-foreground">No editable</p>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="intensity">Intensidad</Label>
               <Select 
-                value={formData.intensity} 
+                value={formData.intensity || 'media'} 
                 onValueChange={(value: 'baja' | 'media' | 'alta') => handleInputChange('intensity', value)}
               >
                 <SelectTrigger>
@@ -154,7 +238,7 @@ export function EditMicrocycleModal({
             </div>
           </div>
 
-          {/* Fechas */}
+          {/* Fechas (Readonly - No editables) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="startDate">Fecha de Inicio</Label>
@@ -162,9 +246,13 @@ export function EditMicrocycleModal({
                 id="startDate"
                 type="date"
                 value={formData.startDate}
-                onChange={(e) => handleInputChange('startDate', e.target.value)}
-                className="w-full"
+                className="w-full bg-muted cursor-not-allowed"
+                readOnly
+                disabled
               />
+              <p className="text-xs text-muted-foreground">
+                No editable - Se calcula automáticamente desde el mesociclo
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -173,9 +261,13 @@ export function EditMicrocycleModal({
                 id="endDate"
                 type="date"
                 value={formData.endDate}
-                onChange={(e) => handleInputChange('endDate', e.target.value)}
-                className="w-full"
+                className="w-full bg-muted cursor-not-allowed"
+                readOnly
+                disabled
               />
+              <p className="text-xs text-muted-foreground">
+                No editable - Se calcula automáticamente desde el mesociclo
+              </p>
             </div>
           </div>
 
@@ -183,11 +275,13 @@ export function EditMicrocycleModal({
           <div className="space-y-2">
             <Label htmlFor="focus">Enfoque Principal</Label>
             <Select 
-              value={formData.focus} 
+              value={formData.focus || ''} 
               onValueChange={(value) => handleInputChange('focus', value)}
             >
               <SelectTrigger>
-                <SelectValue placeholder="Seleccionar enfoque" />
+                <SelectValue placeholder="Seleccionar enfoque">
+                  {formData.focus || 'Seleccionar enfoque'}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {focusOptions.map((option) => (
@@ -199,7 +293,7 @@ export function EditMicrocycleModal({
             </Select>
           </div>
 
-          {/* Métricas */}
+          {/* Métricas (Readonly - Calculadas automáticamente) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="volume">Volumen (km)</Label>
@@ -208,10 +302,14 @@ export function EditMicrocycleModal({
                 type="number"
                 min="0"
                 step="0.1"
-                value={formData.volume}
-                onChange={(e) => handleInputChange('volume', parseFloat(e.target.value))}
-                className="w-full"
+                value={formData.volume.toFixed(2)}
+                className="w-full bg-muted cursor-not-allowed"
+                readOnly
+                disabled
               />
+              <p className="text-xs text-muted-foreground">
+                Calculado automáticamente desde las sesiones asignadas
+              </p>
             </div>
 
             <div className="space-y-2">
@@ -222,23 +320,17 @@ export function EditMicrocycleModal({
                 min="1"
                 max="14"
                 value={formData.sessions}
-                onChange={(e) => handleInputChange('sessions', parseInt(e.target.value))}
-                className="w-full"
+                className="w-full bg-muted cursor-not-allowed"
+                readOnly
+                disabled
               />
+              <p className="text-xs text-muted-foreground">
+                Calculado automáticamente desde las sesiones asignadas
+              </p>
             </div>
           </div>
 
-          {/* Notas */}
-          <div className="space-y-2">
-            <Label htmlFor="notes">Notas Adicionales</Label>
-            <Textarea
-              id="notes"
-              placeholder="Observaciones, consideraciones especiales, etc."
-              value={formData.notes || ''}
-              onChange={(e) => handleInputChange('notes', e.target.value)}
-              className="min-h-20"
-            />
-          </div>
+          {/* ❌ REMOVIDO - Notas adicionales no se persisten en el backend */}
 
 
         </div>

@@ -15,7 +15,9 @@ import { SeriesBuilder } from './SeriesBuilder';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
 import { TrainingTemplateService, TrainingTemplateResponseDto } from '../services/trainingTemplateService';
-import { TrainingSessionService, CreateTrainingSessionDto, CreateTrainingIntervalDto } from '../services/trainingSessionService';
+import { TrainingSessionService, CreateTrainingSessionDto, CreateTrainingIntervalDto, UpdateTrainingSessionDto } from '../services/trainingSessionService';
+import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleService';
+import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
 import { mapTrainingTypeFromBackend } from '../utils/trainingTypeMapper';
 import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
 import { mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
@@ -106,6 +108,9 @@ interface CreateTrainingSessionModalProps {
   selectedDate: string;
   existingSessions?: TrainingSession[];
   onSessionCreated?: () => void; // Callback opcional cuando se crea exitosamente en el backend
+  planningId?: number; // ID de la planificación para validar fechas
+  editingSession?: TrainingSession | null; // Sesión a editar (si existe)
+  onSessionUpdated?: () => void; // Callback opcional cuando se actualiza exitosamente en el backend
 }
 
 export function CreateTrainingSessionModal({ 
@@ -115,13 +120,26 @@ export function CreateTrainingSessionModal({
   athletes, 
   selectedDate,
   existingSessions = [],
-  onSessionCreated
+  onSessionCreated,
+  planningId,
+  editingSession = null,
+  onSessionUpdated
 }: CreateTrainingSessionModalProps) {
+  // Inicializar fecha en formato YYYY-MM-DD para el input
+  const getInitialDate = (): string => {
+    if (!selectedDate) return '';
+    // Si ya está en formato YYYY-MM-DD, usarlo directamente
+    if (!selectedDate.includes('T')) return selectedDate;
+    // Si tiene 'T', extraer solo la parte de la fecha
+    return selectedDate.split('T')[0];
+  };
+
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     category: 'training' as 'training' | 'prep_competition' | 'main_competition',
-    notes: ''
+    notes: '',
+    date: getInitialDate() // Agregar fecha al estado del formulario en formato YYYY-MM-DD
   });
   
   const [selectedAthletes, setSelectedAthletes] = useState<string[]>([]);
@@ -137,6 +155,180 @@ export function CreateTrainingSessionModal({
   const [templates, setTemplates] = useState<TrainingTemplate[]>([]);
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
   const [templateSearchTerm, setTemplateSearchTerm] = useState('');
+  
+  // Estados para validación de fechas
+  const [mesocycles, setMesocycles] = useState<MesocycleResponseDto[]>([]);
+  const [microcycles, setMicrocycles] = useState<MicrocycleResponseDto[]>([]);
+  const [isLoadingCycles, setIsLoadingCycles] = useState(false);
+  const [dateValidationError, setDateValidationError] = useState<string>('');
+  
+  // Obtener fecha mínima (hoy)
+  const getMinDate = (): string => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    return today.toISOString().split('T')[0];
+  };
+  
+  // Cargar mesociclos y microciclos para validar fechas
+  useEffect(() => {
+    if (isOpen && planningId) {
+      loadCycles();
+    }
+  }, [isOpen, planningId]);
+  
+  // Actualizar fecha del formulario cuando cambia selectedDate
+  useEffect(() => {
+    if (isOpen && selectedDate) {
+      // Asegurar que la fecha esté en formato YYYY-MM-DD para el input
+      const dateStr = selectedDate.includes('T') 
+        ? selectedDate.split('T')[0] 
+        : selectedDate;
+      setFormData(prev => ({ ...prev, date: dateStr }));
+      // No validar inmediatamente si los ciclos aún se están cargando
+      // La validación se hará cuando los ciclos terminen de cargar
+      if (!isLoadingCycles && microcycles.length > 0) {
+        validateDate(dateStr);
+      }
+    }
+  }, [isOpen, selectedDate]);
+
+  // Validar fecha después de que los ciclos se hayan cargado
+  useEffect(() => {
+    if (isOpen && formData.date && !isLoadingCycles && planningId) {
+      // Solo validar si hay microciclos cargados o si no hay planningId
+      if (microcycles.length > 0 || !planningId) {
+        validateDate(formData.date);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, isLoadingCycles, microcycles.length]);
+
+  // Cargar datos de la sesión cuando se está editando
+  useEffect(() => {
+    if (isOpen && editingSession) {
+      // Cargar datos de la sesión en el formulario
+      const dateStr = editingSession.date.includes('T') 
+        ? editingSession.date.split('T')[0] 
+        : editingSession.date;
+      
+      setFormData({
+        name: editingSession.name,
+        description: editingSession.description || '',
+        category: editingSession.category,
+        notes: editingSession.notes || '',
+        date: dateStr
+      });
+      
+      setSelectedAthletes(editingSession.athletes || []);
+      setIntervals(editingSession.intervals || []);
+      setSeries([]); // Las series se convierten en intervalos, así que no las cargamos
+      setCurrentStep(1);
+      
+      // Validar la fecha después de cargar los datos, pero solo si los ciclos ya están cargados
+      // Usar setTimeout para asegurar que el estado se haya actualizado
+      setTimeout(() => {
+        if (!isLoadingCycles && (microcycles.length > 0 || !planningId)) {
+          validateDate(dateStr);
+        }
+      }, 100);
+    } else if (isOpen && !editingSession) {
+      // Resetear formulario si no se está editando
+      handleReset();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, editingSession]);
+  
+  const loadCycles = async () => {
+    if (!planningId) return;
+    
+    setIsLoadingCycles(true);
+    try {
+      // Cargar mesociclos de la planificación
+      const mesocyclesData = await MesocycleService.getMesocyclesByPlanningId(planningId);
+      setMesocycles(mesocyclesData);
+      
+      // Cargar microciclos de todos los mesociclos
+      const allMicrocycles: MicrocycleResponseDto[] = [];
+      for (const mesocycle of mesocyclesData) {
+        const microcyclesData = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycle.id);
+        allMicrocycles.push(...microcyclesData);
+      }
+      setMicrocycles(allMicrocycles);
+    } catch (error) {
+      console.error('Error al cargar ciclos:', error);
+      toast.error('Error al cargar información de ciclos');
+    } finally {
+      setIsLoadingCycles(false);
+    }
+  };
+  
+  // Validar que la fecha esté dentro de un microciclo existente
+  const validateDate = (dateString: string): boolean => {
+    setDateValidationError('');
+    
+    if (!dateString) {
+      setDateValidationError('La fecha es requerida');
+      return false;
+    }
+    
+    // Validar que la fecha no sea en el pasado
+    const dateStr = dateString.split('T')[0]; // Asegurar formato YYYY-MM-DD
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const selectedDate = new Date(year, month - 1, day); // Crear fecha local
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    selectedDate.setHours(0, 0, 0, 0);
+    
+    if (selectedDate < today) {
+      setDateValidationError('No se puede crear una sesión para una fecha en el pasado');
+      return false;
+    }
+    
+    // Si no hay planningId, no validar contra microciclos (compatibilidad con otros usos)
+    if (!planningId) {
+      return true;
+    }
+    
+    // Si aún no se han cargado los microciclos, no validar (pero no mostrar error)
+    if (microcycles.length === 0) {
+      // Si está cargando, no validar aún (permitir continuar sin error)
+      if (isLoadingCycles) {
+        return true;
+      }
+      // Si ya terminó de cargar y no hay microciclos, mostrar error solo si hay planningId
+      if (planningId) {
+        setDateValidationError('No hay microciclos disponibles para esta planificación');
+        return false;
+      }
+      // Si no hay planningId, no validar contra microciclos
+      return true;
+    }
+    
+    // Validar que la fecha esté dentro de un microciclo existente
+    const isInMicrocycle = microcycles.some(microcycle => {
+      const startDate = microcycle.startDate.includes('T') 
+        ? microcycle.startDate.split('T')[0] 
+        : microcycle.startDate;
+      const endDate = microcycle.endDate.includes('T') 
+        ? microcycle.endDate.split('T')[0] 
+        : microcycle.endDate;
+      
+      return dateStr >= startDate && dateStr <= endDate;
+    });
+    
+    if (!isInMicrocycle) {
+      setDateValidationError('La fecha debe estar dentro de un mesociclo y microciclo existentes');
+      return false;
+    }
+    
+    return true;
+  };
+  
+  // Manejar cambio de fecha
+  const handleDateChange = (newDate: string) => {
+    setFormData(prev => ({ ...prev, date: newDate }));
+    validateDate(newDate);
+  };
 
   // Función para convertir plantillas del backend al formato del frontend
   const convertBackendTemplateToFrontend = (backendTemplate: TrainingTemplateResponseDto): TrainingTemplate => {
@@ -384,44 +576,117 @@ export function CreateTrainingSessionModal({
       };
     });
 
-    // Crear el DTO para el backend
-    const backendDto: CreateTrainingSessionDto = {
-      name: formData.name.trim(),
-      description: formData.description.trim() || undefined,
-      date: selectedDate, // ISO string format
-      category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
-      notes: formData.notes.trim() || undefined,
-      athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
-      intervals: backendIntervals
-    };
+    // Validar fecha antes de enviar
+    if (!validateDate(formData.date)) {
+      toast.error('Por favor corrige la fecha antes de crear la sesión');
+      return;
+    }
+    
+    // Convertir fecha a formato ISO UTC explícitamente
+    // Asegurar que siempre termine en 'Z' para indicar UTC
+    let sessionDate: string;
+    if (formData.date.includes('T')) {
+      // Si ya tiene 'T', verificar si termina en 'Z'
+      sessionDate = formData.date.endsWith('Z') 
+        ? formData.date 
+        : formData.date.endsWith('z')
+        ? formData.date
+        : `${formData.date}Z`;
+    } else {
+      // Si no tiene 'T', agregar hora UTC medianoche
+      sessionDate = `${formData.date}T00:00:00.000Z`;
+    }
+    
+    // Validar que haya planningId
+    if (!planningId) {
+      toast.error('No se puede crear la sesión sin una planificación asociada');
+      return;
+    }
 
-    // Enviar al backend
-    try {
-      const createdSession = await TrainingSessionService.createTrainingSession(backendDto);
-      
-      // Llamar callback cuando se crea exitosamente (para refrescar listas)
-      if (onSessionCreated) {
-        onSessionCreated();
+    // Si estamos editando, usar UpdateTrainingSessionDto, sino CreateTrainingSessionDto
+    if (editingSession) {
+      // Actualizar sesión existente
+      const updateDto: UpdateTrainingSessionDto = {
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        date: sessionDate, // ISO string format
+        category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
+        notes: formData.notes.trim() || undefined,
+        athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
+        intervals: backendIntervals
+      };
+
+      try {
+        await TrainingSessionService.updateTrainingSession(Number(editingSession.id), updateDto);
+        
+        // Llamar callback cuando se actualiza exitosamente
+        if (onSessionUpdated) {
+          onSessionUpdated();
+        }
+        
+        // También llamar al callback del componente padre si es necesario (para compatibilidad)
+        if (onSubmit) {
+          const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
+            date: formData.date,
+            name: formData.name.trim(),
+            description: formData.description.trim(),
+            category: formData.category,
+            athletes: selectedAthletes,
+            intervals: allIntervals,
+            notes: formData.notes.trim() || undefined
+          };
+          onSubmit(session);
+        }
+        
+        handleReset();
+        // Cerrar el modal automáticamente después de actualizar exitosamente
+        onClose();
+      } catch (error) {
+        // El error ya se maneja automáticamente en el servicio
+        console.error('Error al actualizar sesión:', error);
       }
-      
-      // También llamar al callback del componente padre si es necesario (para compatibilidad)
-      if (onSubmit) {
-        const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
-          date: selectedDate,
-          name: formData.name.trim(),
-          description: formData.description.trim(),
-          category: formData.category,
-          athletes: selectedAthletes,
-          intervals: allIntervals,
-          notes: formData.notes.trim() || undefined
-        };
-        onSubmit(session);
+    } else {
+      // Crear nueva sesión
+      const createDto: CreateTrainingSessionDto = {
+        name: formData.name.trim(),
+        description: formData.description.trim() || undefined,
+        date: sessionDate, // ISO string format
+        category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
+        notes: formData.notes.trim() || undefined,
+        planningId: planningId!, // ID de la planificación (requerido)
+        athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
+        intervals: backendIntervals
+      };
+
+      try {
+        const createdSession = await TrainingSessionService.createTrainingSession(createDto);
+        
+        // Llamar callback cuando se crea exitosamente (para refrescar listas)
+        if (onSessionCreated) {
+          onSessionCreated();
+        }
+        
+        // También llamar al callback del componente padre si es necesario (para compatibilidad)
+        if (onSubmit) {
+          const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
+            date: formData.date,
+            name: formData.name.trim(),
+            description: formData.description.trim(),
+            category: formData.category,
+            athletes: selectedAthletes,
+            intervals: allIntervals,
+            notes: formData.notes.trim() || undefined
+          };
+          onSubmit(session);
+        }
+        
+        handleReset();
+        // Cerrar el modal automáticamente después de crear exitosamente
+        onClose();
+      } catch (error) {
+        // El error ya se maneja automáticamente en el servicio
+        console.error('Error al crear sesión:', error);
       }
-      
-      handleReset();
-    } catch (error) {
-      // El error ya se maneja automáticamente en el servicio
-      console.error('Error al crear sesión:', error);
     }
   };
 
@@ -437,11 +702,17 @@ export function CreateTrainingSessionModal({
   };
 
   const handleReset = () => {
+    // Resetear fecha al formato YYYY-MM-DD
+    const resetDate = selectedDate.includes('T') 
+      ? selectedDate.split('T')[0] 
+      : selectedDate;
+    
     setFormData({
       name: '',
       description: '',
       category: 'training',
-      notes: ''
+      notes: '',
+      date: resetDate
     });
     setSelectedAthletes([]);
     setIntervals([]);
@@ -449,6 +720,7 @@ export function CreateTrainingSessionModal({
     setSeriesBuilderMode('simple');
     setCurrentStep(1);
     setSearchTerm('');
+    setDateValidationError('');
   };
 
   const handleClose = () => {
@@ -505,12 +777,25 @@ export function CreateTrainingSessionModal({
       return;
     }
 
-    // Llenar todos los campos excepto atletas
-    setFormData({
-      name: template.name,
-      description: template.description,
-      category: template.category,
-      notes: template.notes
+    // Llenar todos los campos excepto atletas (mantener la fecha actual)
+    setFormData(prev => {
+      const updatedData = {
+        ...prev,
+        name: template.name,
+        description: template.description,
+        category: template.category,
+        notes: template.notes
+        // La fecha se mantiene del estado anterior
+      };
+      
+      // Validar la fecha después de actualizar el estado
+      setTimeout(() => {
+        if (updatedData.date) {
+          validateDate(updatedData.date);
+        }
+      }, 0);
+      
+      return updatedData;
     });
 
     // Copiar intervalos de la plantilla
@@ -566,7 +851,12 @@ export function CreateTrainingSessionModal({
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
+    // Parsear la fecha como fecha local para evitar problemas de zona horaria
+    const dateStr = dateString.split('T')[0]; // Asegurar formato YYYY-MM-DD
+    const [year, month, day] = dateStr.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // Crear fecha local (mes es 0-indexed)
+    
+    return date.toLocaleDateString('es-ES', {
       weekday: 'long',
       year: 'numeric',
       month: 'long',
@@ -604,7 +894,14 @@ export function CreateTrainingSessionModal({
     }
   };
 
-  const isFormValid = formData.name.trim() && selectedAthletes.length > 0 && (intervals.length > 0 || series.length > 0) && athletes && athletes.length > 0;
+  const isFormValid = formData.name.trim() && 
+    formData.date && 
+    !dateValidationError && 
+    planningId !== undefined && // Validar que haya planningId
+    selectedAthletes.length > 0 && 
+    (intervals.length > 0 || series.length > 0) && 
+    athletes && 
+    athletes.length > 0;
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -612,13 +909,13 @@ export function CreateTrainingSessionModal({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Target className="w-5 h-5 text-accent" />
-            Nueva Sesión de Entrenamiento
+            {editingSession ? 'Editar Sesión de Entrenamiento' : 'Nueva Sesión de Entrenamiento'}
           </DialogTitle>
           <DialogDescription>
-            Crear sesión para el {formatDate(selectedDate)}
+            {editingSession ? 'Editar sesión de entrenamiento' : 'Crear sesión de entrenamiento'}
             {existingSessions.length > 0 && (
               <span className="ml-2">
-                • {existingSessions.length} sesión(es) existente(s)
+                • {existingSessions.length} sesión(es) existente(s) en esta fecha
               </span>
             )}
           </DialogDescription>
@@ -687,6 +984,39 @@ export function CreateTrainingSessionModal({
               </div>
 
               <Separator />
+
+              {/* Input de Fecha */}
+              <div>
+                <Label htmlFor="session-date">
+                  Fecha de la Sesión <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="session-date"
+                  type="date"
+                  value={formData.date}
+                  onChange={(e) => handleDateChange(e.target.value)}
+                  min={getMinDate()}
+                  required
+                  className={`mt-1 ${dateValidationError ? 'border-red-500' : ''}`}
+                  disabled={isLoadingCycles}
+                />
+                {dateValidationError && (
+                  <p className="text-sm text-red-500 mt-1 flex items-center gap-1">
+                    <AlertCircle className="w-4 h-4" />
+                    {dateValidationError}
+                  </p>
+                )}
+                {isLoadingCycles && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Cargando información de ciclos...
+                  </p>
+                )}
+                {!dateValidationError && formData.date && (
+                  <p className="text-sm text-muted-foreground mt-1">
+                    Sesión programada para el {formatDate(formData.date)}
+                  </p>
+                )}
+              </div>
 
               {/* Selector de Plantilla */}
               {showTemplateSelector && (
@@ -1199,7 +1529,7 @@ export function CreateTrainingSessionModal({
                 className="min-w-32 bg-accent hover:bg-accent/90"
               >
                 <Save className="w-4 h-4 mr-2" />
-                Crear Sesión
+                {editingSession ? 'Actualizar Sesión' : 'Crear Sesión'}
               </Button>
             )}
           </div>

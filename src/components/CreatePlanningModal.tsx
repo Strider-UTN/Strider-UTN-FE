@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,9 +9,11 @@ import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-import { Calendar, X, Save, Users, User, MapPin, Loader2 } from 'lucide-react';
+import { Calendar, X, Save, Users, User, MapPin, Loader2, Edit } from 'lucide-react';
 import { PlanningService } from '../services/planningService';
-import type { CreatePlanningDto } from '../types/planningTypes';
+import { apiClient } from '../services/apiClient';
+import { toast } from 'sonner';
+import type { CreatePlanningDto, UpdatePlanningDto } from '../types/planningTypes';
 
 interface TrainingGroup {
   id: string | number;
@@ -26,16 +28,27 @@ interface Athlete {
   groupName: string;
 }
 
+interface Planning {
+  id: string | number;
+  name: string;
+  description?: string;
+  startDate: string;
+  endDate?: string | null;
+  status: 'active' | 'completed' | 'draft';
+  athletes?: string[]; // IDs de atletas
+}
+
 interface CreatePlanningModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit?: () => void; // Callback opcional que se llama después de crear exitosamente
+  onSubmit?: () => void; // Callback opcional que se llama después de crear/actualizar exitosamente
   athletes?: Athlete[];
   groups?: TrainingGroup[];
   isLoading?: boolean; // Indica si se están cargando los datos
+  editingPlanning?: Planning | null; // Planificación a editar (null o undefined = modo creación)
 }
 
-export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], groups = [], isLoading = false }: CreatePlanningModalProps) {
+export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], groups = [], isLoading = false, editingPlanning = null }: CreatePlanningModalProps) {
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -50,6 +63,142 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   const [selectedGroups, setSelectedGroups] = useState<string[]>([]);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isLoadingAssignedAthletes, setIsLoadingAssignedAthletes] = useState(false);
+  const [originalAssignedAthletes, setOriginalAssignedAthletes] = useState<string[]>([]); // IDs originales en modo edición
+
+  // Función para formatear fecha ISO a formato input date (YYYY-MM-DD)
+  const formatDateForInput = (isoDate: string): string => {
+    if (!isoDate) return '';
+    const date = new Date(isoDate);
+    // Ajustar por zona horaria para obtener la fecha correcta
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  // Cargar atletas asignados cuando se abre en modo edición
+  const loadAssignedAthletes = async (planningId: number) => {
+    setIsLoadingAssignedAthletes(true);
+    try {
+      const assignedAthletesData = await PlanningService.getAssignedAthletes(planningId);
+      
+      // Mapear IDs de atletas asignados
+      const assignedIds = assignedAthletesData.map(a => a.athleteId.toString());
+      setSelectedAthletes(assignedIds);
+      setOriginalAssignedAthletes(assignedIds); // Guardar IDs originales para comparar después
+
+      // Determinar si es individual o grupal basándose en los atletas asignados
+      // Si hay atletas asignados, asumimos que es individual (por defecto)
+      if (assignedIds.length > 0) {
+        setFormData(prev => ({ ...prev, assignmentType: 'individual' }));
+      }
+    } catch (error) {
+      console.error('Error al cargar atletas asignados:', error);
+    } finally {
+      setIsLoadingAssignedAthletes(false);
+    }
+  };
+
+  // Sincronizar atletas asignados: remover los que ya no están y agregar los nuevos
+  const syncAthletes = async (planningId: number, newAthleteIds: string[]) => {
+    const newIds = new Set(newAthleteIds);
+    const originalIds = new Set(originalAssignedAthletes);
+
+    // Atletas a remover: están en original pero no en nuevo
+    const toRemove = originalAssignedAthletes.filter(id => !newIds.has(id));
+    
+    // Atletas a agregar: están en nuevo pero no en original
+    const toAdd = newAthleteIds.filter(id => !originalIds.has(id));
+
+    let removedCount = 0;
+    let addedCount = 0;
+    const errors: string[] = [];
+
+    // Remover atletas que ya no están seleccionados
+    for (const athleteId of toRemove) {
+      try {
+        // Llamar directamente al API para evitar toasts individuales
+        await apiClient.delete(`/api/Planning/${planningId}/athletes/${athleteId}`);
+        removedCount++;
+      } catch (error) {
+        console.error(`Error al remover atleta ${athleteId}:`, error);
+        errors.push(`Error al remover atleta ${athleteId}`);
+      }
+    }
+
+    // Agregar nuevos atletas (solo si hay alguno)
+    if (toAdd.length > 0) {
+      try {
+        // Llamar directamente al API para evitar toasts individuales
+        await apiClient.post(`/api/Planning/${planningId}/athletes`, {
+          athleteIds: toAdd.map(id => Number(id))
+        });
+        addedCount = toAdd.length;
+      } catch (error) {
+        console.error('Error al agregar atletas:', error);
+        errors.push('Error al agregar atletas');
+        throw error; // Lanzar error si falla la asignación
+      }
+    }
+
+    // Mostrar mensaje consolidado
+    if (removedCount > 0 || addedCount > 0) {
+      const messages: string[] = [];
+      if (addedCount > 0) {
+        messages.push(`${addedCount} atleta${addedCount !== 1 ? 's' : ''} agregado${addedCount !== 1 ? 's' : ''}`);
+      }
+      if (removedCount > 0) {
+        messages.push(`${removedCount} atleta${removedCount !== 1 ? 's' : ''} removido${removedCount !== 1 ? 's' : ''}`);
+      }
+      
+      if (errors.length === 0) {
+        toast.success('Atletas actualizados exitosamente', {
+          description: messages.join(', ') + '.'
+        });
+      } else {
+        toast.warning('Atletas actualizados con algunos errores', {
+          description: messages.join(', ') + '. ' + errors.join(', ')
+        });
+      }
+    } else if (newAthleteIds.length === 0 && originalAssignedAthletes.length === 0) {
+      // No había atletas antes ni ahora, no mostrar mensaje
+    }
+  };
+
+  // Cargar datos cuando se abre el modal en modo edición
+  useEffect(() => {
+    if (isOpen && editingPlanning) {
+      // Precargar datos de la planificación
+      setFormData({
+        name: editingPlanning.name,
+        description: editingPlanning.description || '',
+        startDate: formatDateForInput(editingPlanning.startDate),
+        endDate: editingPlanning.endDate ? formatDateForInput(editingPlanning.endDate) : '',
+        hasEndDate: !!editingPlanning.endDate,
+        assignmentType: 'individual', // Por defecto individual, se determinará después
+        status: editingPlanning.status
+      });
+
+      // Cargar atletas asignados desde el backend
+      loadAssignedAthletes(Number(editingPlanning.id));
+    } else if (isOpen && !editingPlanning) {
+      // Resetear formulario en modo creación
+      setFormData({
+        name: '',
+        description: '',
+        startDate: '',
+        endDate: '',
+        hasEndDate: false,
+        assignmentType: 'individual',
+        status: 'draft'
+      });
+      setSelectedAthletes([]);
+      setSelectedGroups([]);
+      setSelectedGroup('all');
+      setOriginalAssignedAthletes([]);
+    }
+  }, [isOpen, editingPlanning]);
 
 
   const filteredAthletes = selectedGroup === 'all' 
@@ -63,49 +212,71 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
       return;
     }
 
-    // Validar que haya selecciones según el tipo
-    if (formData.assignmentType === 'individual' && selectedAthletes.length === 0) {
-      return;
-    }
-
-    if (formData.assignmentType === 'group' && selectedGroups.length === 0) {
-      return;
-    }
+    // En modo creación, NO es obligatorio tener atletas asignados (se pueden asignar después)
+    // La validación de atletas se ha removido para permitir planificaciones sin atletas
 
     setIsSubmitting(true);
 
     try {
-      // Convertir IDs de string a number
-      const athleteIds = formData.assignmentType === 'individual' 
-        ? selectedAthletes.map(id => Number(id))
-        : undefined;
-
-      const groupIds = formData.assignmentType === 'group'
-        ? selectedGroups.map(id => Number(id))
-        : undefined;
-
-      // Preparar el DTO para el backend
-      // Convertir fechas a formato ISO con hora UTC (medianoche) para evitar problemas con PostgreSQL
+      // Preparar fechas en formato ISO
       const startDateUtc = formData.startDate 
         ? new Date(`${formData.startDate}T00:00:00Z`).toISOString()
-        : new Date().toISOString(); // Fallback (no debería pasar)
+        : new Date().toISOString();
       
       const endDateUtc = formData.hasEndDate && formData.endDate
         ? new Date(`${formData.endDate}T00:00:00Z`).toISOString()
         : null;
 
-      const createDto: CreatePlanningDto = {
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
-        startDate: startDateUtc, // ISO string con hora UTC (ej: "2025-11-28T00:00:00.000Z")
-        endDate: endDateUtc, // ISO string con hora UTC o null
-        status: formData.status,
-        athleteIds: athleteIds,
-        groupIds: groupIds
-      };
+      if (editingPlanning) {
+        // Modo edición: actualizar planificación
+        const updateDto: UpdatePlanningDto = {
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          startDate: startDateUtc,
+          endDate: endDateUtc,
+          status: formData.status
+        };
 
-      // Crear la planificación en el backend
-      await PlanningService.createPlanning(createDto);
+        await PlanningService.updatePlanning(Number(editingPlanning.id), updateDto);
+
+        // Sincronizar atletas asignados (solo si hay cambios)
+        // Permitir guardar sin atletas asignados (puede ser una lista vacía)
+        const currentSelectedIds = formData.assignmentType === 'individual' 
+          ? selectedAthletes 
+          : [];
+
+        // Si hay diferencias, sincronizar
+        const currentSet = new Set(currentSelectedIds);
+        const originalSet = new Set(originalAssignedAthletes);
+        const hasChanges = currentSelectedIds.length !== originalAssignedAthletes.length ||
+          !currentSelectedIds.every(id => originalSet.has(id)) ||
+          !originalAssignedAthletes.every(id => currentSet.has(id));
+
+        if (hasChanges) {
+          await syncAthletes(Number(editingPlanning.id), currentSelectedIds);
+        }
+      } else {
+        // Modo creación: crear nueva planificación
+        const athleteIds = formData.assignmentType === 'individual' 
+          ? selectedAthletes.map(id => Number(id))
+          : undefined;
+
+        const groupIds = formData.assignmentType === 'group'
+          ? selectedGroups.map(id => Number(id))
+          : undefined;
+
+        const createDto: CreatePlanningDto = {
+          name: formData.name.trim(),
+          description: formData.description.trim() || undefined,
+          startDate: startDateUtc,
+          endDate: endDateUtc,
+          status: formData.status,
+          athleteIds: athleteIds,
+          groupIds: groupIds
+        };
+
+        await PlanningService.createPlanning(createDto);
+      }
 
       // Si hay un callback, llamarlo
       if (onSubmit) {
@@ -117,7 +288,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
       onClose();
     } catch (error) {
       // El error ya fue manejado por el interceptor de apiClient y el servicio
-      console.error('Error al crear planificación:', error);
+      console.error(`Error al ${editingPlanning ? 'actualizar' : 'crear'} planificación:`, error);
       // No resetear el formulario si hay error, para que el usuario pueda corregir
     } finally {
       setIsSubmitting(false);
@@ -137,7 +308,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
     setSelectedAthletes([]);
     setSelectedGroups([]);
     setSelectedGroup('all');
-
+    setOriginalAssignedAthletes([]);
   };
 
   const handleClose = () => {
@@ -201,6 +372,10 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   };
 
   const handleAssignmentTypeChange = (value: 'individual' | 'group') => {
+    // En modo edición, no permitir cambiar el tipo de asignación
+    if (editingPlanning) {
+      return;
+    }
     setFormData(prev => ({ ...prev, assignmentType: value }));
     // Limpiar selecciones al cambiar tipo
     setSelectedAthletes([]);
@@ -208,20 +383,31 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   };
 
   const isFormValid = formData.name.trim() && formData.startDate && 
-    (!formData.hasEndDate || formData.endDate) &&
-    ((formData.assignmentType === 'individual' && selectedAthletes.length > 0) ||
-     (formData.assignmentType === 'group' && selectedGroups.length > 0));
+    (!formData.hasEndDate || formData.endDate);
+    // No validar que haya atletas seleccionados - se puede guardar sin atletas
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center">
-            <Calendar className="w-5 h-5 mr-2" />
-            Nueva Planificación
+            {editingPlanning ? (
+              <>
+                <Edit className="w-5 h-5 mr-2" />
+                Editar Planificación
+              </>
+            ) : (
+              <>
+                <Calendar className="w-5 h-5 mr-2" />
+                Nueva Planificación
+              </>
+            )}
           </DialogTitle>
           <DialogDescription>
-            Crea una nueva planificación de entrenamiento, selecciona atletas individuales o sedes completas
+            {editingPlanning 
+              ? 'Modifica la información de la planificación de entrenamiento'
+              : 'Crea una nueva planificación de entrenamiento, selecciona atletas individuales o sedes completas'
+            }
           </DialogDescription>
         </DialogHeader>
 
@@ -304,7 +490,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
 
               {/* Estado inicial */}
               <div className="space-y-2">
-                <Label htmlFor="status">Estado inicial</Label>
+                <Label htmlFor="status">{editingPlanning ? 'Estado' : 'Estado inicial'}</Label>
                 <Select 
                   value={formData.status} 
                   onValueChange={(value: 'active' | 'completed' | 'draft') => 
@@ -317,54 +503,174 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                   <SelectContent>
                     <SelectItem value="draft">Borrador</SelectItem>
                     <SelectItem value="active">Activa</SelectItem>
+                    {editingPlanning && <SelectItem value="completed">Completada</SelectItem>}
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Tipo de asignación */}
-              <div className="space-y-4">
-                <h4 className="font-medium">Tipo de Planificación</h4>
-                <RadioGroup 
-                  value={formData.assignmentType} 
-                  onValueChange={handleAssignmentTypeChange}
-                  className="grid grid-cols-1 md:grid-cols-2 gap-4"
-                >
-                  <Label
-                    htmlFor="individual"
-                    className="flex items-center space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+              {/* Tipo de asignación - Solo en modo creación */}
+              {!editingPlanning && (
+                <div className="space-y-4">
+                  <h4 className="font-medium">Tipo de Planificación</h4>
+                  <RadioGroup 
+                    value={formData.assignmentType} 
+                    onValueChange={handleAssignmentTypeChange}
+                    className="grid grid-cols-1 md:grid-cols-2 gap-4"
                   >
-                    <RadioGroupItem value="individual" id="individual" />
-                    <div className="flex-1">
-                      <div className="font-medium flex items-center">
-                        <User className="w-4 h-4 mr-2" />
-                        Planificación Individual
+                    <Label
+                      htmlFor="individual"
+                      className="flex items-center space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                    >
+                      <RadioGroupItem value="individual" id="individual" />
+                      <div className="flex-1">
+                        <div className="font-medium flex items-center">
+                          <User className="w-4 h-4 mr-2" />
+                          Planificación Individual
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Selecciona atletas específicos para esta planificación
+                        </p>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Selecciona atletas específicos para esta planificación
-                      </p>
-                    </div>
-                  </Label>
-                  
-                  <Label
-                    htmlFor="group"
-                    className="flex items-center space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                  >
-                    <RadioGroupItem value="group" id="group" />
-                    <div className="flex-1">
-                      <div className="font-medium flex items-center">
-                        <Users className="w-4 h-4 mr-2" />
-                        Planificación Grupal
+                    </Label>
+                    
+                    <Label
+                      htmlFor="group"
+                      className="flex items-center space-x-3 p-4 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                    >
+                      <RadioGroupItem value="group" id="group" />
+                      <div className="flex-1">
+                        <div className="font-medium flex items-center">
+                          <Users className="w-4 h-4 mr-2" />
+                          Planificación Grupal
+                        </div>
+                        <p className="text-sm text-muted-foreground mt-1">
+                          Selecciona sedes completas para esta planificación
+                        </p>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Selecciona sedes completas para esta planificación
-                      </p>
-                    </div>
-                  </Label>
-                </RadioGroup>
-              </div>
+                    </Label>
+                  </RadioGroup>
+                </div>
+              )}
 
-              {/* Selección de atletas individuales */}
-              {formData.assignmentType === 'individual' && (
+              {/* Selección de atletas en modo edición - permite modificar */}
+              {editingPlanning && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-medium flex items-center">
+                      <User className="w-4 h-4 mr-2" />
+                      Atletas Participantes
+                    </h4>
+                    <Badge variant="outline">
+                      {selectedAthletes.length} seleccionados
+                    </Badge>
+                  </div>
+
+                  {/* Filtro por grupo */}
+                  <div className="space-y-2">
+                    <Label>Filtrar por sede</Label>
+                    <div className="flex space-x-2">
+                      <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                        <SelectTrigger className="flex-1">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="all">Todas las sedes</SelectItem>
+                          {groups.map(group => (
+                            <SelectItem key={group.id} value={group.id.toString()}>
+                              {group.name} ({group.athleteCount})
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={handleSelectAllInGroup}
+                        className="whitespace-nowrap"
+                      >
+                        {getSelectedAthletesInGroup() === filteredAthletes.length ? 'Deseleccionar' : 'Seleccionar'} Todos
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Lista de atletas */}
+                  <div className="max-h-48 overflow-y-auto border rounded-md p-3 space-y-2">
+                    {isLoadingAssignedAthletes ? (
+                      <div className="flex items-center justify-center py-8">
+                        <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                        <span className="text-sm text-muted-foreground">Cargando atletas...</span>
+                      </div>
+                    ) : filteredAthletes.length === 0 ? (
+                      <p className="text-sm text-muted-foreground text-center py-4">
+                        {selectedGroup === 'all' 
+                          ? 'No hay atletas asignados al entrenador'
+                          : 'No hay atletas en la sede seleccionada'}
+                      </p>
+                    ) : (
+                      filteredAthletes.map(athlete => (
+                        <div key={athlete.id} className="flex items-center space-x-3">
+                          <Checkbox
+                            id={`athlete-edit-${athlete.id}`}
+                            checked={selectedAthletes.includes(athlete.id.toString())}
+                            onCheckedChange={() => handleAthleteToggle(athlete.id)}
+                          />
+                          <div className="flex-1">
+                            <label 
+                              htmlFor={`athlete-edit-${athlete.id}`}
+                              className="text-sm cursor-pointer"
+                            >
+                              {athlete.name}
+                            </label>
+                            <p className="text-xs text-muted-foreground">
+                              {athlete.groupName || 'Sin grupo'}
+                            </p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Resumen de selecciones */}
+                  {selectedAthletes.length > 0 && (
+                    <div className="p-3 bg-muted rounded-md">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-sm font-medium">
+                          Atletas seleccionados:
+                        </p>
+                        <Badge variant="secondary">
+                          {selectedAthletes.length} atleta{selectedAthletes.length !== 1 ? 's' : ''}
+                        </Badge>
+                      </div>
+                      <div className="flex flex-wrap gap-1">
+                        {athletes
+                          .filter(a => selectedAthletes.includes(a.id.toString()))
+                          .map(item => (
+                            <Badge key={item.id} variant="secondary" className="text-xs">
+                              {item.name}
+                              <button
+                                type="button"
+                                onClick={() => handleAthleteToggle(item.id)}
+                                className="ml-1 hover:bg-red-200 rounded-full p-0.5"
+                              >
+                                <X className="w-3 h-3" />
+                              </button>
+                            </Badge>
+                          ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {selectedAthletes.length === 0 && (
+                    <p className="text-sm text-muted-foreground text-center py-2">
+                      No hay atletas seleccionados. La planificación se puede guardar sin atletas asignados.
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Selección de atletas individuales - Solo en modo creación */}
+              {!editingPlanning && formData.assignmentType === 'individual' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium flex items-center">
@@ -444,8 +750,8 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                 </div>
               )}
 
-              {/* Selección de sedes */}
-              {formData.assignmentType === 'group' && (
+              {/* Selección de sedes - Solo en modo creación */}
+              {!editingPlanning && formData.assignmentType === 'group' && (
                 <div className="space-y-4">
                   <div className="flex items-center justify-between">
                     <h4 className="font-medium flex items-center">
@@ -494,8 +800,8 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                 </div>
               )}
 
-              {/* Resumen de selecciones */}
-              {(selectedAthletes.length > 0 || selectedGroups.length > 0) && (
+              {/* Resumen de selecciones - Solo en modo creación */}
+              {!editingPlanning && (selectedAthletes.length > 0 || selectedGroups.length > 0) && (
                 <div className="p-3 bg-muted rounded-md">
                   <div className="flex items-center justify-between mb-2">
                     <p className="text-sm font-medium">
@@ -536,18 +842,18 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
           </Button>
           <Button 
             onClick={handleSubmit}
-            disabled={!isFormValid || isSubmitting || isLoading}
+            disabled={!isFormValid || isSubmitting || isLoading || (editingPlanning && isLoadingAssignedAthletes)}
             className="bg-accent hover:bg-accent/90"
           >
             {isSubmitting ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                Creando...
+                {editingPlanning ? 'Guardando...' : 'Creando...'}
               </>
             ) : (
               <>
                 <Save className="w-4 h-4 mr-2" />
-                Crear Planificación
+                {editingPlanning ? 'Guardar Cambios' : 'Crear Planificación'}
               </>
             )}
           </Button>

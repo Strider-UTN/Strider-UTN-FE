@@ -333,16 +333,18 @@ namespace Strider.API.Controllers
             return Ok(new { volume });
         }
 
+        // ❌ DELETE endpoint removido - Los microciclos NO se pueden eliminar desde el menú
+        // Solo se eliminan automáticamente al ajustar la cantidad de semanas en el mesociclo
         // DELETE: api/Microcycle/{id}
-        [HttpDelete("{id}")]
-        public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
-        {
-            var coachId = _jwtService.GetCurrentUserId();
-            if (!coachId.HasValue) return Unauthorized();
-            var result = await _microcycleService.DeleteAsync(id, coachId.Value, cancellationToken);
-            if (!result) return NotFound();
-            return NoContent();
-        }
+        // [HttpDelete("{id}")]
+        // public async Task<IActionResult> Delete(int id, CancellationToken cancellationToken)
+        // {
+        //     var coachId = _jwtService.GetCurrentUserId();
+        //     if (!coachId.HasValue) return Unauthorized();
+        //     var result = await _microcycleService.DeleteAsync(id, coachId.Value, cancellationToken);
+        //     if (!result) return NotFound();
+        //     return NoContent();
+        // }
     }
 
     // ============================================================================
