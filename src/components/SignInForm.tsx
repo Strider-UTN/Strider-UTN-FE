@@ -103,7 +103,7 @@ export function SignInForm({
           {/* Opción Atleta */}
           <button
             onClick={() => onUserTypeSelection('athlete')}
-            className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 p-6 transition-all duration-300 hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-1"
+            className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-br from-primary/5 to-primary/10 p-6 transition-all duration-300 hover:shadow-lg hover:shadow-primary/25 hover:-translate-y-1 cursor-pointer"
           >
             <div className="flex items-center space-x-4">
               <div className="flex-shrink-0 p-3 bg-primary rounded-full text-primary-foreground group-hover:scale-110 transition-transform duration-300">
@@ -122,7 +122,7 @@ export function SignInForm({
           {/* Opción Entrenador */}
           <button
             onClick={() => onUserTypeSelection('coach')}
-            className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-br from-cyan-400/8 to-cyan-500/12 p-6 transition-all duration-300 hover:shadow-lg hover:shadow-cyan-400/30 hover:-translate-y-1"
+            className="w-full group relative overflow-hidden rounded-xl bg-gradient-to-br from-cyan-400/8 to-cyan-500/12 p-6 transition-all duration-300 hover:shadow-lg hover:shadow-cyan-400/30 hover:-translate-y-1 cursor-pointer"
           >
             <div className="flex items-center space-x-4">
               <div className="flex-shrink-0 p-3 bg-cyan-400 rounded-full text-white group-hover:scale-110 transition-transform duration-300">

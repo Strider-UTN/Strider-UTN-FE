@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -14,6 +14,7 @@ import { Mesocycle, Microcycle } from './types/microcycleTypes';
 import { MesocycleService, type MesocycleResponseDto, type UpdateMesocycleDto } from '../services/mesocycleService';
 import { MicrocycleService, type MicrocycleResponseDto } from '../services/microcycleService';
 import { toast } from 'sonner';
+import { TrainingSessionResponseDto } from '../services/trainingSessionService';
 
 interface MacrocycleViewProps {
   planningId: string;
@@ -25,6 +26,8 @@ interface MacrocycleViewProps {
     name: string;
     groupName: string;
   }>;
+  trainingSessions?: TrainingSessionResponseDto[];
+  isLoadingSessions?: boolean;
   onViewWeeklyPlanning?: (microcycle: Microcycle, mesocycle: Mesocycle) => void;
   onViewWeeklyCalendar?: (microcycle: Microcycle, mesocycle: Mesocycle) => void;
   onViewMesocycleCalendar?: (mesocycle: Mesocycle) => void;
@@ -33,7 +36,7 @@ interface MacrocycleViewProps {
 
 
 
-export function MacrocycleView({ planningId, year, planningStartDate, planningEndDate, athletes, onViewWeeklyPlanning, onViewWeeklyCalendar, onViewMesocycleCalendar, onViewMicrocycleCalendar }: MacrocycleViewProps) {
+export function MacrocycleView({ planningId, year, planningStartDate, planningEndDate, athletes, trainingSessions = [], isLoadingSessions = false, onViewWeeklyPlanning, onViewWeeklyCalendar, onViewMesocycleCalendar, onViewMicrocycleCalendar }: MacrocycleViewProps) {
   const [selectedYear, setSelectedYear] = useState(year);
   const [isCreateMesocycleModalOpen, setIsCreateMesocycleModalOpen] = useState(false);
   const [editingMesocycle, setEditingMesocycle] = useState<Mesocycle | null>(null);
@@ -47,6 +50,47 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
   const [availableYears, setAvailableYears] = useState<number[]>([]);
   const [loadedMicrocycles, setLoadedMicrocycles] = useState<Map<string, Microcycle[]>>(new Map());
   const [loadingMicrocycles, setLoadingMicrocycles] = useState<Set<string>>(new Set());
+
+  const toDateKey = (value?: string | null): number | null => {
+    if (!value) return null;
+    const normalized = value.includes('T') ? value.split('T')[0] : value;
+    const parts = normalized.split('-');
+    if (parts.length !== 3) return null;
+    const [yearStr, monthStr, dayStr] = parts;
+    const yearNum = Number(yearStr);
+    const monthNum = Number(monthStr);
+    const dayNum = Number(dayStr);
+    if ([yearNum, monthNum, dayNum].some(num => Number.isNaN(num))) return null;
+    return yearNum * 10000 + monthNum * 100 + dayNum;
+  };
+
+  const getSessionsForRange = (startDate?: string | null, endDate?: string | null) => {
+    if (!trainingSessions || trainingSessions.length === 0) return [] as TrainingSessionResponseDto[];
+    const startKey = toDateKey(startDate);
+    const endKey = toDateKey(endDate);
+
+    return trainingSessions.filter(session => {
+      const sessionKey = toDateKey(session.date);
+      if (sessionKey === null) return false;
+      if (startKey !== null && sessionKey < startKey) return false;
+      if (endKey !== null && sessionKey > endKey) return false;
+      return true;
+    });
+  };
+
+  const sessionsByMicrocycle = useMemo(() => {
+    const map = new Map<number, TrainingSessionResponseDto[]>();
+    if (!trainingSessions) return map;
+    trainingSessions.forEach(session => {
+      if (session.microcycleId !== undefined && session.microcycleId !== null) {
+        if (!map.has(session.microcycleId)) {
+          map.set(session.microcycleId, []);
+        }
+        map.get(session.microcycleId)!.push(session);
+      }
+    });
+    return map;
+  }, [trainingSessions]);
 
   // Convertir mesociclo del backend a mesociclo del frontend
   // Calcula las semanas relativas al inicio de la planificación
@@ -63,6 +107,11 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
     // Calcular número de semanas del mesociclo
     const weeksCount = mesocycle.weeksCount || Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24 * 7)) + 1;
 
+    const baseSessions = mesocycle.sessionsCount || 0;
+    const baseVolume = mesocycle.totalVolume || 0;
+    const sessionsForMesocycle = getSessionsForRange(mesocycle.startDate, mesocycle.endDate);
+    const calculatedVolume = sessionsForMesocycle.reduce((total, session) => total + (session.volume ?? 0), 0);
+
     return {
       id: mesocycle.id.toString(),
       name: mesocycle.name,
@@ -72,8 +121,8 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
       endDate: mesocycle.endDate, // Incluir fecha de fin para el modal de edición
       weeksCount: weeksCount, // Incluir weeksCount para el modal de edición
       objective: mesocycle.objective || mesocycle.description || '',
-      sessions: mesocycle.sessionsCount || 0,
-      totalVolume: mesocycle.totalVolume || 0,
+      sessions: sessionsForMesocycle.length > 0 ? sessionsForMesocycle.length : baseSessions,
+      totalVolume: sessionsForMesocycle.length > 0 ? Number(calculatedVolume.toFixed(2)) : baseVolume,
       status: mesocycle.status,
       microcycles: []
     };
@@ -553,7 +602,32 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
 
     try {
       const microcyclesDto = await MicrocycleService.getMicrocyclesByMesocycleId(Number(mesocycleId));
-      const convertedMicrocycles = microcyclesDto.map(convertMicrocycleToFrontend);
+      const convertedMicrocycles = microcyclesDto.map(convertMicrocycleToFrontend).map(microcycle => {
+        if (!trainingSessions || trainingSessions.length === 0) {
+          return microcycle;
+        }
+
+        const microcycleIdNumber = Number(microcycle.id);
+        let sessionsForMicrocycle: TrainingSessionResponseDto[] = [];
+
+        if (!Number.isNaN(microcycleIdNumber) && sessionsByMicrocycle.has(microcycleIdNumber)) {
+          sessionsForMicrocycle = sessionsByMicrocycle.get(microcycleIdNumber)!;
+        } else {
+          sessionsForMicrocycle = getSessionsForRange(microcycle.startDate, microcycle.endDate);
+        }
+
+        if (sessionsForMicrocycle.length === 0) {
+          return microcycle;
+        }
+
+        const volume = sessionsForMicrocycle.reduce((sum, session) => sum + (session.volume ?? 0), 0);
+
+        return {
+          ...microcycle,
+          sessions: sessionsForMicrocycle.length,
+          volume: Number(volume.toFixed(2))
+        };
+      });
       
       setLoadedMicrocycles(prev => {
         const newMap = new Map(prev);
@@ -623,11 +697,12 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
 
   // Calcular estadísticas reales
   const calculateTotalSessions = () => {
-    return mesocyclesForYear.reduce((total, meso) => total + meso.sessions, 0);
+    return mesocyclesForYear.reduce((total, meso) => total + (meso.sessions || 0), 0);
   };
 
   const calculateTotalVolume = () => {
-    return mesocyclesForYear.reduce((total, meso) => total + meso.totalVolume, 0);
+    const total = mesocyclesForYear.reduce((sum, meso) => sum + (meso.totalVolume || 0), 0);
+    return Number(total.toFixed(2));
   };
 
   const getOccupiedWeeks = () => {
@@ -876,10 +951,19 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
                 <Activity className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-              <div className="text-2xl font-bold text-primary">{calculateTotalSessions()}</div>
-              <p className="text-xs text-muted-foreground">
-                En todos los mesociclos
-              </p>
+                {isLoadingSessions ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Cargando...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-2xl font-bold text-primary">{calculateTotalSessions()}</div>
+                    <p className="text-xs text-muted-foreground">
+                      En todos los mesociclos
+                    </p>
+                  </>
+                )}
               </CardContent>
             </Card>
 
@@ -889,10 +973,19 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
                 <TrendingUp className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                <div className="text-2xl font-bold text-primary">{calculateTotalVolume()}km</div>
-                <p className="text-xs text-muted-foreground">
-                  Kilómetros programados
-                </p>
+                {isLoadingSessions ? (
+                  <div className="flex items-center gap-2 text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Cargando...</span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="text-2xl font-bold text-primary">{calculateTotalVolume()}km</div>
+                    <p className="text-xs text-muted-foreground">
+                      Kilómetros programados
+                    </p>
+                  </>
+                )}
               </CardContent>
             </Card>
           </div>
@@ -950,8 +1043,35 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
               const microcyclesToUse = loadedMicros || 
                 (isExpanded && isLoadingMicros ? [] : 
                 (mesocycle.microcycles.length > 0 ? mesocycle.microcycles : generateMockMicrocycles(mesocycle)));
+
+              const enhancedMicrocycles = microcyclesToUse.map(microcycle => {
+                if (!trainingSessions || trainingSessions.length === 0) {
+                  return microcycle;
+                }
+
+                const microcycleIdNumber = Number(microcycle.id);
+                let sessionsForMicrocycle: TrainingSessionResponseDto[] = [];
+
+                if (!Number.isNaN(microcycleIdNumber) && sessionsByMicrocycle.has(microcycleIdNumber)) {
+                  sessionsForMicrocycle = sessionsByMicrocycle.get(microcycleIdNumber)!;
+                } else {
+                  sessionsForMicrocycle = getSessionsForRange(microcycle.startDate, microcycle.endDate);
+                }
+
+                if (sessionsForMicrocycle.length === 0) {
+                  return microcycle;
+                }
+
+                const volume = sessionsForMicrocycle.reduce((sum, session) => sum + (session.volume ?? 0), 0);
+
+                return {
+                  ...microcycle,
+                  sessions: sessionsForMicrocycle.length,
+                  volume: Number(volume.toFixed(2))
+                };
+              });
               
-              const mesocycleWithMicrocycles = { ...mesocycle, microcycles: microcyclesToUse };
+              const mesocycleWithMicrocycles = { ...mesocycle, microcycles: enhancedMicrocycles };
               
               return (
                 <Card key={mesocycle.id} className="border-l-4 border-l-accent">

@@ -7,8 +7,9 @@ import { toast } from 'sonner';
 import { CreateTrainingSessionModal } from './CreateTrainingSessionModal';
 import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
 import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleService';
-import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { TrainingSessionService, TrainingSessionResponseDto, TrainingSeriesResponseDto } from '../services/trainingSessionService';
 import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
+import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +32,28 @@ interface PeriodGroup {
   sessions: TrainingSession[];
 }
 
+interface SeriesInterval {
+  id: string;
+  trainingMode: 'distance' | 'time';
+  repetitions: number;
+  distance?: number;
+  duration?: string;
+  targetTime?: string;
+  targetSpeed?: string;
+  description?: string;
+  intensity?: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  recoveryTime?: string;
+}
+
+interface SeriesSet {
+  id: string;
+  name: string;
+  repetitions: number;
+  recoveryBetweenSets: string;
+  intervals: SeriesInterval[];
+  notes?: string;
+}
+
 interface TrainingSession {
   id: string;
   date: string;
@@ -38,12 +61,14 @@ interface TrainingSession {
   description?: string;
   category: 'training' | 'prep_competition' | 'main_competition';
   athletes: string[];
+  series: SeriesSet[];
   intervals: any[];
   warmup?: string;
   cooldown?: string;
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  structureType?: 'simple' | 'advanced';
 }
 
 interface Athlete {
@@ -82,6 +107,7 @@ interface PlanningCalendarProps {
   planningEndDate?: string | null; // Fecha de fin de la planificación (ISO string) o null
   onPeriodSelect?: (periodId: string) => void;
   onSessionCreate?: (session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'>) => void;
+  onSessionsSync?: (sessions: TrainingSessionResponseDto[]) => void;
 }
 
 const monthNames = [
@@ -122,7 +148,8 @@ export function PlanningCalendar({
   planningStartDate,
   planningEndDate,
   onPeriodSelect = () => {}, 
-  onSessionCreate 
+  onSessionCreate,
+  onSessionsSync
 }: PlanningCalendarProps) {
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [viewMode, setViewMode] = useState<'overview' | 'month'>('overview');
@@ -193,50 +220,50 @@ export function PlanningCalendar({
       if (!sessions || !Array.isArray(sessions)) {
         console.warn('No se recibieron sesiones válidas del backend');
         setTrainingSessions([]);
+        if (onSessionsSync) {
+          onSessionsSync([]);
+        }
         return;
       }
       
       // Convertir sesiones del backend al formato del frontend
       const convertedSessions: TrainingSession[] = sessions.map(session => {
-        // Manejar tanto athleteIds (array de números) como athletes (array de objetos)
         let athleteIds: string[] = [];
         if (session.athleteIds && Array.isArray(session.athleteIds)) {
-          // Si viene athleteIds directamente (array de números)
           athleteIds = session.athleteIds.map(id => id.toString());
         } else if (session.athletes && Array.isArray(session.athletes)) {
-          // Si viene athletes (array de objetos con athleteId)
           athleteIds = session.athletes.map(a => a.athleteId.toString());
         }
-        
+
+        const mappedSeries = mapBackendSeriesToSeriesSets(session.series);
+        const flattenedIntervals = flattenSeriesForDisplay(mappedSeries);
+
         return {
-        id: session.id.toString(),
-        date: session.date && session.date.includes('T') ? session.date.split('T')[0] : (session.date || ''), // Solo la fecha (YYYY-MM-DD)
-        name: session.name || '',
-        description: session.description,
-        category: mapTrainingCategoryFromBackend(session.category) as 'training' | 'prep_competition' | 'main_competition',
-        athletes: athleteIds,
-        intervals: (session.intervals && Array.isArray(session.intervals)) ? session.intervals.map(interval => ({
-          id: interval.id.toString(),
-          type: interval.type?.toLowerCase() as 'work' | 'rest' | 'interval' || 'interval',
-          paceType: interval.paceType?.toLowerCase() as 'fixed' | 'vo2max_percentage' || 'fixed',
-          pace: interval.pace,
-          vo2maxPercentage: interval.vo2MaxPercentage,
-          durationType: interval.trainingMode?.toLowerCase() as 'time' | 'distance' | undefined,
-          duration: interval.duration ? parseFloat(interval.duration) : undefined,
-          distance: interval.distance || 0,
-          description: interval.description,
-          repetitions: interval.repetitions || 1
-        })) : [],
-        notes: session.notes,
-        createdAt: session.createdAt || new Date().toISOString(),
-        updatedAt: session.updatedAt
+          id: session.id.toString(),
+          date: session.date && session.date.includes('T') ? session.date.split('T')[0] : (session.date || ''),
+          name: session.name || '',
+          description: session.description,
+          category: mapTrainingCategoryFromBackend(session.category) as 'training' | 'prep_competition' | 'main_competition',
+          athletes: athleteIds,
+          series: mappedSeries,
+          intervals: flattenedIntervals,
+          structureType: (session.structureType as 'simple' | 'advanced') ?? (mappedSeries.length > 1 ? 'advanced' : 'simple'),
+          notes: session.notes,
+          createdAt: session.createdAt || new Date().toISOString(),
+          updatedAt: session.updatedAt || session.createdAt || new Date().toISOString()
         };
       });
       
       setTrainingSessions(convertedSessions);
+      if (onSessionsSync) {
+        onSessionsSync(sessions);
+      }
     } catch (error) {
       console.error('Error al cargar sesiones:', error);
       setTrainingSessions([]);
+      if (onSessionsSync) {
+        onSessionsSync([]);
+      }
     } finally {
       setIsLoadingSessions(false);
     }
@@ -593,52 +620,78 @@ export function PlanningCalendar({
 
   // Función helper para verificar si una fecha está dentro del rango del mesociclo o planificación
   const isDateInMesocycleRange = (dateString: string): boolean => {
-    let startDate: Date;
-    let endDate: Date;
-    
-    if (mesocycleFilter) {
-      // Si hay filtro de mesociclo, usar sus fechas
-      if (mesocycleFilter.startDate && mesocycleFilter.endDate) {
-        // Usar fechas reales del mesociclo
-        const startDateStr = mesocycleFilter.startDate.split('T')[0];
-        const endDateStr = mesocycleFilter.endDate.split('T')[0];
-        const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        
-        startDate = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
-        endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
-      } else if (mesocycleFilter.startWeek && mesocycleFilter.endWeek) {
-        // Fallback: calcular fecha aproximada de semanas del mesociclo
-        startDate = new Date(year, 0, 1 + (mesocycleFilter.startWeek - 1) * 7, 0, 0, 0, 0);
-        endDate = new Date(year, 0, 1 + mesocycleFilter.endWeek * 7, 23, 59, 59, 999);
-      } else {
-        return true; // Si no hay fechas ni semanas, mostrar todos los días
+    const normalizeDate = (date: string | null | undefined) => {
+      if (!date) return null;
+      return date.includes('T') ? date.split('T')[0] : date;
+    };
+
+    const toDateKey = (date: string | null | undefined) => {
+      const normalized = normalizeDate(date);
+      if (!normalized) return null;
+      const [year, month, day] = normalized.split('-').map(Number);
+      if (
+        Number.isNaN(year) ||
+        Number.isNaN(month) ||
+        Number.isNaN(day)
+      ) {
+        return null;
       }
-    } else if (planningStartDate) {
-      // Si no hay filtro de mesociclo pero hay fechas de planificación, usar esas
-      const startDateStr = planningStartDate.split('T')[0];
-      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-      startDate = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
-      
-      if (planningEndDate) {
-        const endDateStr = planningEndDate.split('T')[0];
-        const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-        endDate = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
-      } else {
-        // Si no hay fecha de fin, permitir todos los días desde la fecha de inicio
-        endDate = new Date(9999, 11, 31, 23, 59, 59, 999);
-      }
-    } else {
-      // Si no hay filtro ni fechas de planificación, mostrar todos los días
+      return year * 10000 + month * 100 + day;
+    };
+
+    const checkKey = toDateKey(dateString);
+    if (checkKey === null) {
       return true;
     }
-    
-    // Parsear la fecha a verificar (formato: YYYY-MM-DD)
-    const [checkYear, checkMonth, checkDay] = dateString.split('-').map(Number);
-    const checkDate = new Date(checkYear, checkMonth - 1, checkDay, 0, 0, 0, 0);
-    
-    // Comparar fechas
-    return checkDate >= startDate && checkDate <= endDate;
+
+    if (mesocycleFilter) {
+      if (mesocycleFilter.startDate && mesocycleFilter.endDate) {
+        const startKey = toDateKey(mesocycleFilter.startDate);
+        const endKey = toDateKey(mesocycleFilter.endDate);
+        if (startKey !== null && checkKey < startKey) return false;
+        if (endKey !== null && checkKey > endKey) return false;
+        return true;
+      }
+
+      if (mesocycleFilter.startWeek && mesocycleFilter.endWeek) {
+        const referenceYear = (() => {
+          const normalizedPlanningStart = normalizeDate(planningStartDate);
+          if (normalizedPlanningStart) {
+            const [year] = normalizedPlanningStart.split('-').map(Number);
+            if (!Number.isNaN(year)) {
+              return year;
+            }
+          }
+          return currentYear;
+        })();
+
+        const toWeekKey = (week: number, isEnd = false) => {
+          const baseDate = new Date(Date.UTC(referenceYear, 0, 1));
+          const daysToAdd = (week - 1) * 7 + (isEnd ? 6 : 0);
+          baseDate.setUTCDate(baseDate.getUTCDate() + daysToAdd);
+          return baseDate.getUTCFullYear() * 10000 +
+            (baseDate.getUTCMonth() + 1) * 100 +
+            baseDate.getUTCDate();
+        };
+
+        const startKey = toWeekKey(mesocycleFilter.startWeek);
+        const endKey = toWeekKey(mesocycleFilter.endWeek, true);
+
+        if (checkKey < startKey) return false;
+        if (checkKey > endKey) return false;
+        return true;
+      }
+
+      return true;
+    }
+
+    const planningStartKey = toDateKey(planningStartDate);
+    const planningEndKey = toDateKey(planningEndDate);
+
+    if (planningStartKey !== null && checkKey < planningStartKey) return false;
+    if (planningEndKey !== null && checkKey > planningEndKey) return false;
+
+    return true;
   };
 
   // Función para navegar al mes anterior/siguiente
@@ -750,6 +803,13 @@ export function PlanningCalendar({
     const firstDayOfMonth = new Date(currentYear, selectedMonth, 1).getDay();
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1; // Lunes = 0
 
+    const normalizedPlanningStart = planningStartDate
+      ? (planningStartDate.includes('T') ? planningStartDate.split('T')[0] : planningStartDate)
+      : null;
+    const normalizedPlanningEnd = planningEndDate
+      ? (planningEndDate.includes('T') ? planningEndDate.split('T')[0] : planningEndDate)
+      : null;
+
     const days = [];
     
     // Días vacíos al inicio
@@ -762,9 +822,20 @@ export function PlanningCalendar({
       const dayString = `${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const daySessions = getSessionsForDate(dayString);
       // Si hay filtro de microciclo, usar su función específica; si no, usar la de mesociclo/planificación
-      const isInRange = microcycleFilter 
+      let isInRange = microcycleFilter 
         ? isDateInMicrocycleRange(dayString)
         : isDateInMesocycleRange(dayString);
+
+      if (!microcycleFilter && !mesocycleFilter) {
+        if (normalizedPlanningStart && dayString < normalizedPlanningStart) {
+          isInRange = false;
+        } else if (normalizedPlanningEnd && dayString > normalizedPlanningEnd) {
+          isInRange = false;
+        } else if (normalizedPlanningStart || normalizedPlanningEnd) {
+          // Si está dentro de los límites (o solo tenemos un límite), permitirlo
+          isInRange = true;
+        }
+      }
       days.push({ day, sessions: daySessions, date: dayString, isInRange });
     }
 
@@ -849,6 +920,7 @@ export function PlanningCalendar({
                 // Si hay un filtro de mesociclo y el día no está en el rango, deshabilitarlo visualmente
                 const isDayInRange = dayData ? (dayData.isInRange !== false) : true;
                 const isDayDisabled = (mesocycleFilter || microcycleFilter) && dayData && !dayData.isInRange;
+                const isClickable = !!(dayData && userType === 'coach' && isDayInRange && !isDayDisabled);
                 
                 return (
                   <div 
@@ -858,12 +930,12 @@ export function PlanningCalendar({
                         ? 'bg-muted/20'
                         : isDayDisabled
                           ? 'bg-muted/30 opacity-40 cursor-not-allowed'
-                          : dayData && userType === 'coach' 
+                          : isClickable
                             ? 'bg-background hover:bg-accent/5 hover:border-accent/30 cursor-pointer hover:shadow-sm' 
                             : 'bg-background cursor-default'
                     } ${dayData && dayData.isInRange && (mesocycleFilter || microcycleFilter) ? 'ring-2 ring-primary/20' : ''}`}
                     onClick={() => {
-                      if (dayData && userType === 'coach' && isDayInRange) {
+                      if (isClickable && dayData) {
                         console.log('🖱️ Click en día del calendario:', dayData.date);
                         handleCreateSession(dayData.date);
                       }
@@ -1421,3 +1493,78 @@ export function PlanningCalendar({
     </div>
   );
 }
+
+  const mapBackendSeriesToSeriesSets = (backendSeries: TrainingSeriesResponseDto[] | undefined): SeriesSet[] => {
+    if (!backendSeries) return [];
+
+    return backendSeries.map((series, seriesIndex) => ({
+      id: series.id?.toString() || `series-${seriesIndex}-${Date.now()}`,
+      name: series.name,
+      repetitions: series.repetitions,
+      recoveryBetweenSets: series.recoveryBetweenSets,
+      notes: series.notes || undefined,
+      intervals: (series.intervals || []).map((interval, intervalIndex) => ({
+        id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+        trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+        repetitions: interval.repetitions,
+        distance: interval.distance || undefined,
+        duration: interval.duration || interval.targetTime || undefined,
+        targetTime: interval.targetTime || undefined,
+        targetSpeed: interval.targetSpeed || undefined,
+        description: interval.description || '',
+        intensity: mapIntervalIntensityFromBackend(interval.intensity) || undefined,
+        recoveryTime: interval.recoveryTime || '00:00'
+      }))
+    }));
+  };
+
+  const flattenSeriesForDisplay = (seriesSets: SeriesSet[]) => {
+    const flattened: any[] = [];
+
+    seriesSets.forEach(series => {
+      series.intervals.forEach(interval => {
+        flattened.push({
+          id: `${series.id}-${interval.id}`,
+          type: 'interval',
+          paceType: 'fixed',
+          pace: interval.targetSpeed ? parseSpeedValue(interval.targetSpeed) : undefined,
+          vo2MaxPercentage: undefined,
+          durationType: interval.trainingMode,
+          duration: interval.duration ? parseDurationToMinutes(interval.duration) : undefined,
+          distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+          description: interval.description,
+          repetitions: interval.repetitions || 1
+        });
+      });
+    });
+
+    return flattened;
+  };
+
+  const parseSpeedValue = (speed?: string) => {
+    if (!speed) return undefined;
+    const parts = speed.split(':');
+    if (parts.length === 2) {
+      const mins = parseInt(parts[0], 10);
+      const secs = parseInt(parts[1], 10);
+      if (!Number.isNaN(mins) && !Number.isNaN(secs)) {
+        return mins + secs / 60;
+      }
+    }
+    const numeric = parseFloat(speed);
+    return Number.isNaN(numeric) ? undefined : numeric;
+  };
+
+  const parseDurationToMinutes = (duration?: string) => {
+    if (!duration) return undefined;
+    const parts = duration.split(':').map(part => parseInt(part, 10));
+    if (parts.length === 3) {
+      const [hours, minutes, seconds] = parts;
+      return hours * 60 + minutes + seconds / 60;
+    }
+    if (parts.length === 2) {
+      const [minutes, seconds] = parts;
+      return minutes + seconds / 60;
+    }
+    return undefined;
+  };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -16,6 +16,7 @@ import { Mesocycle, Microcycle } from './types/microcycleTypes';
 import { PlanningService } from '../services/planningService';
 import { GroupService } from '../services/groupService';
 import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
+import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
 import { toast } from 'sonner';
 
 interface Planning {
@@ -70,6 +71,8 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
   const [isRemovingAthlete, setIsRemovingAthlete] = useState<string | null>(null);
   const [athleteToRemove, setAthleteToRemove] = useState<{ id: string; name: string } | null>(null);
+  const [planningSessions, setPlanningSessions] = useState<TrainingSessionResponseDto[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
 
   // Cargar atletas asignados desde el backend
   const loadAssignedAthletes = useCallback(async () => {
@@ -269,6 +272,44 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
       year: 'numeric'
     });
   };
+
+  const toLocalDateOnly = (value?: string | null) => {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return value.includes('T') ? value.split('T')[0] : value;
+    }
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const planningStartDateLocal = useMemo(() => toLocalDateOnly(planning?.startDate) ?? undefined, [planning?.startDate]);
+  const planningEndDateLocal = useMemo(() => toLocalDateOnly(planning?.endDate ?? undefined) ?? undefined, [planning?.endDate]);
+
+  const loadPlanningSessions = useCallback(async () => {
+    if (!planning?.id) return;
+    setIsLoadingSessions(true);
+    try {
+      const sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planning.id));
+      setPlanningSessions(sessions);
+    } catch (error) {
+      console.error('Error al cargar las sesiones de la planificación:', error);
+      setPlanningSessions([]);
+    } finally {
+      setIsLoadingSessions(false);
+    }
+  }, [planning?.id]);
+
+  useEffect(() => {
+    loadPlanningSessions();
+  }, [loadPlanningSessions]);
+
+  const handleSessionsSynced = useCallback((sessions: TrainingSessionResponseDto[]) => {
+    setPlanningSessions(sessions);
+    setIsLoadingSessions(false);
+  }, []);
 
   const handleViewWeeklyPlanning = (microcycle: Microcycle, mesocycle: Mesocycle) => {
     setSelectedMicrocycle(microcycle);
@@ -503,10 +544,12 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
         <TabsContent value="macrocycle" className="space-y-4">
           <MacrocycleView 
             planningId={planning.id}
-            year={new Date(planning.startDate).getFullYear()}
-            planningStartDate={planning.startDate}
-            planningEndDate={planning.endDate}
+            year={(planningStartDateLocal ? new Date(planningStartDateLocal) : new Date(planning.startDate)).getFullYear()}
+            planningStartDate={planningStartDateLocal ?? planning.startDate}
+            planningEndDate={planningEndDateLocal ?? planning.endDate}
             athletes={assignedAthletes}
+            trainingSessions={planningSessions}
+            isLoadingSessions={isLoadingSessions}
             onViewWeeklyPlanning={handleViewWeeklyPlanning}
             onViewWeeklyCalendar={handleViewWeeklyCalendar}
             onViewMesocycleCalendar={handleViewMesocycleCalendar}
@@ -533,12 +576,13 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
                   ? new Date(calendarMicrocycleFilter.startDate).getFullYear()
                   : calendarMesocycleFilter && calendarMesocycleFilter.startDate
                     ? new Date(calendarMesocycleFilter.startDate).getFullYear()
-                    : new Date(planning.startDate).getFullYear()}
+                    : (planningStartDateLocal ? new Date(planningStartDateLocal).getFullYear() : new Date(planning.startDate).getFullYear())}
                 athletes={assignedAthletes}
                 mesocycleFilter={calendarMesocycleFilter || undefined}
                 microcycleFilter={calendarMicrocycleFilter || undefined}
-                planningStartDate={planning.startDate}
-                planningEndDate={planning.endDate || null}
+                planningStartDate={planningStartDateLocal ?? planning.startDate}
+                planningEndDate={(planningEndDateLocal ?? planning.endDate) || null}
+                onSessionsSync={handleSessionsSynced}
                 onSessionCreate={(session) => {
                   console.log('Nueva sesión creada:', session);
                   // Aquí puedes manejar la creación de la sesión

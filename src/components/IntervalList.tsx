@@ -152,7 +152,36 @@ export function IntervalList({
                       </div>
 
                       <div className="grid grid-cols-2 gap-4">
-                        {editDataAny.trainingMode === 'time' ? (
+                        {trainingMode === 'distance' ? (
+                          <>
+                            <div className="space-y-2">
+                              <Label htmlFor={`edit-distance-${interval.id}`}>
+                                Distancia (metros)
+                              </Label>
+                              <Input
+                                id={`edit-distance-${interval.id}`}
+                                type="number"
+                                min="100"
+                                value={editData.distance || 400}
+                                onChange={(e) => {
+                                  onEditChange('trainingMode', 'distance');
+                                  onEditChange('distance', parseInt(e.target.value) || 400);
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor={`edit-speed-${interval.id}`}>
+                                Velocidad (min/km)
+                              </Label>
+                              <Input
+                                id={`edit-speed-${interval.id}`}
+                                placeholder="Ej: 4:30"
+                                value={editDataAny.targetSpeed || ''}
+                                onChange={(e) => onEditChange('targetSpeed', e.target.value)}
+                              />
+                            </div>
+                          </>
+                        ) : (
                           <>
                             <div className="space-y-2">
                               <Label htmlFor={`edit-duration-${interval.id}`}>
@@ -163,6 +192,7 @@ export function IntervalList({
                                 placeholder="Ej: 10:00"
                                 value={editDataAny.duration || editData.targetTime || ''}
                                 onChange={(e) => {
+                                  onEditChange('trainingMode', 'time');
                                   onEditChange('duration', e.target.value);
                                   onEditChange('targetTime', e.target.value);
                                 }}
@@ -174,32 +204,6 @@ export function IntervalList({
                               </Label>
                               <Input
                                 id={`edit-speed-time-${interval.id}`}
-                                placeholder="Ej: 4:30"
-                                value={editDataAny.targetSpeed || ''}
-                                onChange={(e) => onEditChange('targetSpeed', e.target.value)}
-                              />
-                            </div>
-                          </>
-                        ) : (
-                          <>
-                            <div className="space-y-2">
-                              <Label htmlFor={`edit-distance-${interval.id}`}>
-                                Distancia (metros)
-                              </Label>
-                              <Input
-                                id={`edit-distance-${interval.id}`}
-                                type="number"
-                                min="100"
-                                value={editData.distance || 400}
-                                onChange={(e) => onEditChange('distance', parseInt(e.target.value) || 400)}
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor={`edit-speed-${interval.id}`}>
-                                Velocidad (min/km)
-                              </Label>
-                              <Input
-                                id={`edit-speed-${interval.id}`}
                                 placeholder="Ej: 4:30"
                                 value={editDataAny.targetSpeed || ''}
                                 onChange={(e) => onEditChange('targetSpeed', e.target.value)}

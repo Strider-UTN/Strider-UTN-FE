@@ -70,6 +70,52 @@ export function CreateMesocycleModal({
   const [extendsBeyondYear, setExtendsBeyondYear] = useState(false);
   const [nextYearInfo, setNextYearInfo] = useState<{ year: number; startDate: string } | null>(null);
 
+  const parseDateComponents = (value?: string | null) => {
+    if (!value) return null;
+    const normalized = value.includes('T') ? value.split('T')[0] : value;
+    const parts = normalized.split('-');
+    if (parts.length !== 3) return null;
+    const [yearStr, monthStr, dayStr] = parts;
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+    if ([year, month, day].some(num => Number.isNaN(num))) {
+      return null;
+    }
+    return { year, month, day };
+  };
+
+  const toDateOnly = (value?: string | null, endOfDay = false): Date | null => {
+    const components = parseDateComponents(value);
+    if (!components) return null;
+    const date = new Date(components.year, components.month - 1, components.day, 0, 0, 0, 0);
+    if (endOfDay) {
+      date.setHours(23, 59, 59, 999);
+    }
+    return date;
+  };
+
+  const toDateKey = (value?: string | null): number | null => {
+    const components = parseDateComponents(value);
+    if (!components) return null;
+    const { year, month, day } = components;
+    return year * 10000 + month * 100 + day;
+  };
+
+  const formatDateForInput = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  const formatOverlapDate = (value?: string | null) => {
+    const components = parseDateComponents(value);
+    if (!components) return '';
+    const date = new Date(components.year, components.month - 1, components.day, 0, 0, 0, 0);
+    return date.toLocaleDateString('es-ES');
+  };
+
   // Calcular la fecha de inicio recomendada (día siguiente al último mesociclo)
   // Busca la fecha de fin más tardía de todos los mesociclos y recomienda el día siguiente
   // Esto asegura que el nuevo mesociclo no se superponga con ningún mesociclo existente
@@ -166,7 +212,7 @@ export function CreateMesocycleModal({
       } else {
         const endDate = new Date(startDateLocal);
         endDate.setDate(endDate.getDate() + ((editingMesocycle.weeksCount || 4) * 7) - 1);
-        setEndDate(endDate.toISOString().split('T')[0]);
+        setEndDate(formatDateForInput(endDate));
       }
     } else if (isOpen && !editingMesocycle) {
       // Modo creación: inicializar con valores por defecto
@@ -179,9 +225,13 @@ export function CreateMesocycleModal({
         status: 'planning'
       });
       // Calcular fecha de fin por defecto
-      const endDate = new Date(recommendedDate);
-      endDate.setDate(endDate.getDate() + (4 * 7) - 1);
-      setEndDate(endDate.toISOString().split('T')[0]);
+      if (recommendedDate) {
+        const endDate = new Date(recommendedDate);
+        endDate.setDate(endDate.getDate() + (4 * 7) - 1);
+        setEndDate(formatDateForInput(endDate));
+      } else {
+        setEndDate('');
+      }
     }
   }, [isOpen, editingMesocycle, existingMesocycles, planningStartDate, planningEndDate]);
 
@@ -194,47 +244,29 @@ export function CreateMesocycleModal({
   // Validar que las fechas estén dentro del rango de la planificación
   // Permite que el mesociclo se extienda más allá del año seleccionado
   const validateDateRange = React.useCallback((start: Date, end: Date) => {
-    // Parsear la fecha de inicio de la planificación como fecha local
-    const planningStartDateObj = new Date(planningStartDate);
-    const planningStartYear = planningStartDateObj.getFullYear();
-    const planningStartMonth = planningStartDateObj.getMonth();
-    const planningStartDay = planningStartDateObj.getDate();
-    const planningStart = new Date(planningStartYear, planningStartMonth, planningStartDay, 0, 0, 0, 0);
-    
-    // Normalizar la fecha de inicio para comparar solo las fechas (sin horas)
-    const startYear = start.getFullYear();
-    const startMonth = start.getMonth();
-    const startDay = start.getDate();
-    const startNormalized = new Date(startYear, startMonth, startDay, 0, 0, 0, 0);
-    
-    let error: string | null = null;
+    const planningStartKey = toDateKey(planningStartDate);
+    const startKey = toDateKey(formData.startDate);
+    const endKey = toDateKey(formatDateForInput(end));
 
-    // Validar fecha de inicio - puede ser igual a la fecha de inicio de la planificación
-    if (startNormalized < planningStart) {
-      error = `La fecha de inicio no puede ser anterior a ${planningStart.toLocaleDateString('es-ES')}`;
+    let error: string | null = null;
+    if (planningStartKey !== null && startKey !== null && startKey < planningStartKey) {
+      error = `La fecha de inicio no puede ser anterior a ${formatOverlapDate(planningStartDate)}`;
     }
 
-    // Obtener el último día del año seleccionado
     const yearEnd = getYearEndDate();
-    
-    // Verificar si el mesociclo se extiende más allá del año seleccionado
-    const endYear = end.getFullYear();
-    const endMonth = end.getMonth();
-    const endDay = end.getDate();
-    const endNormalized = new Date(endYear, endMonth, endDay, 23, 59, 59, 999);
-    
-    // Verificar si se extiende más allá del año (no es un error, solo informativo)
-    if (endNormalized > yearEnd) {
+    const yearEndKey = yearEnd.getFullYear() * 10000 + (yearEnd.getMonth() + 1) * 100 + yearEnd.getDate();
+
+    if (endKey !== null && endKey > yearEndKey) {
       const nextYear = year + 1;
-      const nextYearStart = new Date(nextYear, 0, 1); // 1 de enero del año siguiente
-      
+      const nextYearStart = new Date(nextYear, 0, 1);
+
       setExtendsBeyondYear(true);
       setNextYearInfo({
         year: nextYear,
-        startDate: nextYearStart.toLocaleDateString('es-ES', { 
-          day: '2-digit', 
-          month: 'long', 
-          year: 'numeric' 
+        startDate: nextYearStart.toLocaleDateString('es-ES', {
+          day: '2-digit',
+          month: 'long',
+          year: 'numeric'
         })
       });
     } else {
@@ -242,22 +274,18 @@ export function CreateMesocycleModal({
       setNextYearInfo(null);
     }
 
-    // Validar fecha de fin solo contra el límite de la planificación
     if (planningEndDate) {
-      // Parsear la fecha de fin de la planificación como fecha local
-      const planningEndDateObj = new Date(planningEndDate);
-      const planningEndYear = planningEndDateObj.getFullYear();
-      const planningEndMonth = planningEndDateObj.getMonth();
-      const planningEndDay = planningEndDateObj.getDate();
-      const planningEnd = new Date(planningEndYear, planningEndMonth, planningEndDay, 23, 59, 59, 999);
-      
-      if (endNormalized > planningEnd) {
-        error = `El período no puede extenderse más allá de ${planningEnd.toLocaleDateString('es-ES')}. Ajusta la cantidad de semanas.`;
+      const planningEnd = toDateOnly(planningEndDate, true);
+      if (planningEnd) {
+        const planningEndKey = planningEnd.getFullYear() * 10000 + (planningEnd.getMonth() + 1) * 100 + planningEnd.getDate();
+        if (endKey !== null && endKey > planningEndKey) {
+          error = `El período no puede extenderse más allá de ${formatOverlapDate(planningEndDate)}. Ajusta la cantidad de semanas.`;
+        }
       }
     }
 
     setDateRangeError(error);
-  }, [planningStartDate, planningEndDate, year]);
+  }, [planningStartDate, planningEndDate, year, getYearEndDate, formData.startDate]);
 
   // Calcular fecha de fin automáticamente basada en la fecha de inicio y cantidad de semanas
   // Permite que el mesociclo se extienda más allá del año seleccionado
@@ -312,38 +340,30 @@ export function CreateMesocycleModal({
   // Verificar superposición con mesociclos existentes
   useEffect(() => {
     if (formData.startDate && endDate) {
-      // Parsear fechas como fechas locales para evitar problemas de zona horaria
-      const [startYear, startMonth, startDay] = formData.startDate.split('-').map(Number);
-      const start = new Date(startYear, startMonth - 1, startDay, 0, 0, 0, 0);
-      
-      const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
-      const end = new Date(endYear, endMonth - 1, endDay, 23, 59, 59, 999);
+      const startKey = toDateKey(formData.startDate);
+      const endKey = toDateKey(endDate);
 
+      if (startKey === null || endKey === null) {
+        setHasOverlap(false);
+        setOverlappingMesocycles([]);
+        return;
+      }
+ 
       // Filtrar mesociclos existentes, excluyendo el que se está editando
       const mesocyclesToCheck = editingMesocycle 
         ? existingMesocycles.filter(meso => meso.id !== editingMesocycle.id)
         : existingMesocycles;
-
+ 
       const overlapping = mesocyclesToCheck.filter(meso => {
-        // Parsear fechas de mesociclos existentes como fechas locales
-        const mesoStartDateObj = new Date(meso.startDate);
-        const mesoStartYear = mesoStartDateObj.getFullYear();
-        const mesoStartMonth = mesoStartDateObj.getMonth();
-        const mesoStartDay = mesoStartDateObj.getDate();
-        const mesoStart = new Date(mesoStartYear, mesoStartMonth, mesoStartDay, 0, 0, 0, 0);
-        
-        const mesoEndDateObj = new Date(meso.endDate);
-        const mesoEndYear = mesoEndDateObj.getFullYear();
-        const mesoEndMonth = mesoEndDateObj.getMonth();
-        const mesoEndDay = mesoEndDateObj.getDate();
-        const mesoEnd = new Date(mesoEndYear, mesoEndMonth, mesoEndDay, 23, 59, 59, 999);
+        const mesoStartKey = toDateKey(meso.startDate);
+        const mesoEndKey = toDateKey(meso.endDate);
+
+        if (mesoStartKey === null || mesoEndKey === null) {
+          return false;
+        }
 
         // Verificar si hay superposición
-        return (
-          (start >= mesoStart && start <= mesoEnd) ||
-          (end >= mesoStart && end <= mesoEnd) ||
-          (start <= mesoStart && end >= mesoEnd)
-        );
+        return startKey <= mesoEndKey && endKey >= mesoStartKey;
       });
 
       setHasOverlap(overlapping.length > 0);
@@ -478,23 +498,21 @@ export function CreateMesocycleModal({
 
   const getMinDate = () => {
     // La fecha mínima es la fecha de inicio de la planificación
-    const planningStart = new Date(planningStartDate);
-    planningStart.setHours(0, 0, 0, 0);
-    return planningStart.toISOString().split('T')[0];
+    const planningStart = toDateOnly(planningStartDate);
+    return planningStart ? formatDateForInput(planningStart) : undefined;
   };
-
+ 
   const getMaxDate = () => {
-    // La fecha máxima es la fecha de fin de la planificación (si existe)
-    // Permitimos que el mesociclo se extienda más allá del año seleccionado
-    if (planningEndDate) {
-      const planningEnd = new Date(planningEndDate);
-      planningEnd.setHours(0, 0, 0, 0);
-      return planningEnd.toISOString().split('T')[0];
-    }
-    
-    // Si no hay fecha de fin de planificación, sin límite (solo limitado por 52 semanas)
-    return undefined;
-  };
+     // La fecha máxima es la fecha de fin de la planificación (si existe)
+     // Permitimos que el mesociclo se extienda más allá del año seleccionado
+     if (planningEndDate) {
+      const planningEnd = toDateOnly(planningEndDate, true);
+      return planningEnd ? formatDateForInput(planningEnd) : undefined;
+     }
+     
+     // Si no hay fecha de fin de planificación, sin límite (solo limitado por 52 semanas)
+     return undefined;
+   };
 
   // Calcular el máximo de semanas permitido basado en la planificación
   // Permite que el mesociclo se extienda más allá del año seleccionado
@@ -676,7 +694,7 @@ export function CreateMesocycleModal({
                       <div key={meso.id} className="bg-white rounded p-2 border border-red-200">
                         <p className="text-sm font-medium text-red-900">{meso.name}</p>
                         <p className="text-xs text-red-700">
-                          {new Date(meso.startDate).toLocaleDateString('es-ES')} - {new Date(meso.endDate).toLocaleDateString('es-ES')}
+                          {formatOverlapDate(meso.startDate)} - {formatOverlapDate(meso.endDate)}
                         </p>
                       </div>
                     ))}

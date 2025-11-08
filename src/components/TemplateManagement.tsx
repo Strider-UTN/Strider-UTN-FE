@@ -26,10 +26,12 @@ import {
   Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { TrainingTemplateService, TrainingTemplateResponseDto, CreateTrainingTemplateDto } from '../services/trainingTemplateService';
-import { translateCategory, translateType } from '../utils/templateTranslations';
+import { TrainingTemplateService, CreateTrainingTemplateDto, TrainingTemplateResponseDto } from '../services/trainingTemplateService';
 import { mapTrainingTypeFromBackend, mapTrainingTypeToBackend } from '../utils/trainingTypeMapper';
 import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
+import { mapIntervalIntensityToBackend, mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
+import { mapTrainingCategoryFromBackend, mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
+import { translateCategory, translateType } from '../utils/templateTranslations';
 
 interface TrainingInterval {
   id: string;
@@ -48,6 +50,26 @@ interface TrainingInterval {
   targetSpeed?: string;
 }
 
+interface IntervalInSeries {
+  id: string;
+  trainingMode: 'distance' | 'time';
+  repetitions: number;
+  distance?: number;
+  duration?: string;
+  targetSpeed: string;
+  description?: string;
+  intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+}
+
+interface SeriesSet {
+  id: string;
+  name: string;
+  repetitions: number;
+  intervals: IntervalInSeries[];
+  recoveryBetweenSets: string;
+  notes?: string;
+}
+
 interface TrainingTemplate {
   id: string;
   name: string;
@@ -58,6 +80,7 @@ interface TrainingTemplate {
   distance?: number;
   targetPace?: string;
   targetHR?: string;
+  series: SeriesSet[];
   intervals: TrainingInterval[];
   warmUp?: {
     duration: number;
@@ -76,58 +99,105 @@ interface TrainingTemplate {
   lastUsed?: string;
   useCount: number;
   tags: string[];
+  structureType: 'simple' | 'advanced';
 }
 
 
 // Función helper para convertir del backend al frontend
 function convertBackendToFrontend(backendTemplate: TrainingTemplateResponseDto): TrainingTemplate {
+  const series: SeriesSet[] = (backendTemplate.series || []).map((series, seriesIndex) => ({
+    id: series.id?.toString() || `series-${seriesIndex}-${Date.now()}`,
+    name: series.name,
+    repetitions: series.repetitions,
+    recoveryBetweenSets: series.recoveryBetweenSets,
+    notes: series.notes || undefined,
+    intervals: (series.intervals || []).map((interval, intervalIndex) => ({
+      id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+      trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+      repetitions: interval.repetitions,
+      distance: interval.distance || undefined,
+      duration: interval.duration || interval.targetTime || undefined,
+      targetTime: interval.targetTime || undefined,
+      targetSpeed: interval.targetSpeed || '',
+      description: interval.description || '',
+      intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+      recoveryTime: interval.recoveryTime || '00:00'
+    }))
+  }));
+
   return {
     id: backendTemplate.id.toString(),
     name: backendTemplate.name,
     description: backendTemplate.description,
     type: mapTrainingTypeFromBackend(backendTemplate.type) as any,
-    category: (backendTemplate.category === 'Training'
-      ? 'training'
-      : backendTemplate.category === 'PrepCompetition'
-      ? 'prep_competition'
-      : 'main_competition') as 'training' | 'prep_competition' | 'main_competition',
+    category: mapTrainingCategoryFromBackend(backendTemplate.category) as 'training' | 'prep_competition' | 'main_competition',
     duration: backendTemplate.duration,
     distance: backendTemplate.distance,
     targetPace: backendTemplate.targetPace,
     targetHR: backendTemplate.targetHR,
-    intervals: backendTemplate.intervals.map((interval) => ({
-      id: interval.id.toString(),
-      type: (interval.type === 'Interval' 
-        ? 'interval' 
-        : interval.type === 'Continuous' 
-        ? 'continuous' 
-        : 'recovery') as 'interval' | 'continuous' | 'recovery',
-      repetitions: interval.repetitions,
-      distance: interval.distance,
-      targetTime: interval.targetTime,
-      recoveryTime: interval.recoveryTime,
-      paceType: (interval.paceType === 'Fixed' ? 'fixed' : 'vo2max_percentage') as 'fixed' | 'vo2max_percentage',
-      pace: interval.pace,
-      vo2maxPercentage: interval.vo2maxPercentage,
-      description: interval.description,
-      intensity: interval.intensity 
-        ? (interval.intensity.toLowerCase() as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max')
-        : undefined,
-      trainingMode: interval.trainingMode 
-        ? (interval.trainingMode.toLowerCase() as 'distance' | 'time')
-        : undefined,
-      duration: interval.duration,
-      targetSpeed: interval.targetSpeed
-    })),
+    series,
+    intervals: flattenSeries(series),
+    warmUp: backendTemplate.warmUpDuration && backendTemplate.warmUpPace ? {
+      duration: backendTemplate.warmUpDuration,
+      pace: backendTemplate.warmUpPace,
+      description: backendTemplate.warmUpDescription || ''
+    } : undefined,
+    coolDown: backendTemplate.coolDownDuration && backendTemplate.coolDownPace ? {
+      duration: backendTemplate.coolDownDuration,
+      pace: backendTemplate.coolDownPace,
+      description: backendTemplate.coolDownDescription || ''
+    } : undefined,
     notes: backendTemplate.notes,
     difficulty: mapDifficultyFromBackend(backendTemplate.difficulty),
     isFavorite: backendTemplate.isFavorite,
     createdAt: new Date(backendTemplate.createdAt).toISOString().split('T')[0],
     lastUsed: backendTemplate.lastUsed ? new Date(backendTemplate.lastUsed).toISOString().split('T')[0] : undefined,
     useCount: backendTemplate.useCount,
-    tags: backendTemplate.tags || []
+    tags: backendTemplate.tags || [],
+    structureType: backendTemplate.structureType ?? 'simple'
   };
 }
+
+function flattenSeries(series: SeriesSet[]): TrainingInterval[] {
+  const flattened: TrainingInterval[] = [];
+
+  series.forEach(set => {
+    set.intervals.forEach((interval, intervalIndex) => {
+      flattened.push({
+        id: `${set.id}-${interval.id}`,
+        type: 'interval',
+        repetitions: interval.repetitions,
+        distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+        targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+        recoveryTime: interval.recoveryTime || '00:00',
+        paceType: 'fixed',
+        pace: interval.targetSpeed ? parseSpeedValue(interval.targetSpeed) : undefined,
+        vo2maxPercentage: undefined,
+        description: interval.description,
+        intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+        trainingMode: interval.trainingMode,
+        duration: interval.duration,
+        targetSpeed: interval.targetSpeed
+      });
+    });
+  });
+
+  return flattened;
+}
+
+const parseSpeedValue = (speedStr: string): number | undefined => {
+  if (!speedStr) return undefined;
+  const parts = speedStr.split(':');
+  if (parts.length === 2) {
+    const mins = parseInt(parts[0], 10);
+    const secs = parseInt(parts[1], 10);
+    if (Number.isFinite(mins) && Number.isFinite(secs)) {
+      return mins + secs / 60;
+    }
+  }
+  const value = parseFloat(speedStr);
+  return Number.isFinite(value) ? value : undefined;
+};
 
 export function TemplateManagement() {
   const [templates, setTemplates] = useState<TrainingTemplate[]>([]);
@@ -205,16 +275,11 @@ export function TemplateManagement() {
 
   const handleDuplicateTemplate = async (template: TrainingTemplate) => {
     try {
-      // Convertir la plantilla al formato DTO del backend
       const dto: CreateTrainingTemplateDto = {
-        name: `${template.name} (Copia)`,
+        name: `${template.name} (Copia)` ,
         description: template.description,
         type: mapTrainingTypeToBackend(template.type) as any,
-        category: template.category === 'training' 
-          ? 'Training' 
-          : template.category === 'prep_competition'
-          ? 'PrepCompetition'
-          : 'MainCompetition',
+        category: mapTrainingCategoryToBackend(template.category),
         duration: template.duration,
         distance: template.distance,
         targetPace: template.targetPace,
@@ -222,41 +287,40 @@ export function TemplateManagement() {
         notes: template.notes || '',
         difficulty: template.difficulty,
         tags: template.tags || [],
-        intervals: template.intervals.map((interval, index) => ({
-          type: interval.type === 'interval' 
-            ? 'Interval' 
-            : interval.type === 'continuous'
-            ? 'Continuous'
-            : 'Recovery',
-          repetitions: interval.repetitions,
-          distance: interval.distance,
-          targetTime: interval.targetTime,
-          recoveryTime: interval.recoveryTime,
-          paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
-          pace: interval.pace,
-          vo2MaxPercentage: interval.vo2maxPercentage,
-          description: interval.description,
-          intensity: interval.intensity 
-            ? (interval.intensity === 'very_hard'
-                ? 'VeryHard'
-                : interval.intensity.charAt(0).toUpperCase() + interval.intensity.slice(1)) as any
-            : undefined,
-          trainingMode: interval.trainingMode 
-            ? (interval.trainingMode.charAt(0).toUpperCase() + interval.trainingMode.slice(1)) as any
-            : undefined,
-          duration: interval.duration,
-          targetSpeed: interval.targetSpeed,
-          orderIndex: index
+        warmUpDuration: template.warmUp?.duration,
+        warmUpPace: template.warmUp?.pace,
+        warmUpDescription: template.warmUp?.description,
+        coolDownDuration: template.coolDown?.duration,
+        coolDownPace: template.coolDown?.pace,
+        coolDownDescription: template.coolDown?.description,
+        series: template.series.map((series, seriesIndex) => ({
+          name: series.name,
+          repetitions: series.repetitions,
+          recoveryBetweenSets: series.recoveryBetweenSets,
+          orderIndex: seriesIndex,
+          notes: series.notes,
+          intervals: series.intervals.map((interval, intervalIndex) => ({
+            type: 'Interval',
+            repetitions: interval.repetitions,
+            distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+            targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+            recoveryTime: '00:00',
+            paceType: 'Fixed',
+            pace: interval.targetSpeed ? parseSpeedValue(interval.targetSpeed) : undefined,
+            vo2MaxPercentage: undefined,
+            description: interval.description,
+            intensity: mapIntervalIntensityFromBackend(interval.intensity),
+            trainingMode: interval.trainingMode === 'time' ? 'Time' : 'Distance',
+            duration: interval.duration,
+            targetSpeed: interval.targetSpeed,
+            orderIndex: intervalIndex
+          }))
         }))
       };
 
-      // Llamar al servicio para crear la plantilla duplicada
       await TrainingTemplateService.createTrainingTemplate(dto);
-      
-      // Recargar las plantillas después de duplicar
       await loadTemplates();
     } catch (error) {
-      // El error ya se maneja automáticamente en el servicio
       console.error('Error al duplicar plantilla:', error);
     }
   };

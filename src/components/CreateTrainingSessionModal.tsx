@@ -14,13 +14,14 @@ import { AthleteIntervalBuilder } from './AthleteIntervalBuilder';
 import { SeriesBuilder } from './SeriesBuilder';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { TrainingTemplateService, TrainingTemplateResponseDto } from '../services/trainingTemplateService';
-import { TrainingSessionService, CreateTrainingSessionDto, CreateTrainingIntervalDto, UpdateTrainingSessionDto } from '../services/trainingSessionService';
+import { TrainingTemplateService, TrainingTemplateResponseDto, TrainingSeriesResponseDto } from '../services/trainingTemplateService';
+import { TrainingSessionService, CreateTrainingSessionDto, CreateTrainingSeriesDto, UpdateTrainingSessionDto, TrainingSessionResponseDto } from '../services/trainingSessionService';
 import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleService';
 import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
 import { mapTrainingTypeFromBackend } from '../utils/trainingTypeMapper';
 import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
-import { mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
+import { mapTrainingCategoryFromBackend, mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
+import { mapIntervalIntensityToBackend, mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 
 interface Athlete {
   id: string;
@@ -51,6 +52,7 @@ interface TrainingInterval {
   trainingMode?: 'distance' | 'time';
   duration?: string;
   targetSpeed?: string;
+  orderIndex?: number;
 }
 
 interface IntervalInSeries {
@@ -59,9 +61,11 @@ interface IntervalInSeries {
   repetitions: number;
   distance?: number;
   duration?: string;
+  targetTime?: string;
   targetSpeed: string;
   description?: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  recoveryTime?: string;
 }
 
 interface SeriesSet {
@@ -70,6 +74,7 @@ interface SeriesSet {
   repetitions: number;
   intervals: IntervalInSeries[];
   recoveryBetweenSets: string;
+  notes?: string;
 }
 
 interface TrainingSession {
@@ -79,10 +84,12 @@ interface TrainingSession {
   description?: string;
   category: 'training' | 'prep_competition' | 'main_competition';
   athletes: string[];
-  intervals: TrainingInterval[];
+  series: SeriesSet[];
+  intervals?: TrainingInterval[];
   notes?: string;
   createdAt: string;
   updatedAt: string;
+  structureType?: 'simple' | 'advanced';
 }
 
 interface TrainingTemplate {
@@ -95,9 +102,16 @@ interface TrainingTemplate {
   distance?: number;
   targetPace?: string;
   targetHR?: string;
-  intervals: TrainingInterval[];
+  series: SeriesSet[];
+  intervals?: TrainingInterval[];
   notes: string;
   difficulty: 1 | 2 | 3 | 4 | 5;
+  isFavorite: boolean;
+  createdAt: string;
+  lastUsed?: string;
+  useCount: number;
+  tags: string[];
+  structureType: 'simple' | 'advanced';
 }
 
 interface CreateTrainingSessionModalProps {
@@ -161,6 +175,7 @@ export function CreateTrainingSessionModal({
   const [microcycles, setMicrocycles] = useState<MicrocycleResponseDto[]>([]);
   const [isLoadingCycles, setIsLoadingCycles] = useState(false);
   const [dateValidationError, setDateValidationError] = useState<string>('');
+  const [isHydratingSession, setIsHydratingSession] = useState(false);
   
   // Obtener fecha mínima (hoy)
   const getMinDate = (): string => {
@@ -206,36 +221,39 @@ export function CreateTrainingSessionModal({
   // Cargar datos de la sesión cuando se está editando
   useEffect(() => {
     if (isOpen && editingSession) {
-      // Cargar datos de la sesión en el formulario
-      const dateStr = editingSession.date.includes('T') 
-        ? editingSession.date.split('T')[0] 
-        : editingSession.date;
-      
-      setFormData({
-        name: editingSession.name,
-        description: editingSession.description || '',
-        category: editingSession.category,
-        notes: editingSession.notes || '',
-        date: dateStr
-      });
-      
-      setSelectedAthletes(editingSession.athletes || []);
-      setIntervals(editingSession.intervals || []);
-      setSeries([]); // Las series se convierten en intervalos, así que no las cargamos
-      setCurrentStep(1);
-      
-      // Validar la fecha después de cargar los datos, pero solo si los ciclos ya están cargados
-      // Usar setTimeout para asegurar que el estado se haya actualizado
-      setTimeout(() => {
-        if (!isLoadingCycles && (microcycles.length > 0 || !planningId)) {
-          validateDate(dateStr);
+      let isCancelled = false;
+
+      const hydrateSession = async () => {
+        setIsHydratingSession(true);
+        try {
+          const detailedSession = await TrainingSessionService.getTrainingSessionById(Number(editingSession.id));
+          if (isCancelled) return;
+
+          if (detailedSession) {
+            populateSessionFromData(detailedSession);
+          } else {
+            populateSessionFromData(editingSession);
+          }
+        } catch (error) {
+          console.error('Error al obtener la sesión para editar', error);
+          if (!isCancelled) {
+            populateSessionFromData(editingSession);
+          }
+        } finally {
+          if (!isCancelled) {
+            setIsHydratingSession(false);
+          }
         }
-      }, 100);
+      };
+
+      hydrateSession();
+
+      return () => {
+        isCancelled = true;
+      };
     } else if (isOpen && !editingSession) {
-      // Resetear formulario si no se está editando
       handleReset();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editingSession]);
   
   const loadCycles = async () => {
@@ -332,46 +350,28 @@ export function CreateTrainingSessionModal({
 
   // Función para convertir plantillas del backend al formato del frontend
   const convertBackendTemplateToFrontend = (backendTemplate: TrainingTemplateResponseDto): TrainingTemplate => {
+    const mappedSeries = mapBackendSeriesToSeriesSets(backendTemplate.series);
+
     return {
       id: backendTemplate.id.toString(),
       name: backendTemplate.name,
       description: backendTemplate.description,
       type: mapTrainingTypeFromBackend(backendTemplate.type) as any,
-      category: (backendTemplate.category === 'Training'
-        ? 'training'
-        : backendTemplate.category === 'PrepCompetition'
-        ? 'prep_competition'
-        : 'main_competition') as 'training' | 'prep_competition' | 'main_competition',
+      category: mapTrainingCategoryFromBackend(backendTemplate.category) as 'training' | 'prep_competition' | 'main_competition',
       duration: backendTemplate.duration,
       distance: backendTemplate.distance,
       targetPace: backendTemplate.targetPace,
       targetHR: backendTemplate.targetHR,
-      intervals: backendTemplate.intervals.map((interval) => ({
-        id: interval.id.toString(),
-        type: (interval.type === 'Interval' 
-          ? 'interval' 
-          : interval.type === 'Continuous' 
-          ? 'continuous' 
-          : 'recovery') as 'interval' | 'continuous' | 'recovery',
-        repetitions: interval.repetitions,
-        distance: interval.distance,
-        targetTime: interval.targetTime,
-        recoveryTime: interval.recoveryTime,
-        paceType: (interval.paceType === 'Fixed' ? 'fixed' : 'vo2max_percentage') as 'fixed' | 'vo2max_percentage',
-        pace: interval.pace,
-        vo2maxPercentage: interval.vo2maxPercentage,
-        description: interval.description,
-        intensity: interval.intensity 
-          ? (interval.intensity.toLowerCase() as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max')
-          : undefined,
-        trainingMode: interval.trainingMode 
-          ? (interval.trainingMode.toLowerCase() as 'distance' | 'time')
-          : undefined,
-        duration: interval.duration,
-        targetSpeed: interval.targetSpeed
-      })),
+      series: mappedSeries,
+      intervals: flattenSeriesToIntervals(mappedSeries),
       notes: backendTemplate.notes,
-      difficulty: mapDifficultyFromBackend(backendTemplate.difficulty)
+      difficulty: mapDifficultyFromBackend(backendTemplate.difficulty),
+      isFavorite: backendTemplate.isFavorite,
+      createdAt: backendTemplate.createdAt,
+      lastUsed: backendTemplate.lastUsed,
+      useCount: backendTemplate.useCount,
+      tags: backendTemplate.tags || [],
+      structureType: backendTemplate.structureType ?? 'simple'
     };
   };
 
@@ -464,14 +464,17 @@ export function CreateTrainingSessionModal({
     })
   );
 
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
   const handleSubmit = async () => {
     if (!formData.name.trim()) {
       toast.error('El nombre de la sesión es requerido');
       return;
     }
 
-    if (intervals.length === 0 && series.length === 0) {
-      toast.error('Debe agregar al menos una serie o intervalo');
+    const seriesPayload = buildSeriesPayload();
+    if (seriesPayload.length === 0) {
+      toast.error('Debes agregar al menos una serie con intervalos');
       return;
     }
 
@@ -480,225 +483,128 @@ export function CreateTrainingSessionModal({
       return;
     }
 
-    // Convertir series a intervalos si es necesario
-    let allIntervals = [...intervals];
-    
-    // Agregar los intervalos de las series complejas
-    series.forEach(s => {
-      // Repetir toda la serie s.repetitions veces
-      for (let seriesRep = 0; seriesRep < s.repetitions; seriesRep++) {
-        // Agregar cada intervalo de la serie
-        s.intervals.forEach((interval, intervalIndex) => {
-          const convertedInterval: TrainingInterval = {
-            id: `${s.id}-rep${seriesRep}-${interval.id}`,
-            type: 'interval',
-            repetitions: interval.repetitions,
-            distance: interval.trainingMode === 'distance' ? (interval.distance || 0) : 0,
-            targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
-            recoveryTime: '0:00', // La recuperación entre intervalos dentro de la serie
-            paceType: 'fixed',
-            pace: parseSpeed(interval.targetSpeed),
-            description: `${s.name} (Serie ${seriesRep + 1}/${s.repetitions}) - ${interval.description || ''}`,
-            intensity: interval.intensity,
-            trainingMode: interval.trainingMode,
-            duration: interval.trainingMode === 'time' ? interval.duration : undefined,
-            targetSpeed: interval.targetSpeed
-          };
-          allIntervals.push(convertedInterval);
-        });
-        
-        // Agregar intervalo de recuperación entre series (excepto después de la última)
-        if (seriesRep < s.repetitions - 1) {
-          const recoveryInterval: TrainingInterval = {
-            id: `${s.id}-recovery-${seriesRep}`,
-            type: 'recovery',
-            repetitions: 1,
-            distance: 0,
-            recoveryTime: s.recoveryBetweenSets,
-            paceType: 'fixed',
-            pace: 0,
-            description: `Recuperación entre series de ${s.name}`,
-            intensity: 'easy',
-            trainingMode: 'time',
-            duration: s.recoveryBetweenSets,
-            targetSpeed: '0:00'
-          };
-          allIntervals.push(recoveryInterval);
-        }
-      }
-    });
-
-    // Convertir intervalos al formato del backend
-    const backendIntervals: CreateTrainingIntervalDto[] = allIntervals.map((interval, index) => {
-      // Mapear el tipo del frontend al backend
-      const typeMapping: Record<string, string> = {
-        'interval': 'Interval',
-        'continuous': 'Continuous',
-        'recovery': 'Recovery'
-      };
-
-      // Mapear el tipo de pace del frontend al backend
-      const paceTypeMapping: Record<string, string> = {
-        'fixed': 'Fixed',
-        'vo2max_percentage': 'Vo2MaxPercentage'
-      };
-
-      // Mapear la intensidad del frontend al backend
-      const intensityMapping: Record<string, string> = {
-        'easy': 'Easy',
-        'moderate': 'Moderate',
-        'hard': 'Hard',
-        'very_hard': 'VeryHard',
-        'max': 'Max'
-      };
-
-      // Mapear el modo de entrenamiento del frontend al backend
-      const trainingModeMapping: Record<string, string> = {
-        'distance': 'Distance',
-        'time': 'Time'
-      };
-
-      return {
-        type: typeMapping[interval.type] || 'Interval',
-        repetitions: interval.repetitions,
-        distance: interval.distance,
-        targetTime: interval.targetTime,
-        recoveryTime: interval.recoveryTime,
-        paceType: paceTypeMapping[interval.paceType] || 'Fixed',
-        pace: interval.pace,
-        vo2MaxPercentage: interval.vo2maxPercentage,
-        description: interval.description,
-        intensity: interval.intensity ? intensityMapping[interval.intensity] : undefined,
-        trainingMode: interval.trainingMode ? trainingModeMapping[interval.trainingMode] : undefined,
-        duration: interval.duration,
-        targetSpeed: interval.targetSpeed,
-        orderIndex: index
-      };
-    });
-
-    // Validar fecha antes de enviar
     if (!validateDate(formData.date)) {
       toast.error('Por favor corrige la fecha antes de crear la sesión');
       return;
     }
-    
-    // Convertir fecha a formato ISO UTC explícitamente
-    // Asegurar que siempre termine en 'Z' para indicar UTC
-    let sessionDate: string;
-    if (formData.date.includes('T')) {
-      // Si ya tiene 'T', verificar si termina en 'Z'
-      sessionDate = formData.date.endsWith('Z') 
-        ? formData.date 
-        : formData.date.endsWith('z')
+
+    setIsSubmitting(true);
+
+    try {
+      const sessionDateIso = formData.date.includes('T')
         ? formData.date
-        : `${formData.date}Z`;
-    } else {
-      // Si no tiene 'T', agregar hora UTC medianoche
-      sessionDate = `${formData.date}T00:00:00.000Z`;
-    }
-    
-    // Validar que haya planningId
-    if (!planningId) {
-      toast.error('No se puede crear la sesión sin una planificación asociada');
-      return;
-    }
+        : `${formData.date}T00:00:00.000Z`;
 
-    // Si estamos editando, usar UpdateTrainingSessionDto, sino CreateTrainingSessionDto
-    if (editingSession) {
-      // Actualizar sesión existente
-      const updateDto: UpdateTrainingSessionDto = {
+      const payload: CreateTrainingSessionDto = {
         name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
-        date: sessionDate, // ISO string format
-        category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
-        notes: formData.notes.trim() || undefined,
-        athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
-        intervals: backendIntervals
+        description: formData.description?.trim() || undefined,
+        date: sessionDateIso,
+        category: mapTrainingCategoryToBackend(formData.category),
+        notes: formData.notes?.trim() || undefined,
+        planningId: planningId ? Number(planningId) : 0,
+        athleteIds: selectedAthletes.map(id => Number(id)),
+        series: seriesPayload
       };
 
-      try {
-        await TrainingSessionService.updateTrainingSession(Number(editingSession.id), updateDto);
-        
-        // Llamar callback cuando se actualiza exitosamente
-        if (onSessionUpdated) {
-          onSessionUpdated();
-        }
-        
-        // También llamar al callback del componente padre si es necesario (para compatibilidad)
-        if (onSubmit) {
-          const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
-            date: formData.date,
-            name: formData.name.trim(),
-            description: formData.description.trim(),
-            category: formData.category,
-            athletes: selectedAthletes,
-            intervals: allIntervals,
-            notes: formData.notes.trim() || undefined
-          };
-          onSubmit(session);
-        }
-        
-        handleReset();
-        // Cerrar el modal automáticamente después de actualizar exitosamente
-        onClose();
-      } catch (error) {
-        // El error ya se maneja automáticamente en el servicio
-        console.error('Error al actualizar sesión:', error);
+      if (!payload.planningId) {
+        toast.error('No se puede crear la sesión sin una planificación asociada');
+        return;
       }
-    } else {
-      // Crear nueva sesión
-      const createDto: CreateTrainingSessionDto = {
-        name: formData.name.trim(),
-        description: formData.description.trim() || undefined,
-        date: sessionDate, // ISO string format
-        category: mapTrainingCategoryToBackend(formData.category), // Convertir a PascalCase
-        notes: formData.notes.trim() || undefined,
-        planningId: planningId!, // ID de la planificación (requerido)
-        athleteIds: selectedAthletes.map(id => parseInt(id)), // Convertir strings a números
-        intervals: backendIntervals
-      };
 
-      try {
-        const createdSession = await TrainingSessionService.createTrainingSession(createDto);
-        
-        // Llamar callback cuando se crea exitosamente (para refrescar listas)
-        if (onSessionCreated) {
-          onSessionCreated();
-        }
-        
-        // También llamar al callback del componente padre si es necesario (para compatibilidad)
-        if (onSubmit) {
-          const session: Omit<TrainingSession, 'id' | 'createdAt' | 'updatedAt'> = {
-            date: formData.date,
-            name: formData.name.trim(),
-            description: formData.description.trim(),
-            category: formData.category,
-            athletes: selectedAthletes,
-            intervals: allIntervals,
-            notes: formData.notes.trim() || undefined
-          };
-          onSubmit(session);
-        }
-        
-        handleReset();
-        // Cerrar el modal automáticamente después de crear exitosamente
-        onClose();
-      } catch (error) {
-        // El error ya se maneja automáticamente en el servicio
-        console.error('Error al crear sesión:', error);
+      if (editingSession) {
+        await TrainingSessionService.updateTrainingSession(Number(editingSession.id), payload);
+        toast.success('Sesión actualizada');
+        if (onSessionUpdated) onSessionUpdated();
+      } else {
+        await TrainingSessionService.createTrainingSession(payload);
+        toast.success('Sesión creada');
+        if (onSessionCreated) onSessionCreated();
       }
+
+      handleReset();
+      onClose();
+    } catch (error) {
+      console.error('Error al guardar la sesión', error);
+      toast.error('Ocurrió un error al guardar la sesión');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
-  const parseSpeed = (speedStr: string): number => {
-    // Convertir "4:30" a 4.5 minutos
-    const parts = speedStr.split(':');
-    if (parts.length === 2) {
-      const mins = parseInt(parts[0]);
-      const secs = parseInt(parts[1]);
-      return mins + (secs / 60);
+  const mapPaceTypeToBackend = (paceType?: string) => {
+    if (paceType === 'vo2max_percentage') return 'Vo2MaxPercentage';
+    return 'Fixed';
+  };
+
+  const mapTrainingModeToBackend = (mode?: string) => {
+    if (!mode) return undefined;
+    return mode === 'time' ? 'Time' : 'Distance';
+  };
+
+  const mapIntervalTypeToBackend = (type?: string) => {
+    if (!type) return 'Interval';
+    switch (type) {
+      case 'continuous': return 'Continuous';
+      case 'recovery': return 'Recovery';
+      default: return 'Interval';
     }
-    return parseFloat(speedStr) || 0;
+  };
+
+  const buildSeriesPayload = (): CreateTrainingSeriesDto[] => {
+    if (series.length > 0) {
+      return series.map((seriesSet, seriesIdx) => ({
+        name: seriesSet.name.trim() || `Serie ${seriesIdx + 1}`,
+        repetitions: seriesSet.repetitions,
+        recoveryBetweenSets: seriesSet.recoveryBetweenSets || '00:00',
+        orderIndex: seriesIdx,
+        notes: seriesSet.notes?.trim(),
+        intervals: seriesSet.intervals.map((interval, intervalIdx) => ({
+          type: 'Interval',
+          repetitions: interval.repetitions,
+          distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+          targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+          recoveryTime: interval.recoveryTime || '00:00',
+          paceType: 'Fixed',
+          pace: interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
+          vo2MaxPercentage: undefined,
+          description: interval.description,
+          intensity: mapIntervalIntensityToBackend(interval.intensity),
+          trainingMode: mapTrainingModeToBackend(interval.trainingMode),
+          duration: interval.trainingMode === 'time' ? interval.duration : undefined,
+          targetSpeed: interval.targetSpeed,
+          orderIndex: intervalIdx
+        }))
+      }));
+    }
+
+    if (intervals.length > 0) {
+      return [
+        {
+          name: 'Intervalos Simples',
+          repetitions: 1,
+          recoveryBetweenSets: '00:00',
+          orderIndex: 0,
+          intervals: intervals.map((interval, idx) => ({
+            type: mapIntervalTypeToBackend(interval.type),
+            repetitions: interval.repetitions,
+            distance: interval.trainingMode === 'time' ? 0 : interval.distance || 0,
+            targetTime: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.targetTime,
+            recoveryTime: interval.recoveryTime || '00:00',
+            paceType: mapPaceTypeToBackend(interval.paceType),
+            pace: interval.pace ?? (interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined),
+            vo2MaxPercentage: interval.vo2maxPercentage,
+            description: interval.description,
+            intensity: mapIntervalIntensityToBackend(interval.intensity),
+            trainingMode: mapTrainingModeToBackend(interval.trainingMode),
+            duration: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.duration,
+            targetSpeed: interval.targetSpeed,
+            orderIndex: idx
+          }))
+        }
+      ];
+    }
+
+    return [];
   };
 
   const handleReset = () => {
@@ -721,6 +627,7 @@ export function CreateTrainingSessionModal({
     setCurrentStep(1);
     setSearchTerm('');
     setDateValidationError('');
+    setIsHydratingSession(false);
   };
 
   const handleClose = () => {
@@ -798,11 +705,15 @@ export function CreateTrainingSessionModal({
       return updatedData;
     });
 
-    // Copiar intervalos de la plantilla
-    setIntervals(template.intervals.map(interval => ({
-      ...interval,
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
-    })));
+    if (template.structureType === 'advanced') {
+      setSeries(template.series);
+      setIntervals([]);
+      setSeriesBuilderMode('advanced');
+    } else {
+      setSeries([]);
+      setIntervals(flattenSeriesToIntervals(template.series));
+      setSeriesBuilderMode('simple');
+    }
 
     // Cerrar selector de plantilla
     setShowTemplateSelector(false);
@@ -813,6 +724,12 @@ export function CreateTrainingSessionModal({
   };
 
   const handleAddInterval = (interval: Omit<TrainingInterval, 'id'>) => {
+    if (series.length > 0) {
+      toast.error('La sesión ya usa series avanzadas. Elimina las series para volver a utilizar intervalos simples.');
+      setSeriesBuilderMode('advanced');
+      return;
+    }
+
     const newInterval: TrainingInterval = {
       ...interval,
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
@@ -833,11 +750,18 @@ export function CreateTrainingSessionModal({
   };
 
   const handleAddSeries = (newSeries: Omit<SeriesSet, 'id'>) => {
+    if (intervals.length > 0) {
+      toast.error('La sesión usa intervalos simples. Elimina los intervalos para crear series avanzadas.');
+      setSeriesBuilderMode('simple');
+      return;
+    }
+
     const seriesWithId: SeriesSet = {
       ...newSeries,
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
     };
     setSeries(prev => [...prev, seriesWithId]);
+    setSeriesBuilderMode('advanced');
   };
 
   const handleUpdateSeries = (seriesId: string, updatedSeries: Omit<SeriesSet, 'id'>) => {
@@ -847,7 +771,13 @@ export function CreateTrainingSessionModal({
   };
 
   const handleDeleteSeries = (seriesId: string) => {
-    setSeries(prev => prev.filter(s => s.id !== seriesId));
+    setSeries(prev => {
+      const updated = prev.filter(s => s.id !== seriesId);
+      if (updated.length === 0) {
+        setSeriesBuilderMode('simple');
+      }
+      return updated;
+    });
   };
 
   const formatDate = (dateString: string) => {
@@ -865,6 +795,10 @@ export function CreateTrainingSessionModal({
   };
 
   const canGoToNextStep = () => {
+    if (isHydratingSession) {
+      return false;
+    }
+
     if (currentStep === 1) {
       return formData.name.trim() !== '';
     }
@@ -901,7 +835,141 @@ export function CreateTrainingSessionModal({
     selectedAthletes.length > 0 && 
     (intervals.length > 0 || series.length > 0) && 
     athletes && 
-    athletes.length > 0;
+    athletes.length > 0 &&
+    !isHydratingSession;
+
+  const mapBackendSeriesToSeriesSets = (backendSeries: TrainingSeriesResponseDto[] | undefined): SeriesSet[] => {
+    if (!backendSeries) return [];
+
+    return backendSeries.map((series, seriesIndex) => ({
+      id: series.id?.toString() || `series-${seriesIndex}-${Date.now()}`,
+      name: series.name,
+      repetitions: series.repetitions,
+      recoveryBetweenSets: series.recoveryBetweenSets,
+      notes: series.notes || undefined,
+      intervals: (series.intervals || []).map((interval, intervalIndex) => ({
+        id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+        trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+        repetitions: interval.repetitions,
+        distance: interval.distance || undefined,
+        duration: interval.duration || interval.targetTime || undefined,
+        targetTime: interval.targetTime || undefined,
+        targetSpeed: interval.targetSpeed || '',
+        description: interval.description || '',
+        intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+        recoveryTime: interval.recoveryTime || '00:00'
+      }))
+    }));
+  };
+
+  const parseSpeed = (speedStr?: string): number | undefined => {
+    if (!speedStr) return undefined;
+    const parts = speedStr.split(':');
+    if (parts.length === 2) {
+      const mins = parseInt(parts[0], 10);
+      const secs = parseInt(parts[1], 10);
+      if (!Number.isNaN(mins) && !Number.isNaN(secs)) {
+        return mins + secs / 60;
+      }
+    }
+    const numeric = parseFloat(speedStr);
+    return Number.isNaN(numeric) ? undefined : numeric;
+  };
+
+  const flattenSeriesToIntervals = (seriesSets: SeriesSet[]): TrainingInterval[] => {
+    const flattened: TrainingInterval[] = [];
+
+    seriesSets.forEach(series => {
+      series.intervals.forEach((interval, intervalIndex) => {
+        flattened.push({
+          id: `${series.id}-${interval.id}`,
+          type: 'interval',
+          repetitions: interval.repetitions,
+          distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+          targetTime: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.targetTime,
+          recoveryTime: interval.recoveryTime || '00:00',
+          paceType: 'fixed',
+          pace: interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
+          vo2maxPercentage: undefined,
+          description: interval.description,
+          intensity: interval.intensity,
+          trainingMode: interval.trainingMode,
+          duration: interval.duration,
+          targetSpeed: interval.targetSpeed,
+          orderIndex: intervalIndex
+        });
+      });
+    });
+
+    return flattened;
+  };
+
+  const formatMinutesToPace = (minutes: number): string => {
+    if (!minutes || Number.isNaN(minutes)) return '';
+    const totalSeconds = Math.round(minutes * 60);
+    const paceMinutes = Math.floor(totalSeconds / 60);
+    const paceSeconds = totalSeconds % 60;
+    return `${paceMinutes}:${paceSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const populateSessionFromData = (sessionData: TrainingSessionResponseDto | TrainingSession) => {
+    const rawDate = sessionData.date || '';
+    const dateStr = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
+
+    setFormData({
+      name: sessionData.name || '',
+      description: sessionData.description || '',
+      category: mapTrainingCategoryFromBackend(sessionData.category || 'training') as 'training' | 'prep_competition' | 'main_competition',
+      notes: sessionData.notes || '',
+      date: dateStr
+    });
+
+    const athleteIds = 'athleteIds' in sessionData && sessionData.athleteIds
+      ? sessionData.athleteIds.map(id => id.toString())
+      : (
+          'athletes' in sessionData && Array.isArray((sessionData as any).athletes)
+            ? (sessionData as any).athletes
+                .map((athlete: any) => {
+                  if (typeof athlete === 'string') return athlete;
+                  if (athlete && typeof athlete === 'object') {
+                    if ('athleteId' in athlete && athlete.athleteId !== undefined) {
+                      return athlete.athleteId.toString();
+                    }
+                    if ('id' in athlete && athlete.id !== undefined) {
+                      return athlete.id.toString();
+                    }
+                  }
+                  return null;
+                })
+                .filter((value: string | null): value is string => Boolean(value))
+            : (sessionData as TrainingSession).athletes || []
+        );
+
+    setSelectedAthletes(athleteIds);
+
+    const rawSeries = Array.isArray((sessionData as any).series) ? (sessionData as any).series : [];
+    const normalizedSeries = mapBackendSeriesToSeriesSets(rawSeries as TrainingSeriesResponseDto[]);
+
+    const resolvedStructureType = sessionData.structureType
+      ?? (normalizedSeries.length > 1 ? 'advanced' : 'simple');
+
+    if (resolvedStructureType === 'advanced') {
+      setSeries(normalizedSeries);
+      setIntervals([]);
+      setSeriesBuilderMode('advanced');
+    } else {
+      const simpleIntervals = flattenSeriesToIntervals(normalizedSeries);
+      setSeries([]);
+      setIntervals(simpleIntervals);
+      setSeriesBuilderMode('simple');
+    }
+
+    setTimeout(() => {
+      if (!isLoadingCycles && (microcycles.length > 0 || !planningId)) {
+        validateDate(dateStr);
+      }
+    }, 100);
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -919,6 +987,12 @@ export function CreateTrainingSessionModal({
               </span>
             )}
           </DialogDescription>
+          {isHydratingSession && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Cargando datos de la sesión...
+            </div>
+          )}
         </DialogHeader>
 
         {/* Indicador de Pasos */}
@@ -1135,7 +1209,7 @@ export function CreateTrainingSessionModal({
                           </div>
                           <div className="text-sm">
                             <span className="text-muted-foreground">Series:</span>
-                            <span className="ml-1 font-medium">{selectedTemplate.intervals.length}</span>
+                            <span className="ml-1 font-medium">{selectedTemplate.series.length}</span>
                           </div>
                         </div>
                       );
@@ -1261,8 +1335,8 @@ export function CreateTrainingSessionModal({
 
               <Tabs value={seriesBuilderMode} onValueChange={(value: any) => setSeriesBuilderMode(value)}>
                 <TabsList className="grid w-full grid-cols-2">
-                  <TabsTrigger value="simple">Intervalos Simples</TabsTrigger>
-                  <TabsTrigger value="advanced">Series con Intervalos</TabsTrigger>
+                  <TabsTrigger value="simple" disabled={series.length > 0}>Intervalos Simples</TabsTrigger>
+                  <TabsTrigger value="advanced" disabled={intervals.length > 0}>Series con Intervalos</TabsTrigger>
                 </TabsList>
                 
                 <TabsContent value="simple" className="mt-6">
@@ -1525,10 +1599,14 @@ export function CreateTrainingSessionModal({
               <Button 
                 type="submit" 
                 onClick={handleSubmit}
-                disabled={!isFormValid}
+                disabled={!isFormValid || isSubmitting}
                 className="min-w-32 bg-accent hover:bg-accent/90"
               >
-                <Save className="w-4 h-4 mr-2" />
+                {isSubmitting ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
                 {editingSession ? 'Actualizar Sesión' : 'Crear Sesión'}
               </Button>
             )}

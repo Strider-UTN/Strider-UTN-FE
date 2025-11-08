@@ -9,10 +9,14 @@ import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Save, Clock, FileText, Check, ChevronLeft, ChevronRight, AlertCircle, X, Tag } from 'lucide-react';
 import { AthleteIntervalBuilder } from './AthleteIntervalBuilder';
+import { SeriesBuilder } from './SeriesBuilder';
 import { toast } from 'sonner';
-import { TrainingTemplateService, CreateTrainingTemplateDto } from '../services/trainingTemplateService';
+import { TrainingTemplateService, CreateTrainingTemplateDto, CreateTrainingSeriesDto } from '../services/trainingTemplateService';
 import { translateCategory } from '../utils/templateTranslations';
-import { mapTrainingTypeToBackend } from '../utils/trainingTypeMapper';
+import { mapIntervalIntensityToBackend, mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
+import { mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { TrainingSeriesResponseDto } from '../services/trainingTemplateService';
 
 interface TrainingInterval {
   id: string;
@@ -41,7 +45,8 @@ interface TrainingTemplate {
   distance?: number;
   targetPace?: string;
   targetHR?: string;
-  intervals: TrainingInterval[];
+  series: SeriesSet[];
+  intervals?: TrainingInterval[];
   notes: string;
   difficulty: 1 | 2 | 3 | 4 | 5;
   isFavorite: boolean;
@@ -49,6 +54,7 @@ interface TrainingTemplate {
   lastUsed?: string;
   useCount: number;
   tags: string[];
+  structureType: 'simple' | 'advanced';
 }
 
 interface CreateTemplateModalProps {
@@ -58,6 +64,28 @@ interface CreateTemplateModalProps {
   template?: TrainingTemplate | null;
   mode: 'create' | 'edit';
   onTemplateCreated?: () => void; // Callback después de crear exitosamente
+}
+
+interface IntervalInSeries {
+  id: string;
+  trainingMode: 'distance' | 'time';
+  repetitions: number;
+  distance?: number;
+  duration?: string;
+  targetTime?: string;
+  targetSpeed: string;
+  description?: string;
+  intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
+  recoveryTime?: string;
+}
+
+interface SeriesSet {
+  id: string;
+  name: string;
+  repetitions: number;
+  recoveryBetweenSets: string;
+  notes?: string;
+  intervals: IntervalInSeries[];
 }
 
 export function CreateTemplateModal({
@@ -80,6 +108,200 @@ export function CreateTemplateModal({
   const [tags, setTags] = useState<string[]>(template?.tags || []);
   const [tagInput, setTagInput] = useState('');
   const [intervals, setIntervals] = useState<TrainingInterval[]>(template?.intervals || []);
+  const [series, setSeries] = useState<SeriesSet[]>(template?.series || []);
+  const [seriesBuilderMode, setSeriesBuilderMode] = useState<'simple' | 'advanced'>(
+    template?.series && template.series.length > 0 ? 'advanced' : 'simple'
+  );
+
+  const createUniqueId = (prefix: string) =>
+    `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+
+  const normalizeSeriesFromTemplate = (seriesList?: SeriesSet[]): SeriesSet[] => {
+    if (!seriesList) return [];
+
+    return seriesList.map((seriesItem, seriesIndex) => ({
+      id: seriesItem.id || createUniqueId(`series-${seriesIndex}`),
+      name: seriesItem.name,
+      repetitions: seriesItem.repetitions,
+      recoveryBetweenSets: seriesItem.recoveryBetweenSets || '00:00',
+      notes: seriesItem.notes,
+      intervals: (seriesItem.intervals || []).map((intervalItem, intervalIndex) => ({
+        id: intervalItem.id || createUniqueId(`interval-${seriesIndex}-${intervalIndex}`),
+        trainingMode: intervalItem.trainingMode || (intervalItem.duration || intervalItem.targetTime ? 'time' : 'distance'),
+        repetitions: intervalItem.repetitions || 1,
+        distance: intervalItem.distance,
+        duration: intervalItem.duration,
+        targetTime: intervalItem.targetTime,
+        targetSpeed: intervalItem.targetSpeed || '',
+        description: intervalItem.description,
+        intensity: intervalItem.intensity || 'moderate',
+        recoveryTime: intervalItem.recoveryTime || '00:00'
+      }))
+    }));
+  };
+
+  const parseSpeed = (speedStr?: string): number | undefined => {
+    if (!speedStr) return undefined;
+    const parts = speedStr.split(':');
+    if (parts.length === 2) {
+      const mins = parseInt(parts[0], 10);
+      const secs = parseInt(parts[1], 10);
+      if (!Number.isNaN(mins) && !Number.isNaN(secs)) {
+        return mins + secs / 60;
+      }
+    }
+    const value = parseFloat(speedStr);
+    return Number.isNaN(value) ? undefined : value;
+  };
+
+  const convertSeriesIntervalToTrainingInterval = (
+    seriesId: string,
+    interval: IntervalInSeries,
+    index: number
+  ): TrainingInterval => ({
+    id: interval.id || createUniqueId(`flat-interval-${seriesId}-${index}`),
+    type: 'interval',
+    repetitions: interval.repetitions || 1,
+    distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+    targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+    recoveryTime: interval.recoveryTime || '00:00',
+    paceType: 'fixed',
+    pace: parseSpeed(interval.targetSpeed),
+    vo2maxPercentage: undefined,
+    description: interval.description,
+    intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+    trainingMode: interval.trainingMode,
+    duration: interval.duration,
+    targetSpeed: interval.targetSpeed
+  });
+
+  const flattenSeriesToTrainingIntervals = (seriesSets: SeriesSet[]): TrainingInterval[] => {
+    const flattened: TrainingInterval[] = [];
+
+    seriesSets.forEach(seriesItem => {
+      seriesItem.intervals.forEach((intervalItem, intervalIndex) => {
+        const converted = convertSeriesIntervalToTrainingInterval(seriesItem.id, intervalItem, intervalIndex);
+        converted.recoveryTime = intervalItem.recoveryTime || converted.recoveryTime;
+        converted.intensity = mapIntervalIntensityFromBackend(intervalItem.intensity) || converted.intensity;
+        flattened.push(converted);
+      });
+    });
+
+    return flattened;
+  };
+
+  const formatMinutesToPace = (minutes?: number): string => {
+    if (minutes === undefined || Number.isNaN(minutes)) return '';
+    const totalSeconds = Math.round(minutes * 60);
+    const paceMinutes = Math.floor(totalSeconds / 60);
+    const paceSeconds = totalSeconds % 60;
+    return `${paceMinutes}:${paceSeconds.toString().padStart(2, '0')}`;
+  };
+
+  const convertTrainingIntervalToSeriesInterval = (interval: TrainingInterval): IntervalInSeries => ({
+    id: interval.id || createUniqueId('series-interval'),
+    trainingMode: interval.trainingMode || (interval.duration || interval.targetTime ? 'time' : 'distance'),
+    repetitions: interval.repetitions || 1,
+    distance: interval.trainingMode === 'distance' ? interval.distance : interval.distance ?? 0,
+    duration: interval.duration || interval.targetTime,
+    targetSpeed: interval.targetSpeed || (interval.pace ? formatMinutesToPace(interval.pace) : ''),
+    description: interval.description,
+    intensity: interval.intensity || 'moderate'
+  });
+
+  const buildSeriesPreview = (): SeriesSet[] => {
+    if (series.length > 0) {
+      return series;
+    }
+
+    if (intervals.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        id: 'simple-series-preview',
+        name: 'Intervalos Simples',
+        repetitions: 1,
+        recoveryBetweenSets: '00:00',
+        notes: undefined,
+        intervals: intervals.map(convertTrainingIntervalToSeriesInterval)
+      }
+    ];
+  };
+
+  const mapTrainingModeToBackend = (mode?: 'distance' | 'time'): 'Distance' | 'Time' | undefined => {
+    if (!mode) return undefined;
+    return mode === 'time' ? 'Time' : 'Distance';
+  };
+
+  const mapIntervalTypeToBackend = (type?: string): 'Interval' | 'Continuous' | 'Recovery' => {
+    switch (type) {
+      case 'continuous':
+        return 'Continuous';
+      case 'recovery':
+        return 'Recovery';
+      default:
+        return 'Interval';
+    }
+  };
+
+  const buildSeriesPayload = (): CreateTrainingSeriesDto[] => {
+    if (series.length > 0) {
+      return series.map((seriesItem, index) => ({
+        name: seriesItem.name.trim() || `Serie ${index + 1}`,
+        repetitions: seriesItem.repetitions,
+        recoveryBetweenSets: seriesItem.recoveryBetweenSets || '00:00',
+        orderIndex: index,
+        notes: seriesItem.notes,
+        intervals: seriesItem.intervals.map((interval, idx) => ({
+          type: 'Interval',
+          repetitions: interval.repetitions,
+          distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
+          targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
+          recoveryTime: interval.recoveryTime || '00:00',
+          paceType: 'Fixed',
+          pace: parseSpeed(interval.targetSpeed),
+          vo2MaxPercentage: undefined,
+          description: interval.description,
+          intensity: mapIntervalIntensityToBackend(interval.intensity),
+          trainingMode: mapTrainingModeToBackend(interval.trainingMode),
+          duration: interval.trainingMode === 'time' ? interval.duration : undefined,
+          targetSpeed: interval.targetSpeed,
+          orderIndex: idx
+        }))
+      }));
+    }
+
+    if (intervals.length > 0) {
+      return [
+        {
+          name: 'Intervalos Simples',
+          repetitions: 1,
+          recoveryBetweenSets: '00:00',
+          orderIndex: 0,
+          intervals: intervals.map((interval, idx) => ({
+            type: mapIntervalTypeToBackend(interval.type),
+            repetitions: interval.repetitions,
+            distance: interval.trainingMode === 'time' ? 0 : interval.distance,
+            targetTime: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.targetTime,
+            recoveryTime: interval.recoveryTime || '00:00',
+            paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
+            pace: interval.pace,
+            vo2MaxPercentage: interval.vo2maxPercentage,
+            description: interval.description,
+            intensity: mapIntervalIntensityToBackend(interval.intensity),
+            trainingMode: mapTrainingModeToBackend(interval.trainingMode),
+            duration: interval.duration,
+            targetSpeed: interval.targetSpeed,
+            orderIndex: idx
+          }))
+        }
+      ];
+    }
+
+    return [];
+  };
   const [currentStep, setCurrentStep] = useState(1);
 
   // Actualizar el estado cuando cambia el template (modo edición)
@@ -93,7 +315,24 @@ export function CreateTemplateModal({
         difficulty: template.difficulty
       });
       setTags(template.tags || []);
-      setIntervals(template.intervals || []);
+
+      const normalizedSeries = normalizeSeriesFromTemplate(template.series);
+
+      if (template.structureType === 'advanced')
+      {
+        setSeries(normalizedSeries);
+        setIntervals([]);
+        setSeriesBuilderMode('advanced');
+      }
+      else
+      {
+        setSeries([]);
+        const simpleIntervals = template.intervals && template.intervals.length > 0
+          ? template.intervals
+          : flattenSeriesToTrainingIntervals(normalizedSeries);
+        setIntervals(simpleIntervals);
+        setSeriesBuilderMode('simple');
+      }
     } else {
       // Reset solo cuando no hay template (modo creación)
       setFormData({
@@ -106,6 +345,8 @@ export function CreateTemplateModal({
       setTags([]);
       setTagInput('');
       setIntervals([]);
+      setSeries([]);
+      setSeriesBuilderMode('simple');
       setCurrentStep(1);
     }
   }, [template]);
@@ -136,13 +377,21 @@ export function CreateTemplateModal({
     return 0;
   };
 
+  const getAllIntervalsForDuration = (): TrainingInterval[] => {
+    if (series.length > 0) {
+      return flattenSeriesToTrainingIntervals(series);
+    }
+    return intervals;
+  };
+
   // Función para calcular la duración total en minutos basada en los intervalos
   const calculateTotalDuration = (): number => {
-    if (intervals.length === 0) return 0;
+    const intervalsForDuration = getAllIntervalsForDuration();
+    if (intervalsForDuration.length === 0) return 0;
 
     let totalMinutes = 0;
 
-    intervals.forEach((interval) => {
+    intervalsForDuration.forEach((interval) => {
       const repetitions = interval.repetitions || 1;
       
       // Calcular tiempo de trabajo por repetición
@@ -182,8 +431,9 @@ export function CreateTemplateModal({
       return;
     }
 
-    if (intervals.length === 0) {
-      toast.error('Debe agregar al menos una serie');
+    const seriesPayload = buildSeriesPayload();
+    if (seriesPayload.length === 0) {
+      toast.error('Debes agregar al menos un intervalo simple o una serie con intervalos');
       return;
     }
 
@@ -193,55 +443,24 @@ export function CreateTemplateModal({
       // Calcular duración total desde los intervalos
       const calculatedDuration = calculateTotalDuration();
 
-      // Preparar el DTO para el backend (convertir tipos a formato del backend)
-      // IMPORTANTE: Los valores del tipo deben coincidir EXACTAMENTE con el enum del backend:
-      // Continuo, Intervalos, Tempo, Fartlek, Recuperacion (sin tilde), Cuestas, Series
+      const previewSeries = buildSeriesPreview();
+      const previewIntervals = getAllIntervalsForDuration();
+
       const dto: CreateTrainingTemplateDto = {
         name: formData.name.trim(),
         description: formData.description.trim(),
-        type: 'Intervalos' as const, // Valor exacto del enum del backend
-        category: formData.category === 'training' 
-          ? 'Training' 
-          : formData.category === 'prep_competition'
-          ? 'PrepCompetition'
-          : 'MainCompetition',
-        duration: calculatedDuration, // Calcular desde los intervalos
-        intervals: intervals.map((interval, index) => ({
-          type: interval.type === 'interval' 
-            ? 'Interval' 
-            : interval.type === 'continuous'
-            ? 'Continuous'
-            : 'Recovery',
-          repetitions: interval.repetitions,
-          distance: interval.distance,
-          targetTime: interval.targetTime,
-          recoveryTime: interval.recoveryTime,
-          paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
-          pace: interval.pace,
-          vo2MaxPercentage: interval.vo2maxPercentage, // El servicio lo mapea correctamente
-          description: interval.description,
-          intensity: interval.intensity 
-            ? (interval.intensity === 'very_hard'
-                ? 'VeryHard'
-                : interval.intensity.charAt(0).toUpperCase() + interval.intensity.slice(1)) as any
-            : undefined,
-          trainingMode: interval.trainingMode 
-            ? (interval.trainingMode.charAt(0).toUpperCase() + interval.trainingMode.slice(1)) as any
-            : undefined,
-          duration: interval.duration,
-          targetSpeed: interval.targetSpeed,
-          orderIndex: index
-        })),
+        type: 'Intervalos' as const,
+        category: mapTrainingCategoryToBackend(formData.category),
+        duration: calculatedDuration,
         notes: formData.notes.trim() || '',
         difficulty: formData.difficulty,
-        tags: tags
+        tags: tags,
+        series: seriesPayload
       };
 
       if (mode === 'create') {
-        // Llamar al servicio para crear la plantilla
         await TrainingTemplateService.createTrainingTemplate(dto);
-        
-        // Si hay callback, llamarlo (para compatibilidad)
+
         if (onSave) {
           const templateData: Omit<TrainingTemplate, 'id' | 'createdAt' | 'useCount'> = {
             name: dto.name,
@@ -249,24 +468,23 @@ export function CreateTemplateModal({
             type: dto.type as any,
             category: dto.category as any,
             duration: dto.duration,
-            intervals: intervals,
+            series: previewSeries,
+            intervals: previewIntervals,
             notes: dto.notes,
             difficulty: dto.difficulty as any,
             isFavorite: false,
-            tags: dto.tags
+            tags: dto.tags,
+            structureType: series.length > 0 ? 'advanced' : 'simple'
           };
           onSave(templateData);
         }
 
-        // Llamar al callback de creación exitosa
         if (onTemplateCreated) {
           onTemplateCreated();
         }
       } else if (mode === 'edit' && template) {
-        // Llamar al servicio para actualizar la plantilla
         await TrainingTemplateService.updateTrainingTemplate(parseInt(template.id), dto);
-        
-        // Si hay callback, llamarlo (para compatibilidad)
+
         if (onSave) {
           const templateData: Omit<TrainingTemplate, 'id' | 'createdAt' | 'useCount'> = {
             name: dto.name,
@@ -274,17 +492,18 @@ export function CreateTemplateModal({
             type: dto.type as any,
             category: dto.category as any,
             duration: dto.duration,
-            intervals: intervals,
+            series: previewSeries,
+            intervals: previewIntervals,
             notes: dto.notes,
             difficulty: dto.difficulty as any,
             isFavorite: template.isFavorite,
             tags: dto.tags,
-            lastUsed: template.lastUsed
+            lastUsed: template.lastUsed,
+            structureType: series.length > 0 ? 'advanced' : 'simple'
           };
           onSave(templateData);
         }
 
-        // Llamar al callback de actualización exitosa
         if (onTemplateCreated) {
           onTemplateCreated();
         }
@@ -311,6 +530,8 @@ export function CreateTemplateModal({
     setTags([]);
     setTagInput('');
     setIntervals([]);
+    setSeries([]);
+    setSeriesBuilderMode('simple');
     setCurrentStep(1);
   };
 
@@ -341,6 +562,12 @@ export function CreateTemplateModal({
   };
 
   const handleAddInterval = (interval: Omit<TrainingInterval, 'id'>) => {
+    if (series.length > 0) {
+      toast.error('Esta plantilla ya usa series avanzadas. Elimina las series para volver a utilizar intervalos simples.');
+      setSeriesBuilderMode('advanced');
+      return;
+    }
+
     const newInterval: TrainingInterval = {
       ...interval,
       id: Date.now().toString() + Math.random().toString(36).substr(2, 9)
@@ -358,6 +585,39 @@ export function CreateTemplateModal({
 
   const handleDeleteInterval = (intervalId: string) => {
     setIntervals(prev => prev.filter(interval => interval.id !== intervalId));
+  };
+
+  const handleAddSeries = (newSeries: Omit<SeriesSet, 'id'>) => {
+    if (intervals.length > 0) {
+      toast.error('Esta plantilla usa intervalos simples. Elimina los intervalos para crear series avanzadas.');
+      setSeriesBuilderMode('simple');
+      return;
+    }
+
+    const seriesWithId: SeriesSet = {
+      ...newSeries,
+      id: createUniqueId('series')
+    };
+    setSeries(prev => [...prev, seriesWithId]);
+    setSeriesBuilderMode('advanced');
+  };
+
+  const handleUpdateSeries = (seriesId: string, updatedSeries: Omit<SeriesSet, 'id'>) => {
+    setSeries(prev =>
+      prev.map(seriesItem =>
+        seriesItem.id === seriesId ? { ...updatedSeries, id: seriesId } : seriesItem
+      )
+    );
+  };
+
+  const handleDeleteSeries = (seriesId: string) => {
+    setSeries(prev => {
+      const updated = prev.filter(seriesItem => seriesItem.id !== seriesId);
+      if (updated.length === 0) {
+        setSeriesBuilderMode('simple');
+      }
+      return updated;
+    });
   };
 
   const canGoToNextStep = () => {
@@ -383,7 +643,32 @@ export function CreateTemplateModal({
     }
   };
 
-  const isFormValid = formData.name.trim() && intervals.length > 0;
+  const hasSeriesContent = intervals.length > 0 || series.length > 0;
+  const isFormValid = !!formData.name.trim() && hasSeriesContent;
+
+  const mapBackendSeriesToSeriesSets = (backendSeries: TrainingSeriesResponseDto[] | undefined): SeriesSet[] => {
+    if (!backendSeries) return [];
+
+    return backendSeries.map((series, seriesIndex) => ({
+      id: series.id?.toString() || `series-${seriesIndex}-${Date.now()}`,
+      name: series.name,
+      repetitions: series.repetitions,
+      recoveryBetweenSets: series.recoveryBetweenSets,
+      notes: series.notes || undefined,
+      intervals: (series.intervals || []).map((interval, intervalIndex) => ({
+        id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+        trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+        repetitions: interval.repetitions,
+        distance: interval.distance || undefined,
+        duration: interval.duration || interval.targetTime || undefined,
+        targetTime: interval.targetTime || undefined,
+        targetSpeed: interval.targetSpeed || '',
+        description: interval.description || '',
+        intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+        recoveryTime: interval.recoveryTime || '00:00'
+      }))
+    }));
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -635,29 +920,76 @@ export function CreateTemplateModal({
                 <div>
                   <h3 className="text-lg font-medium mb-2">Paso 2: Constructor de Series</h3>
                   <p className="text-sm text-muted-foreground">
-                    Define los intervalos y estructura de la plantilla
+                    Define las series que compondrán esta plantilla
                   </p>
                 </div>
-                <Badge variant="secondary" className="text-sm">
-                  {intervals.length} serie{intervals.length !== 1 ? 's' : ''}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-sm">
+                    {intervals.length} intervalo{intervals.length !== 1 ? 's' : ''} simple{intervals.length !== 1 ? 's' : ''}
+                  </Badge>
+                  <Badge variant="outline" className="text-sm">
+                    {series.length} serie{series.length !== 1 ? 's' : ''} avanzada{series.length !== 1 ? 's' : ''}
+                  </Badge>
+                </div>
               </div>
 
               <Separator />
 
-              <AthleteIntervalBuilder 
-                intervals={intervals}
-                onAddInterval={handleAddInterval}
-                onUpdateInterval={handleUpdateInterval}
-                onDeleteInterval={handleDeleteInterval}
-              />
+              <Tabs
+                value={seriesBuilderMode}
+                onValueChange={(value: 'simple' | 'advanced') => setSeriesBuilderMode(value)}
+              >
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="simple" disabled={series.length > 0}>
+                    Intervalos Simples
+                  </TabsTrigger>
+                  <TabsTrigger value="advanced" disabled={intervals.length > 0}>
+                    Series con Intervalos
+                  </TabsTrigger>
+                </TabsList>
 
-              {intervals.length === 0 && (
+                <TabsContent value="simple" className="mt-6 space-y-4">
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-900">
+                      <strong>Intervalos Simples:</strong> Ideal para estructuras homogéneas como &quot;10x400m&quot;.
+                    </p>
+                  </div>
+
+                  <AthleteIntervalBuilder
+                    intervals={intervals}
+                    onAddInterval={handleAddInterval}
+                    onUpdateInterval={handleUpdateInterval}
+                    onDeleteInterval={handleDeleteInterval}
+                  />
+                </TabsContent>
+
+                <TabsContent value="advanced" className="mt-6 space-y-4">
+                  <div className="p-4 bg-purple-50 border border-purple-200 rounded-lg">
+                    <p className="text-sm text-purple-900">
+                      <strong>Series con Intervalos:</strong> Diseña bloques complejos con múltiples intervalos combinados.
+                    </p>
+                    <p className="text-xs text-purple-700 mt-1">
+                      Cada serie puede contener diferentes tipos de intervalos que se repiten juntos.
+                    </p>
+                  </div>
+
+                  <SeriesBuilder
+                    series={series}
+                    onAddSeries={handleAddSeries}
+                    onUpdateSeries={handleUpdateSeries}
+                    onDeleteSeries={handleDeleteSeries}
+                  />
+                </TabsContent>
+              </Tabs>
+
+              {intervals.length === 0 && series.length === 0 && (
                 <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-amber-900">Series requeridas</p>
-                    <p className="text-sm text-amber-700">Debes agregar al menos una serie para crear la plantilla</p>
+                    <p className="text-sm font-medium text-amber-900">Series o intervalos requeridos</p>
+                    <p className="text-sm text-amber-700">
+                      Agrega al menos un intervalo simple o una serie avanzada para poder guardar la plantilla.
+                    </p>
                   </div>
                 </div>
               )}

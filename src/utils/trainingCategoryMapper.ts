@@ -13,15 +13,22 @@
  * @returns Categoría del backend (PascalCase, coincide con el enum)
  */
 export function mapTrainingCategoryToBackend(
-  category: 'training' | 'prep_competition' | 'main_competition'
+  category: 'training' | 'prep_competition' | 'main_competition' | string
 ): string {
-  const mapping: Record<string, string> = {
-    'training': 'Training',
-    'prep_competition': 'PrepCompetition',
-    'main_competition': 'MainCompetition'
-  };
+  const normalized = (category || 'training')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
 
-  return mapping[category] || 'Training';
+  switch (normalized) {
+    case 'training':
+      return 'training';
+    case 'prepcompetition':
+      return 'prepCompetition';
+    case 'maincompetition':
+      return 'mainCompetition';
+    default:
+      return 'training';
+  }
 }
 
 /**
@@ -30,12 +37,19 @@ export function mapTrainingCategoryToBackend(
  * @returns Categoría del frontend (snake_case)
  */
 export function mapTrainingCategoryFromBackend(category: string): 'training' | 'prep_competition' | 'main_competition' {
-  const mapping: Record<string, 'training' | 'prep_competition' | 'main_competition'> = {
-    'Training': 'training',
-    'PrepCompetition': 'prep_competition',
-    'MainCompetition': 'main_competition'
-  };
+  const normalized = (category || 'training')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
 
-  return mapping[category] || 'training';
+  switch (normalized) {
+    case 'training':
+      return 'training';
+    case 'prepcompetition':
+      return 'prep_competition';
+    case 'maincompetition':
+      return 'main_competition';
+    default:
+      return 'training';
+  }
 }
 
