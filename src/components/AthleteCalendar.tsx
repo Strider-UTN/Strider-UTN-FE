@@ -1,33 +1,51 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Calendar, Clock, ChevronRight, ChevronLeft, ChevronDown, MapPin, Timer, CheckCircle, Target, Info } from 'lucide-react';
+import { ChevronRight, ChevronLeft, ChevronDown, CheckCircle, Info, Loader2 } from 'lucide-react';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Calendar as CalendarComponent } from './ui/calendar';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Alert, AlertDescription } from './ui/alert';
-import { toast } from 'sonner';
+import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
+import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
+import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 
 // Interfaces para las sesiones
+interface AthleteCalendarProps {
+  athleteId: number;
+  planningId?: number;
+}
+
+interface CalendarIntervalSummary {
+  id?: string;
+  work: string;
+  rest: string;
+  repetitions: number;
+  recoveryTime?: string;
+  distancePerRepMeters?: number;
+  totalDistanceMeters?: number;
+  targetPace?: string;
+  intensity?: string;
+  notes?: string;
+}
+
 interface TrainingSession {
   id: string;
-  microcycleId: string;
-  date: string;
+  microcycleId?: string;
+  date: string; // YYYY-MM-DD en zona local
   time: string;
   name: string;
-  type: 'training' | 'prep_competition' | 'main_competition' | 'recovery';
+  type: 'training' | 'prep_competition' | 'main_competition';
   duration: number; // minutos
   intensity: 'low' | 'medium' | 'high' | 'recovery';
-  location: string;
+  location?: string;
   status: 'pending' | 'completed' | 'missed';
-  coach: string;
-  description: string;
-  intervals?: {
-    work: string;
-    rest: string;
-    repetitions: number;
-  }[];
+  coach?: string;
+  description?: string;
+  intervals?: CalendarIntervalSummary[];
+  series?: CalendarSeries[];
   warmup?: string;
   cooldown?: string;
   notes?: string;
@@ -38,222 +56,555 @@ interface TrainingSession {
     pace?: string;
     effort?: string;
   };
+  structureType?: 'simple' | 'advanced';
+  volume?: number;
+  totalDistanceKm?: number;
+  estimatedWorkSeconds?: number;
+  estimatedRecoverySeconds?: number;
 }
 
-export function AthleteCalendar() {
-  const [currentMonth, setCurrentMonth] = useState(new Date(2025, 0, 1)); // Enero 2025
+interface CalendarSeriesInterval {
+  id: string;
+  workSummary: string;
+  repetitions: number;
+  distancePerRepMeters?: number;
+  totalDistanceMeters?: number;
+  targetPace?: string;
+  recoveryTime?: string;
+  intensity?: string;
+  notes?: string;
+}
+
+interface CalendarSeries {
+  id: string;
+  name: string;
+  repetitions: number;
+  recoveryBetweenSets?: string;
+  intervals: CalendarSeriesInterval[];
+  totalDistanceMeters: number;
+}
+
+const startOfMonth = (date: Date): Date => new Date(date.getFullYear(), date.getMonth(), 1);
+
+const formatLocalDate = (date: Date): string => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
+const parseLocalDateString = (value: string): Date => {
+  const [yearStr, monthStr, dayStr] = value.split('-');
+  const year = Number(yearStr) || 0;
+  const month = Number(monthStr) || 1;
+  const day = Number(dayStr) || 1;
+  return new Date(year, month - 1, day);
+};
+
+const formatTimeFromIso = (isoString?: string): string => {
+  if (!isoString) return '--:--';
+  const parsed = new Date(isoString);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toLocaleTimeString('es-ES', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
+  }
+
+  const [, timePartRaw] = isoString.split('T');
+  if (!timePartRaw) return '--:--';
+  const withoutTimezone = timePartRaw.replace('Z', '').split(/[+-]/)[0];
+  const [hour = '00', minute = '00'] = withoutTimezone.split(':');
+  return `${hour.padStart(2, '0')}:${minute.padStart(2, '0')}`;
+};
+
+const parseISODurationToMinutes = (value: string): number => {
+  const match = value.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+  if (!match) return 0;
+  const hours = Number(match[1] ?? 0);
+  const minutes = Number(match[2] ?? 0);
+  const seconds = Number(match[3] ?? 0);
+  return hours * 60 + minutes + seconds / 60;
+};
+
+const parseTimeStringToMinutes = (value?: string | null): number => {
+  if (!value) return 0;
+  const trimmed = value.trim();
+  if (!trimmed) return 0;
+
+  if (/^PT/i.test(trimmed)) {
+    return parseISODurationToMinutes(trimmed);
+  }
+
+  const parts = trimmed.split(':').map(part => part.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    const numeric = Number(trimmed);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  const numbers = parts.map(part => Number(part));
+  if (numbers.some(n => Number.isNaN(n))) {
+    return 0;
+  }
+
+  if (numbers.length === 3) {
+    const [hours, minutes, seconds] = numbers;
+    return hours * 60 + minutes + seconds / 60;
+  }
+
+  if (numbers.length === 2) {
+    const [minutes, seconds] = numbers;
+    return minutes + seconds / 60;
+  }
+
+  return numbers[0];
+};
+
+const parseDurationToSeconds = (value?: string | null): number | null => {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (/^PT/i.test(trimmed)) {
+    const match = trimmed.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+    if (match) {
+      const hours = Number(match[1] ?? 0);
+      const minutes = Number(match[2] ?? 0);
+      const seconds = Number(match[3] ?? 0);
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+    return null;
+  }
+
+  if (trimmed.includes(':')) {
+    const segments = trimmed.split(':');
+    const numbers = segments.map(segment => Number(segment));
+    if (numbers.some(num => Number.isNaN(num))) {
+      return null;
+    }
+
+    if (segments.length === 2) {
+      const [minutes, seconds] = numbers;
+      return minutes * 60 + seconds;
+    }
+
+    if (segments.length === 3) {
+      const [hours, minutes, seconds] = numbers;
+      return hours * 3600 + minutes * 60 + seconds;
+    }
+
+    return null;
+  }
+
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) {
+    return numeric * 60;
+  }
+
+  return null;
+};
+
+const formatSecondsAsClock = (seconds?: number | null): string => {
+  if (seconds === undefined || seconds === null || Number.isNaN(seconds)) {
+    return '—';
+  }
+
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
+
+const formatDurationLabel = (value?: string | null): string => {
+  const seconds = parseDurationToSeconds(value);
+  if (seconds === null) {
+    return value?.trim() || '—';
+  }
+
+  if (seconds >= 3600) {
+    const hours = Math.floor(seconds / 3600);
+    const minutes = Math.floor((seconds % 3600) / 60);
+    const secs = seconds % 60;
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+};
+
+const formatDistanceMeters = (meters?: number): string => {
+  if (meters === undefined || meters === null || Number.isNaN(meters)) return '—';
+  if (meters >= 1000) {
+    return `${(meters / 1000).toFixed(2)} km`;
+  }
+  return `${meters.toFixed(0)} m`;
+};
+
+const formatDistanceKm = (kilometers?: number): string => {
+  if (kilometers === undefined || kilometers === null || Number.isNaN(kilometers)) {
+    return '—';
+  }
+  return `${kilometers.toFixed(2)} km`;
+};
+
+const determineTargetPace = (interval: TrainingIntervalResponseDto): string | undefined => {
+  if (interval.targetSpeed) {
+    return interval.targetSpeed;
+  }
+
+  if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
+    return `${interval.pace} ${interval.paceType}`;
+  }
+
+  if (interval.targetTime) {
+    return formatDurationLabel(interval.targetTime);
+  }
+
+  return undefined;
+};
+
+const formatIntervalIntensityLabel = (intensity?: string): string | undefined => {
+  switch (intensity) {
+    case 'easy':
+      return 'Suave';
+    case 'moderate':
+      return 'Moderada';
+    case 'hard':
+      return 'Alta';
+    case 'very_hard':
+      return 'Muy alta';
+    case 'max':
+      return 'Máxima';
+    default:
+      return undefined;
+  }
+};
+
+const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto): CalendarSeriesInterval => {
+  const repetitions = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
+  const distancePerRepMeters = typeof interval.distance === 'number' ? interval.distance : undefined;
+  const totalDistanceMeters = distancePerRepMeters ? distancePerRepMeters * repetitions : undefined;
+
+  return {
+    id: interval.id?.toString() ?? `interval-${Math.random().toString(36).slice(2, 10)}`,
+    workSummary: summarizeIntervalWork(interval),
+    repetitions,
+    distancePerRepMeters,
+    totalDistanceMeters,
+    targetPace: determineTargetPace(interval),
+    recoveryTime: interval.recoveryTime,
+    intensity: mapIntervalIntensityFromBackend(interval.intensity),
+    notes: interval.description
+  };
+};
+
+const buildSeriesStructure = (session: TrainingSessionResponseDto): CalendarSeries[] => {
+  const isSimpleStructure = session.structureType?.toLowerCase() === 'simple';
+  const fallbackIntervals = session.intervals ?? [];
+  const hasBackendSeries = Array.isArray(session.series) && session.series.length > 0;
+
+  const backendSeries = hasBackendSeries
+    ? session.series!
+    : [{
+        id: 0,
+        name: 'Intervalos Simples',
+        repetitions: 1,
+        recoveryBetweenSets: '00:00',
+        orderIndex: 0,
+        notes: undefined,
+        intervals: fallbackIntervals
+      } as TrainingSessionResponseDto['series'][number]];
+
+  if (isSimpleStructure) {
+    return [];
+  }
+
+  return backendSeries.map((series, index) => {
+    const mappedIntervals = (series.intervals ?? []).map(mapIntervalToCalendarInterval);
+    const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
+    const baseDistance = mappedIntervals.reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
+    const totalDistanceMeters = baseDistance * seriesRepetitions;
+
+    return {
+      id: series.id?.toString() ?? `series-${index}`,
+      name: series.name?.trim() || `Serie ${index + 1}`,
+      repetitions: seriesRepetitions,
+      recoveryBetweenSets: series.recoveryBetweenSets,
+      intervals: mappedIntervals,
+      totalDistanceMeters
+    };
+  });
+};
+
+const calculateEstimatedTimes = (session: TrainingSessionResponseDto): { workSeconds: number; recoverySeconds: number } => {
+  let workSeconds = 0;
+  let recoverySeconds = 0;
+  const structure = session.structureType?.toLowerCase();
+
+  if (structure === 'simple' || structure === 'intervals') {
+    const intervals = session.intervals ?? [];
+    intervals.forEach(interval => {
+      const reps = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
+      const work = parseDurationToSeconds(interval.duration ?? interval.targetTime) ?? 0;
+      const recovery = parseDurationToSeconds(interval.recoveryTime) ?? 0;
+      workSeconds += work * reps;
+      recoverySeconds += recovery * Math.max(reps - 1, 0);
+    });
+  } else {
+    const seriesList = session.series ?? [];
+    seriesList.forEach(series => {
+      const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
+      const betweenSetsRecovery = parseDurationToSeconds(series.recoveryBetweenSets) ?? 0;
+      (series.intervals ?? []).forEach(interval => {
+        const reps = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
+        const work = parseDurationToSeconds(interval.duration ?? interval.targetTime) ?? 0;
+        const recovery = parseDurationToSeconds(interval.recoveryTime) ?? 0;
+        workSeconds += work * reps * seriesRepetitions;
+        recoverySeconds += recovery * Math.max(reps - 1, 0) * seriesRepetitions;
+      });
+      recoverySeconds += betweenSetsRecovery * Math.max(seriesRepetitions - 1, 0);
+    });
+  }
+
+  return { workSeconds, recoverySeconds };
+};
+
+const calculateSessionDistanceKm = (
+  series: CalendarSeries[],
+  simpleIntervals?: CalendarSeriesInterval[],
+  fallbackVolume?: number
+): number | undefined => {
+  const seriesMeters = series.reduce((sum, serie) => sum + serie.totalDistanceMeters, 0);
+  const intervalsMeters = (simpleIntervals ?? []).reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
+  const totalMeters = seriesMeters + intervalsMeters;
+  if (totalMeters > 0) {
+    return totalMeters / 1000;
+  }
+
+  if (fallbackVolume && !Number.isNaN(Number(fallbackVolume))) {
+    return Number(fallbackVolume);
+  }
+
+  return undefined;
+};
+
+const summarizeIntervalWork = (interval: TrainingIntervalResponseDto): string => {
+  if (interval.duration) {
+    return formatDurationLabel(interval.duration);
+  }
+
+  if (interval.targetTime) {
+    return formatDurationLabel(interval.targetTime);
+  }
+
+  if (interval.distance) {
+    return `${interval.distance} m`;
+  }
+
+  if (interval.pace && interval.paceType) {
+    return `${interval.paceType} ${interval.pace}`;
+  }
+
+  if (interval.description) {
+    return interval.description;
+  }
+
+  return 'Intervalo';
+};
+
+const deriveSessionIntensity = (intervals: TrainingIntervalResponseDto[]): 'low' | 'medium' | 'high' | 'recovery' => {
+  const intensities = intervals
+    .map(interval => mapIntervalIntensityFromBackend(interval.intensity))
+    .filter(Boolean) as Array<'easy' | 'moderate' | 'hard' | 'very_hard' | 'max'>;
+
+  if (intensities.some(intensity => intensity === 'max' || intensity === 'very_hard' || intensity === 'hard')) {
+    return 'high';
+  }
+
+  if (intensities.some(intensity => intensity === 'moderate')) {
+    return 'medium';
+  }
+
+  if (intensities.some(intensity => intensity === 'easy')) {
+    return 'low';
+  }
+
+  return 'medium';
+};
+
+const calculateSessionDuration = (intervals: TrainingIntervalResponseDto[]): number => {
+  return intervals.reduce((total, interval) => {
+    const repetitions = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
+    const workMinutes = parseTimeStringToMinutes(interval.duration ?? interval.targetTime) * repetitions;
+    const recoveryMinutes = parseTimeStringToMinutes(interval.recoveryTime) * Math.max(repetitions - 1, 0);
+    return total + workMinutes + recoveryMinutes;
+  }, 0);
+};
+
+const getIntervalsFromSession = (session: TrainingSessionResponseDto): TrainingIntervalResponseDto[] => {
+  const structure = session.structureType?.toLowerCase();
+  if ((structure === 'simple' || structure === 'intervals') && session.intervals && session.intervals.length > 0) {
+    return session.intervals;
+  }
+
+  if (session.series && session.series.length > 0) {
+    return session.series.flatMap(serie => serie.intervals ?? []);
+  }
+
+  return session.intervals ?? [];
+};
+
+const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto): TrainingSession => {
+  const rawDate = session.date?.toString() ?? '';
+  const dateString = rawDate
+    ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate)
+    : formatLocalDate(new Date());
+  const intervals = getIntervalsFromSession(session);
+  const duration = calculateSessionDuration(intervals);
+  const intensity = deriveSessionIntensity(intervals);
+  const series = buildSeriesStructure(session);
+  const simpleIntervalDetails = session.structureType?.toLowerCase() === 'simple'
+    ? intervals.map(mapIntervalToCalendarInterval)
+    : undefined;
+  const totalDistanceKm = calculateSessionDistanceKm(
+    series,
+    simpleIntervalDetails,
+    session.volume ? Number(session.volume) : undefined
+  );
+  const needsFallbackTimes = session.estimatedWorkSeconds == null || session.estimatedRecoverySeconds == null;
+  const fallbackTimes = needsFallbackTimes ? calculateEstimatedTimes(session) : null;
+  const workSeconds = session.estimatedWorkSeconds ?? fallbackTimes?.workSeconds ?? 0;
+  const recoverySeconds = session.estimatedRecoverySeconds ?? fallbackTimes?.recoverySeconds ?? 0;
+
+  return {
+    id: session.id.toString(),
+    microcycleId: session.microcycleId ? session.microcycleId.toString() : undefined,
+    date: dateString,
+    time: formatTimeFromIso(rawDate),
+    name: session.name || 'Sesión sin nombre',
+    type: mapTrainingCategoryFromBackend(session.category) as TrainingSession['type'],
+    duration,
+    intensity,
+    location: undefined,
+      status: 'pending',
+    coach: undefined,
+    description: session.description ?? undefined,
+    intervals: session.structureType?.toLowerCase() === 'simple' && simpleIntervalDetails && simpleIntervalDetails.length > 0
+      ? simpleIntervalDetails.map(detail => ({
+          id: detail.id,
+          work: detail.workSummary,
+          rest: detail.recoveryTime || '00:00',
+          recoveryTime: detail.recoveryTime,
+          repetitions: detail.repetitions ?? 1,
+          distancePerRepMeters: detail.distancePerRepMeters,
+          totalDistanceMeters: detail.totalDistanceMeters,
+          targetPace: detail.targetPace,
+          intensity: detail.intensity,
+          notes: detail.notes
+        }))
+      : undefined,
+    series,
+    warmup: undefined,
+    cooldown: undefined,
+    notes: session.notes ?? undefined,
+    objectives: undefined,
+    equipment: undefined,
+    targetZones: undefined,
+    structureType: (session.structureType as 'simple' | 'advanced') ?? undefined,
+    volume: session.volume ? Number(session.volume) : undefined,
+    totalDistanceKm,
+    estimatedWorkSeconds: workSeconds,
+    estimatedRecoverySeconds: recoverySeconds
+  };
+};
+
+export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps) {
+  const [currentMonth, setCurrentMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
   const [isSessionDetailOpen, setIsSessionDetailOpen] = useState(false);
-  const [completedSessions, setCompletedSessions] = useState<Set<string>>(new Set(['session1', 'session4']));
+  const [trainingSessions, setTrainingSessions] = useState<TrainingSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Datos mock de sesiones - en producción vendrían de la API
-  const mockSessions: TrainingSession[] = [
-    {
-      id: 'session1',
-      microcycleId: 'micro1',
-      date: '2025-01-02',
-      time: '07:00',
-      name: 'Carrera Continua Base',
-      type: 'training',
-      duration: 45,
-      intensity: 'low',
-      location: 'Parque Central',
-      status: 'completed',
-      coach: 'María González',
-      description: 'Carrera continua a ritmo aeróbico para establecer base cardiovascular',
-      warmup: '10 min trote suave + movilidad articular',
-      cooldown: '10 min caminata + estiramientos',
-      objectives: [
-        'Establecer ritmo aeróbico base',
-        'Adaptación cardiovascular gradual',
-        'Técnica de carrera relajada'
-      ],
-      equipment: ['Zapatillas running', 'Hidratación'],
-      targetZones: {
-        heartRate: '130-145 bpm',
-        pace: '5:30-6:00 min/km',
-        effort: '5-6/10'
-      }
-    },
-    {
-      id: 'session2',
-      microcycleId: 'micro1',
-      date: '2025-01-03',
-      time: '18:30',
-      name: 'Técnica + Fuerza',
-      type: 'training',
-      duration: 60,
-      intensity: 'low',
-      location: 'Gimnasio Municipal',
-      status: 'pending',
-      coach: 'María González',
-      description: 'Trabajo técnico de carrera y fortalecimiento general',
-      warmup: '15 min calentamiento dinámico',
-      cooldown: '15 min estiramientos específicos',
-      objectives: [
-        'Mejorar técnica de carrera',
-        'Fortalecimiento core y tren inferior',
-        'Prevención de lesiones'
-      ],
-      equipment: ['Conos', 'Bandas elásticas', 'Colchonetas'],
-      targetZones: {
-        heartRate: '120-140 bpm',
-        pace: 'Variable según ejercicio',
-        effort: '4-5/10'
-      }
-    },
-    {
-      id: 'session3',
-      microcycleId: 'micro1',
-      date: '2025-01-04',
-      time: '07:00',
-      name: 'Carrera Larga Suave',
-      type: 'training',
-      duration: 70,
-      intensity: 'medium',
-      location: 'Ruta Costera',
-      status: 'pending',
-      coach: 'María González',
-      description: 'Primera carrera larga de la temporada, énfasis en resistencia aeróbica',
-      warmup: '10 min trote muy suave',
-      cooldown: '10 min caminata + hidratación',
-      notes: 'Mantener ritmo conversacional durante toda la carrera',
-      objectives: [
-        'Desarrollar resistencia aeróbica',
-        'Adaptación a volumen sostenido',
-        'Economía de carrera'
-      ],
-      equipment: ['Zapatillas trail', 'Hidratación', 'Gels energéticos'],
-      targetZones: {
-        heartRate: '140-155 bpm',
-        pace: '5:15-5:45 min/km',
-        effort: '6-7/10'
-      }
-    },
-    {
-      id: 'session4',
-      microcycleId: 'micro1',
-      date: '2025-01-06',
-      time: '17:00',
-      name: 'Recuperación Activa',
-      type: 'recovery',
-      duration: 30,
-      intensity: 'recovery',
-      location: 'Parque Central',
-      status: 'completed',
-      coach: 'María González',
-      description: 'Carrera suave de recuperación activa',
-      warmup: '5 min caminata dinámica',
-      cooldown: '15 min estiramientos profundos',
-      objectives: [
-        'Recuperación muscular activa',
-        'Mantener movilidad',
-        'Relajación mental'
-      ],
-      equipment: ['Zapatillas suaves'],
-      targetZones: {
-        heartRate: '110-130 bpm',
-        pace: '6:30-7:00 min/km',
-        effort: '3-4/10'
-      }
-    },
-    {
-      id: 'session5',
-      microcycleId: 'micro2',
-      date: '2025-01-09',
-      time: '07:00',
-      name: 'Fartlek Suave',
-      type: 'training',
-      duration: 50,
-      intensity: 'medium',
-      location: 'Parque del Este',
-      status: 'pending',
-      coach: 'María González',
-      description: 'Trabajo de velocidad variable para desarrollo aeróbico',
-      intervals: [
-        { work: '5 min ritmo base', rest: '2 min suave', repetitions: 6 }
-      ],
-      warmup: '15 min calentamiento progresivo',
-      cooldown: '10 min trote suave',
-      objectives: [
-        'Adaptación a cambios de ritmo',
-        'Desarrollo aeróbico con estímulos variados',
-        'Economía de carrera'
-      ],
-      equipment: ['Zapatillas running', 'Reloj GPS'],
-      targetZones: {
-        heartRate: 'Base: 140-150 / Rápido: 160-170 bpm',
-        pace: 'Base: 5:30 / Rápido: 4:50 min/km',
-        effort: '6-8/10'
-      }
-    },
-    {
-      id: 'session6',
-      microcycleId: 'micro5',
-      date: '2025-01-30',
-      time: '07:00',
-      name: 'Intervalos 1000m',
-      type: 'training',
-      duration: 55,
-      intensity: 'high',
-      location: 'Pista de Atletismo',
-      status: 'pending',
-      coach: 'María González',
-      description: 'Trabajo de velocidad aeróbica en pista',
-      intervals: [
-        { work: '1000m', rest: '400m trote', repetitions: 5 }
-      ],
-      warmup: '20 min calentamiento + drills',
-      cooldown: '15 min enfriamiento',
-      objectives: [
-        'Desarrollo de velocidad aeróbica',
-        'Adaptación al trabajo de intervalos',
-        'Economía de carrera a ritmo objetivo'
-      ],
-      equipment: ['Zapatillas pista', 'Cronómetro'],
-      targetZones: {
-        heartRate: '170-180 bpm',
-        pace: '4:20-4:30 min/km',
-        effort: '8-9/10'
-      }
+  useEffect(() => {
+    if (!athleteId) {
+      setTrainingSessions([]);
+      return;
     }
-  ];
 
-  // Funciones para el calendario
-  const generateCalendarDays = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    
-    const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
+    let isMounted = true;
+
+    const fetchSessions = async () => {
+      setIsLoadingSessions(true);
+      try {
+        const sessions = await TrainingSessionService.getTrainingSessionsByAthleteId(athleteId, planningId);
+        if (!isMounted) return;
+
+        const mappedSessions = sessions.map(mapBackendSessionToCalendar);
+        setTrainingSessions(mappedSessions);
+        setLoadError(null);
+      } catch (error) {
+        if (!isMounted) return;
+        setLoadError('No se pudieron cargar las sesiones del atleta.');
+        setTrainingSessions([]);
+      } finally {
+        if (isMounted) {
+          setIsLoadingSessions(false);
+        }
+      }
+    };
+
+    fetchSessions();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [athleteId, planningId]);
+
+  const calendarDays = useMemo(() => {
+    const firstDay = startOfMonth(currentMonth);
     const startDate = new Date(firstDay);
-    startDate.setDate(firstDay.getDate() - firstDay.getDay());
+    const firstWeekday = firstDay.getDay();
+    startDate.setDate(firstDay.getDate() - firstWeekday);
     
-    const days = [];
-    const currentDate = new Date(startDate);
-    
+    const days: Date[] = [];
     for (let i = 0; i < 42; i++) {
-      days.push(new Date(currentDate));
-      currentDate.setDate(currentDate.getDate() + 1);
+      days.push(new Date(startDate));
+      startDate.setDate(startDate.getDate() + 1);
     }
     
     return days;
-  };
+  }, [currentMonth]);
 
+  // Funciones para el calendario
   const getSessionsForDay = (date: Date) => {
-    const dateString = date.toISOString().split('T')[0];
-    return mockSessions.filter(session => session.date === dateString);
+    const dateKey = formatLocalDate(date);
+    return trainingSessions.filter(session => session.date === dateKey);
   };
 
   const navigateMonth = (direction: 'prev' | 'next') => {
-    const newMonth = new Date(currentMonth);
+    setCurrentMonth(prev => {
+      const next = new Date(prev);
     if (direction === 'prev') {
-      newMonth.setMonth(currentMonth.getMonth() - 1);
+        next.setMonth(prev.getMonth() - 1);
     } else {
-      newMonth.setMonth(currentMonth.getMonth() + 1);
+        next.setMonth(prev.getMonth() + 1);
     }
-    setCurrentMonth(newMonth);
+      return startOfMonth(next);
+    });
+  };
+
+  const goToToday = () => {
+    setCurrentMonth(startOfMonth(new Date()));
   };
 
   const getIntensityColor = (intensity: string) => {
@@ -293,7 +644,7 @@ export function AthleteCalendar() {
   };
 
   const formatSessionDate = (dateString: string) => {
-    const date = new Date(dateString);
+    const date = parseLocalDateString(dateString);
     return date.toLocaleDateString('es-ES', {
       weekday: 'long',
       day: 'numeric',
@@ -306,29 +657,13 @@ export function AthleteCalendar() {
     setIsSessionDetailOpen(true);
   };
 
-  const handleToggleCompleted = (sessionId: string) => {
-    if (completedSessions.has(sessionId)) {
-      setCompletedSessions(prev => {
-        const newSet = new Set(prev);
-        newSet.delete(sessionId);
-        return newSet;
-      });
-      toast.info('Sesión desmarcada como completada');
-    } else {
-      setCompletedSessions(prev => new Set([...prev, sessionId]));
-      toast.success('Sesión marcada como completada', {
-        description: 'Recuerda: para registrar tu rendimiento, ve a "Subir Entrenamientos"'
-      });
-    }
-    setIsSessionDetailOpen(false);
-  };
-
   // Estadísticas rápidas
-  const totalSessions = mockSessions.length;
-  const completedCount = mockSessions.filter(s => completedSessions.has(s.id)).length;
+  const totalSessions = trainingSessions.length;
+  const completedCount = trainingSessions.filter(s => s.status === 'completed').length;
   const pendingCount = totalSessions - completedCount;
-  const thisMonthSessions = mockSessions.filter(s => {
-    const sessionDate = new Date(s.date);
+  const thisMonthSessions = trainingSessions.filter(s => {
+    if (!s.date) return false;
+    const sessionDate = parseLocalDateString(s.date);
     return sessionDate.getMonth() === currentMonth.getMonth() && 
            sessionDate.getFullYear() === currentMonth.getFullYear();
   }).length;
@@ -342,6 +677,12 @@ export function AthleteCalendar() {
           Vista completa de todas tus sesiones programadas
         </p>
       </div>
+
+      {loadError && (
+        <Alert variant="destructive">
+          <AlertDescription>{loadError}</AlertDescription>
+        </Alert>
+      )}
 
       {/* Estadísticas rápidas */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -406,7 +747,7 @@ export function AthleteCalendar() {
                     selected={currentMonth}
                     onSelect={(date) => {
                       if (date) {
-                        setCurrentMonth(date);
+                        setCurrentMonth(startOfMonth(date));
                         setIsDatePickerOpen(false);
                       }
                     }}
@@ -414,6 +755,9 @@ export function AthleteCalendar() {
                   />
                 </PopoverContent>
               </Popover>
+              <Button variant="outline" size="sm" onClick={goToToday}>
+                Hoy
+              </Button>
               <Button variant="outline" size="sm" onClick={() => navigateMonth('next')}>
                 <ChevronRight className="w-4 h-4" />
               </Button>
@@ -421,6 +765,13 @@ export function AthleteCalendar() {
           </div>
         </CardHeader>
         <CardContent>
+          {isLoadingSessions && (
+            <div className="flex items-center justify-center gap-2 py-4 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Cargando sesiones...</span>
+            </div>
+          )}
+
           {/* Encabezados de días de la semana */}
           <div className="grid grid-cols-7 gap-1 mb-2">
             {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map(day => (
@@ -432,7 +783,7 @@ export function AthleteCalendar() {
 
           {/* Días del calendario */}
           <div className="grid grid-cols-7 gap-1">
-            {generateCalendarDays().map((date, index) => {
+            {calendarDays.map((date, index) => {
               const sessions = getSessionsForDay(date);
               const isCurrentMonth = date.getMonth() === currentMonth.getMonth();
               const isToday = date.toDateString() === new Date().toDateString();
@@ -461,7 +812,7 @@ export function AthleteCalendar() {
                         <div className="flex items-center gap-1 mb-1">
                           <div className={`w-2 h-2 rounded-full ${getIntensityColor(session.intensity)}`}></div>
                           <span className="font-medium truncate">{session.time}</span>
-                          {completedSessions.has(session.id) && (
+                          {session.status === 'completed' && (
                             <CheckCircle className="w-3 h-3 text-green-600 ml-auto" />
                           )}
                         </div>
@@ -480,6 +831,12 @@ export function AthleteCalendar() {
               );
             })}
           </div>
+
+          {!isLoadingSessions && trainingSessions.length === 0 && (
+            <div className="text-sm text-muted-foreground text-center py-4">
+              No hay sesiones asignadas para mostrar.
+            </div>
+          )}
 
           {/* Leyenda de intensidades */}
           <div className="flex items-center justify-center gap-6 mt-6 pt-4 border-t">
@@ -513,7 +870,8 @@ export function AthleteCalendar() {
                 {selectedSession.name}
               </DialogTitle>
               <DialogDescription>
-                {formatSessionDate(selectedSession.date)} • {selectedSession.time} • {selectedSession.location}
+                {formatSessionDate(selectedSession.date)} • {selectedSession.time || '--:--'}
+                {selectedSession.location ? ` • ${selectedSession.location}` : ''}
               </DialogDescription>
             </DialogHeader>
 
@@ -521,8 +879,10 @@ export function AthleteCalendar() {
               {/* Información básica */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <h4 className="font-medium mb-2">Duración</h4>
-                  <p className="text-sm text-muted-foreground">{formatTime(selectedSession.duration)}</p>
+                  <h4 className="font-medium mb-2">Distancia estimada</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDistanceKm(selectedSession.totalDistanceKm ?? selectedSession.volume)}
+                  </p>
                 </div>
                 <div>
                   <h4 className="font-medium mb-2">Intensidad</h4>
@@ -532,12 +892,36 @@ export function AthleteCalendar() {
                      selectedSession.intensity === 'high' ? 'Alta' : 'Recuperación'}
                   </p>
                 </div>
+                <div>
+                  <h4 className="font-medium mb-2">Estructura</h4>
+                  <p className="text-sm text-muted-foreground capitalize">
+                    {selectedSession.structureType === 'advanced' ? 'Series con intervalos' : 'Intervalos simples'}
+                  </p>
+                </div>
+                <div>
+                  <h4 className="font-medium mb-2">Categoría</h4>
+                  <p className="text-sm text-muted-foreground capitalize">
+                    {getSessionTypeLabel(selectedSession.type)}
+                  </p>
+                </div>
+                <div>
+                  <h4 className="font-medium mb-2">Trabajo estimado</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {formatSecondsAsClock(selectedSession.estimatedWorkSeconds)}
+                  </p>
+                </div>
+                <div>
+                  <h4 className="font-medium mb-2">Recuperación estimada</h4>
+                  <p className="text-sm text-muted-foreground">
+                    {formatSecondsAsClock(selectedSession.estimatedRecoverySeconds)}
+                  </p>
+                </div>
               </div>
 
               {/* Descripción */}
               <div>
                 <h4 className="font-medium mb-2">Descripción</h4>
-                <p className="text-sm text-muted-foreground">{selectedSession.description}</p>
+                <p className="text-sm text-muted-foreground">{selectedSession.description || 'Sin descripción disponible.'}</p>
               </div>
 
               {/* Calentamiento */}
@@ -548,8 +932,133 @@ export function AthleteCalendar() {
                 </div>
               )}
 
-              {/* Intervalos */}
-              {selectedSession.intervals && selectedSession.intervals.length > 0 && (
+              {/* Series e intervalos */}
+              {selectedSession.structureType === 'advanced' && selectedSession.series && selectedSession.series.length > 0 ? (
+                <div>
+                  <h4 className="font-medium mb-3">Series e intervalos</h4>
+                  <Accordion
+                    type="multiple"
+                    defaultValue={selectedSession.series.map((series, index) => series.id || `series-${index}`)}
+                    className="space-y-2"
+                  >
+                    {selectedSession.series.map((series, index) => (
+                      <AccordionItem key={series.id || `series-${index}`} value={series.id || `series-${index}`}>
+                        <AccordionTrigger className="w-full">
+                          <div className="w-full flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-left">
+                            <div>
+                              <p className="font-medium">{series.name}</p>
+                              <p className="text-sm text-muted-foreground">Serie {index + 1}</p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <Badge variant="secondary">Reps: {series.repetitions}</Badge>
+                              <Badge variant="secondary">Dist: {formatDistanceMeters(series.totalDistanceMeters)}</Badge>
+                              {series.recoveryBetweenSets && (
+                                <Badge variant="outline">
+                                  Recup. series: {formatDurationLabel(series.recoveryBetweenSets)}
+                                </Badge>
+                              )}
+                            </div>
+                          </div>
+                        </AccordionTrigger>
+                        <AccordionContent>
+                          <div className="space-y-3 pt-2">
+                            {series.intervals.length === 0 && (
+                              <p className="text-sm text-muted-foreground">
+                                Esta serie no contiene intervalos configurados.
+                              </p>
+                            )}
+                            {series.intervals.map((interval, intervalIndex) => (
+                              <div key={interval.id || `interval-${intervalIndex}`} className="rounded-lg border p-4 space-y-2">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                  <div>
+                                    <p className="font-medium">Intervalo {intervalIndex + 1}: {interval.workSummary}</p>
+                                    <p className="text-sm text-muted-foreground">
+                                      Repeticiones: {interval.repetitions}
+                                    </p>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2">
+                                    {interval.targetPace && (
+                                      <Badge variant="outline">Ritmo: {interval.targetPace}</Badge>
+                                    )}
+                                    {interval.intensity && (
+                                      <Badge variant="outline">
+                                        Intensidad: {formatIntervalIntensityLabel(interval.intensity)}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                                  <div>
+                                    Distancia por rep.: {formatDistanceMeters(interval.distancePerRepMeters)}
+                                  </div>
+                                  <div>
+                                    Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
+                                  </div>
+                                  {interval.recoveryTime && (
+                                    <div>
+                                      Recuperación: {formatDurationLabel(interval.recoveryTime)}
+                                    </div>
+                                  )}
+                                </div>
+                                {interval.notes && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Notas: {interval.notes}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </AccordionContent>
+                      </AccordionItem>
+                    ))}
+                  </Accordion>
+                </div>
+              ) : selectedSession.structureType !== 'advanced' && selectedSession.intervals && selectedSession.intervals.length > 0 ? (
+                <div>
+                  <h4 className="font-medium mb-3">Intervalos</h4>
+                  <div className="space-y-3">
+                    {selectedSession.intervals.map((interval, index) => (
+                      <div key={interval.id || `simple-interval-${index}`} className="border rounded-lg p-4 space-y-2">
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                          <div>
+                            <p className="font-medium">Intervalo {index + 1}: {interval.work}</p>
+                            <p className="text-sm text-muted-foreground">
+                              Repeticiones: {interval.repetitions}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {interval.targetPace && (
+                              <Badge variant="outline">Ritmo: {interval.targetPace}</Badge>
+                            )}
+                            {interval.intensity && (
+                              <Badge variant="outline">
+                                Intensidad: {formatIntervalIntensityLabel(interval.intensity)}
+                              </Badge>
+                            )}
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                          <div>
+                            Distancia por rep.: {formatDistanceMeters(interval.distancePerRepMeters)}
+                          </div>
+                          <div>
+                            Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
+                          </div>
+                          {interval.recoveryTime && (
+                            <div>
+                              Recuperación: {formatDurationLabel(interval.recoveryTime)}
+                            </div>
+                          )}
+                        </div>
+                        {interval.notes && (
+                          <p className="text-sm text-muted-foreground">Notas: {interval.notes}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                selectedSession.intervals && selectedSession.intervals.length > 0 && (
                 <div>
                   <h4 className="font-medium mb-2">Intervalos</h4>
                   <div className="space-y-2">
@@ -565,6 +1074,7 @@ export function AthleteCalendar() {
                     ))}
                   </div>
                 </div>
+                )
               )}
 
               {/* Enfriamiento */}
@@ -636,26 +1146,17 @@ export function AthleteCalendar() {
             </div>
 
             <DialogFooter className="flex-col sm:flex-col gap-4">
-              {selectedSession.status === 'pending' && (
-                <Alert className="bg-blue-50 border-blue-200">
-                  <Info className="h-4 w-4 text-blue-600" />
-                  <AlertDescription className="text-sm text-blue-900">
-                    <strong>Nota importante:</strong> Marcar una sesión como completada registrará que la realizaste, pero{' '}
-                    <strong>no subirá datos de rendimiento</strong>. Para registrar métricas y rendimiento, ve a{' '}
-                    <strong>"Subir Entrenamientos"</strong> y asocia la sesión al momento de subir los datos.
-                  </AlertDescription>
-                </Alert>
-              )}
-              
+              <Alert className="bg-blue-50 border-blue-200">
+                <Info className="h-4 w-4 text-blue-600" />
+                <AlertDescription className="text-sm text-blue-900">
+                  Esta vista es informativa. Para marcar la sesión como completada y cargar los resultados ve a <span className="font-semibold">"Subir Entrenamientos"</span> y asocia los datos al momento de subirlos.
+                </AlertDescription>
+              </Alert>
+
               <div className="flex w-full justify-end gap-2">
                 <Button variant="outline" onClick={() => setIsSessionDetailOpen(false)}>
                   Cerrar
                 </Button>
-                {selectedSession.status === 'pending' && (
-                  <Button onClick={() => handleToggleCompleted(selectedSession.id)}>
-                    {completedSessions.has(selectedSession.id) ? 'Desmarcar Completa' : 'Marcar Completa'}
-                  </Button>
-                )}
               </div>
             </DialogFooter>
           </DialogContent>

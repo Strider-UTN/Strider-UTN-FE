@@ -11,6 +11,7 @@ import { AthletePerformanceView } from './AthletePerformanceView';
 import { MedicalClearanceUpload } from './MedicalClearanceUpload';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Separator } from './ui/separator';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { 
   Search, 
   Filter, 
@@ -40,6 +41,7 @@ import {
 import { toast } from 'sonner';
 import { CoachAthleteRelationshipService, AthleteResponseDto } from '../services/coachAthleteRelationshipService';
 import { Loader2, UserX, Trash2 } from 'lucide-react';
+import { CoachInjuryService, type CoachRecentInjury } from '../services/coachInjuryService';
 
 interface AthleteProfile {
   id: string;
@@ -84,6 +86,8 @@ export function IndividualAthletesManagement() {
   const [athletesWithRelationships, setAthletesWithRelationships] = useState<Map<string, number>>(new Map()); // Map<athleteId, relationshipId>
   const [isLoading, setIsLoading] = useState(true);
   const [isRemovingRelationship, setIsRemovingRelationship] = useState<string | null>(null);
+  const [recentInjuries, setRecentInjuries] = useState<CoachRecentInjury[]>([]);
+  const [isLoadingRecentInjuries, setIsLoadingRecentInjuries] = useState(true);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -157,7 +161,46 @@ export function IndividualAthletesManagement() {
     };
 
     loadAthletes();
+    const loadCoachInjuries = async () => {
+      setIsLoadingRecentInjuries(true);
+      try {
+        const injuries = await CoachInjuryService.getRecentInjuries();
+        setRecentInjuries(injuries);
+      } catch (error) {
+        console.error('Error al cargar lesiones recientes:', error);
+        toast.error('No se pudieron cargar las lesiones recientes de tus atletas');
+      } finally {
+        setIsLoadingRecentInjuries(false);
+      }
+    };
+
+    loadCoachInjuries();
   }, []);
+
+  useEffect(() => {
+    if (recentInjuries.length === 0) {
+      setAthletes(prev => prev.map(athlete =>
+        athlete.status === 'Lesionado'
+          ? { ...athlete, status: 'Activo' as const }
+          : athlete
+      ));
+      return;
+    }
+
+    const injuredIds = new Set(recentInjuries.map(injury => injury.athleteId.toString()));
+
+    setAthletes(prev => prev.map(athlete => {
+      if (injuredIds.has(athlete.id) && athlete.status !== 'Lesionado') {
+        return { ...athlete, status: 'Lesionado' as const };
+      }
+
+      if (!injuredIds.has(athlete.id) && athlete.status === 'Lesionado') {
+        return { ...athlete, status: 'Activo' as const };
+      }
+
+      return athlete;
+    }));
+  }, [recentInjuries]);
 
   // Función para recargar atletas (usada después de eliminar o invitar)
   const reloadAthletes = async () => {
@@ -350,6 +393,53 @@ export function IndividualAthletesManagement() {
     return new Date(dateString).toLocaleDateString('es-ES');
   };
 
+  const getSeverityBadge = (severity: string): string => {
+    switch (severity.toLowerCase()) {
+      case 'mild':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'moderate':
+        return 'bg-orange-100 text-orange-800';
+      case 'severe':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const mapSeverityLabel = (severity: string): string => {
+    switch (severity.toLowerCase()) {
+      case 'mild':
+        return 'Leve';
+      case 'moderate':
+        return 'Moderada';
+      case 'severe':
+        return 'Grave';
+      default:
+        return severity;
+    }
+  };
+
+  const mapImpactLabel = (impact?: string | null): string => {
+    if (!impact) {
+      return 'Impacto no informado';
+    }
+
+    switch (impact.toLowerCase()) {
+      case 'none':
+        return 'Ninguno';
+      case 'low':
+        return 'Bajo';
+      case 'moderate':
+        return 'Moderado';
+      case 'high':
+        return 'Alto';
+      case 'full':
+        return 'Completo';
+      default:
+        return impact;
+    }
+  };
+
   // Si se está mostrando la vista de rendimiento, renderizar AthletePerformanceView
   if (showPerformanceView && athleteForPerformance) {
     return (
@@ -378,6 +468,70 @@ export function IndividualAthletesManagement() {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-lg">
+              <AlertCircle className="w-4 h-4 text-red-600" />
+              Lesiones activas en tus atletas
+            </CardTitle>
+            <CardDescription>
+              Monitorea las lesiones en curso y el impacto estimado en los entrenamientos.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoadingRecentInjuries ? (
+            <div className="flex items-center justify-center py-6 text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              Cargando lesiones recientes...
+            </div>
+          ) : recentInjuries.length === 0 ? (
+            <div className="text-sm text-muted-foreground py-2">
+              No hay atletas con lesiones activas.
+            </div>
+          ) : (
+            <Accordion type="single" collapsible defaultValue="recent-injuries">
+              <AccordionItem value="recent-injuries">
+                <AccordionTrigger>
+                  {`Lesiones activas (${recentInjuries.length})`}
+                </AccordionTrigger>
+                <AccordionContent>
+                  <div className="space-y-3 pt-2">
+                    {recentInjuries.map(injury => (
+                      <div
+                        key={injury.injuryId}
+                        className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-lg p-4"
+                      >
+                        <div>
+                          <p className="font-semibold text-foreground">
+                            {injury.athleteName}
+                          </p>
+                          <p className="text-sm text-muted-foreground">
+                            {injury.title} · Registrada el {new Date(injury.createdAt).toLocaleDateString('es-ES')}
+                          </p>
+                          <div className="flex flex-wrap gap-2 mt-2">
+                            <Badge className={getSeverityBadge(injury.severity)}>
+                              {mapSeverityLabel(injury.severity)}
+                            </Badge>
+                            <Badge variant="outline" className="text-xs">
+                              Impacto en entrenamiento: {mapImpactLabel(injury.impactOnTraining)}
+                            </Badge>
+                          </div>
+                        </div>
+                        <p className="text-sm text-muted-foreground">
+                          Recuperación estimada: {injury.recoveryEstimateDate ? new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES') : 'No informada'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Medical Clearance Modal */}
       {athleteForMedicalClearance && (
         <MedicalClearanceUpload

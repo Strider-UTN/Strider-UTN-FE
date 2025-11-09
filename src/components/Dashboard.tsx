@@ -59,6 +59,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { toast } from 'sonner';
+import { AuthService } from '../services/authService';
 
 interface User {
   id: string;
@@ -628,9 +629,15 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   };
 
   const renderAthleteContent = () => {
+    const athleteIdFromToken = AuthService.getCurrentUserId();
+    const fallbackId = Number(user.id);
+    const resolvedAthleteId = typeof athleteIdFromToken === 'number' && !Number.isNaN(athleteIdFromToken)
+      ? athleteIdFromToken
+      : (!Number.isNaN(fallbackId) ? fallbackId : 0);
+
     switch (athleteActiveView) {
       case 'calendar':
-        return <AthleteCalendar />;
+        return <AthleteCalendar athleteId={resolvedAthleteId} />;
       case 'training-plan':
         return <AthleteTrainingPlan />;
       case 'upload-training':

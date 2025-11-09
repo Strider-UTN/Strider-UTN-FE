@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -22,6 +22,18 @@ import { mapTrainingTypeFromBackend } from '../utils/trainingTypeMapper';
 import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
 import { mapTrainingCategoryFromBackend, mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
 import { mapIntervalIntensityToBackend, mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
+import { CoachInjuryService, type CoachRecentInjury } from '../services/coachInjuryService';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface Athlete {
   id: string;
@@ -164,6 +176,23 @@ export function CreateTrainingSessionModal({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('');
   const [showTemplateSelector, setShowTemplateSelector] = useState(false);
+  const [activeInjuries, setActiveInjuries] = useState<Map<string, CoachRecentInjury>>(new Map());
+  const [isLoadingInjuries, setIsLoadingInjuries] = useState(false);
+  const [pendingInjurySelection, setPendingInjurySelection] = useState<{ athleteId: string; injury: CoachRecentInjury } | null>(null);
+
+  const handleCancelInjurySelection = () => {
+    setPendingInjurySelection(null);
+  };
+
+  const handleConfirmInjurySelection = () => {
+    if (!pendingInjurySelection) {
+      return;
+    }
+
+    const { athleteId } = pendingInjurySelection;
+    setSelectedAthletes(prev => (prev.includes(athleteId) ? prev : [...prev, athleteId]));
+    setPendingInjurySelection(null);
+  };
   
   // Estado para plantillas desde el backend
   const [templates, setTemplates] = useState<TrainingTemplate[]>([]);
@@ -188,6 +217,9 @@ export function CreateTrainingSessionModal({
   useEffect(() => {
     if (isOpen && planningId) {
       loadCycles();
+    }
+    if (isOpen) {
+      loadActiveInjuries();
     }
   }, [isOpen, planningId]);
   
@@ -277,6 +309,24 @@ export function CreateTrainingSessionModal({
       toast.error('Error al cargar información de ciclos');
     } finally {
       setIsLoadingCycles(false);
+    }
+  };
+
+  const loadActiveInjuries = async () => {
+    setIsLoadingInjuries(true);
+    try {
+      const injuries = await CoachInjuryService.getRecentInjuries();
+      const map = new Map<string, CoachRecentInjury>();
+      injuries.forEach(injury => {
+        map.set(injury.athleteId.toString(), injury);
+      });
+      setActiveInjuries(map);
+    } catch (error) {
+      console.error('Error al cargar lesiones activas', error);
+      toast.error('No se pudieron obtener las lesiones activas de tus atletas');
+      setActiveInjuries(new Map());
+    } finally {
+      setIsLoadingInjuries(false);
     }
   };
   
@@ -635,41 +685,78 @@ export function CreateTrainingSessionModal({
     onClose();
   };
 
-  const handleAthleteToggle = (athleteId: string) => {
-    setSelectedAthletes(prev => 
-      prev.includes(athleteId)
-        ? prev.filter(id => id !== athleteId)
-        : [...prev, athleteId]
-    );
+  const handleAthleteToggle = (athleteId: string, options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+
+    setSelectedAthletes(prev => {
+      if (prev.includes(athleteId)) {
+        return prev.filter(id => id !== athleteId);
+      }
+
+      const injury = getAthleteInjury(athleteId);
+      const sessionDate = getSessionDateValue(formData.date);
+
+      if (!canAssignInjury(injury, sessionDate)) {
+        if (!silent) {
+          toast.error(`No puedes asignar a ${injury?.athleteName ?? 'el atleta'} porque su lesión tiene impacto completo.`);
+        }
+        return prev;
+      }
+
+      if (injury && !silent) {
+        setPendingInjurySelection({ athleteId, injury });
+        return prev;
+      }
+
+      return [...prev, athleteId];
+    });
   };
 
   const handleGroupToggle = (groupId: string) => {
     const group = groups.find(g => g.id === groupId);
     if (!group) return;
 
-    const allGroupAthletesSelected = group.athleteIds.every(id => selectedAthletes.includes(id));
+    const sessionDate = getSessionDateValue(formData.date);
+    const assignableAthletes = group.athleteIds.filter(id => canAssignInjury(getAthleteInjury(id), sessionDate));
+    const allGroupAthletesSelected = assignableAthletes.every(id => selectedAthletes.includes(id));
     
     if (allGroupAthletesSelected) {
       setSelectedAthletes(prev => prev.filter(id => !group.athleteIds.includes(id)));
     } else {
-      setSelectedAthletes(prev => {
-        const newSelection = [...prev];
-        group.athleteIds.forEach(id => {
-          if (!newSelection.includes(id)) {
-            newSelection.push(id);
-          }
-        });
-        return newSelection;
+      assignableAthletes.forEach(id => {
+        if (!selectedAthletes.includes(id)) {
+          handleAthleteToggle(id, { silent: true });
+        }
       });
     }
   };
 
   const handleSelectAllAthletes = () => {
-    if (!athletes || !Array.isArray(athletes)) {
+    if (!athletes || !Array.isArray(athletes) || visibleAthleteIds.length === 0) {
       return;
     }
-    const allSelected = selectedAthletes.length === athletes.length;
-    setSelectedAthletes(allSelected ? [] : athletes.map(a => a.id));
+    const sessionDate = getSessionDateValue(formData.date);
+    const visibleAthletes = visibleAthleteIds
+      .map(id => athletes.find(athlete => athlete.id === id))
+      .filter((athlete): athlete is Athlete => Boolean(athlete));
+
+    const selectableAthletes = visibleAthletes.filter(athlete => canAssignInjury(getAthleteInjury(athlete.id), sessionDate));
+    const allVisibleSelected = visibleAthleteIds.every(id => selectedAthletes.includes(id));
+
+    if (allVisibleSelected) {
+      setSelectedAthletes(prev => prev.filter(id => !visibleAthleteIds.includes(id)));
+    } else {
+      selectableAthletes.forEach(athlete => {
+        if (!selectedAthletes.includes(athlete.id)) {
+          handleAthleteToggle(athlete.id, { silent: true });
+        }
+      });
+
+      const blockedAthletes = visibleAthletes.filter(athlete => !canAssignInjury(getAthleteInjury(athlete.id), sessionDate));
+      if (blockedAthletes.length > 0) {
+        toast.info(`Se omitieron ${blockedAthletes.length} atleta(s) con impacto completo.`);
+      }
+    }
   };
 
   const handleUseTemplate = () => {
@@ -912,6 +999,94 @@ export function CreateTrainingSessionModal({
     return `${paceMinutes}:${paceSeconds.toString().padStart(2, '0')}`;
   };
 
+  const severityBadgeClass = (severity?: string): string => {
+    switch (severity?.toLowerCase()) {
+      case 'mild':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'moderate':
+        return 'bg-orange-100 text-orange-800';
+      case 'severe':
+        return 'bg-red-100 text-red-800';
+      default:
+        return 'bg-gray-100 text-gray-800';
+    }
+  };
+
+  const severityLabel = (severity?: string): string => {
+    switch (severity?.toLowerCase()) {
+      case 'mild':
+        return 'Leve';
+      case 'moderate':
+        return 'Moderada';
+      case 'severe':
+        return 'Grave';
+      default:
+        return severity ?? 'Desconocida';
+    }
+  };
+
+  const impactLabel = (impact?: string | null): string => {
+    switch (impact?.toLowerCase()) {
+      case 'none':
+        return 'Ninguno';
+      case 'low':
+        return 'Bajo';
+      case 'moderate':
+        return 'Moderado';
+      case 'high':
+        return 'Alto';
+      case 'full':
+        return 'Completo';
+      default:
+        return impact ?? 'No informado';
+    }
+  };
+
+  const mapImpactLabel = (impact?: string | null): string => {
+    switch (impact?.toLowerCase()) {
+      case 'none':
+        return 'Ninguno';
+      case 'low':
+        return 'Bajo';
+      case 'moderate':
+        return 'Moderado';
+      case 'high':
+        return 'Alto';
+      case 'full':
+        return 'Completo';
+      default:
+        return impact ?? 'No informado';
+    }
+  };
+
+  const getSessionDateValue = (dateString?: string): Date | null => {
+    if (!dateString) return null;
+    const parts = dateString.split('-').map(Number);
+    if (parts.length !== 3 || parts.some(Number.isNaN)) return null;
+    const [year, month, day] = parts;
+    const result = new Date(year, month - 1, day);
+    if (Number.isNaN(result.getTime())) return null;
+    result.setHours(0, 0, 0, 0);
+    return result;
+  };
+
+  const isInjurySelectionBlocked = (injury: CoachRecentInjury | undefined, sessionDate: Date | null): boolean => {
+    if (!injury) return false;
+    if (injury.impactOnTraining?.toLowerCase() !== 'full') return false;
+    if (!sessionDate) return true;
+    if (!injury.recoveryEstimateDate) return true;
+    const recovery = new Date(injury.recoveryEstimateDate);
+    if (Number.isNaN(recovery.getTime())) return true;
+    recovery.setHours(0, 0, 0, 0);
+    return !(recovery < sessionDate);
+  };
+
+  const canAssignInjury = (injury: CoachRecentInjury | undefined, sessionDate: Date | null): boolean => {
+    if (!injury) return true;
+    if (injury.impactOnTraining?.toLowerCase() !== 'full') return true;
+    return !isInjurySelectionBlocked(injury, sessionDate);
+  };
+
   const populateSessionFromData = (sessionData: TrainingSessionResponseDto | TrainingSession) => {
     const rawDate = sessionData.date || '';
     const dateStr = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate;
@@ -970,6 +1145,42 @@ export function CreateTrainingSessionModal({
       }
     }, 100);
   };
+
+  const getAthleteInjury = (athleteId: string): CoachRecentInjury | undefined => {
+    return activeInjuries.get(athleteId);
+  };
+
+  const sessionDate = getSessionDateValue(formData.date);
+  const visibleAthleteIds = useMemo(() => {
+    if (!athletes || athletes.length === 0) {
+      return [] as string[];
+    }
+
+    if (!searchTerm.trim()) {
+      return athletes.map(athlete => athlete.id);
+    }
+
+    const ids = new Set<string>();
+    filteredAthletes.forEach(athlete => ids.add(athlete.id));
+    return Array.from(ids);
+  }, [athletes, filteredAthletes, searchTerm]);
+
+  const visibleInjuries = visibleAthleteIds
+    .map(athleteId => activeInjuries.get(athleteId))
+    .filter((injury): injury is CoachRecentInjury => Boolean(injury));
+
+  const blockedInjuriesCount = visibleInjuries.filter(injury => isInjurySelectionBlocked(injury, sessionDate)).length;
+  const hasBlockedInjuries = blockedInjuriesCount > 0;
+  const hasAnyInjuries = visibleInjuries.length > 0;
+
+  if (isHydratingSession) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16">
+        <Loader2 className="w-10 h-10 animate-spin text-muted-foreground" />
+        <p className="text-muted-foreground mt-4">Cargando sesión...</p>
+      </div>
+    );
+  }
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
@@ -1401,13 +1612,39 @@ export function CreateTrainingSessionModal({
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button
-                    onClick={handleSelectAllAthletes}
-                    variant="outline"
-                    size="sm"
-                  >
-                    {selectedAthletes.length === athletes.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
-                  </Button>
+                  {hasAnyInjuries ? (
+                     <TooltipProvider delayDuration={200}>
+                       <Tooltip>
+                         <TooltipTrigger asChild>
+                           <span className="inline-flex">
+                             <Button
+                               onClick={handleSelectAllAthletes}
+                               variant="outline"
+                               size="sm"
+                               disabled
+                             >
+                               {visibleAthleteIds.every(id => selectedAthletes.includes(id)) ? 'Deseleccionar visibles' : 'Seleccionar visibles'}
+                             </Button>
+                           </span>
+                         </TooltipTrigger>
+                         <TooltipContent>
+                           {blockedInjuriesCount > 0
+                             ? blockedInjuriesCount === 1
+                               ? 'No puedes seleccionar todos porque hay un atleta con lesión que requiere revisión individual.'
+                               : `No puedes seleccionar todos porque hay ${blockedInjuriesCount} atletas con lesiones que requieren revisión individual.`
+                             : 'No puedes seleccionar todos porque hay atletas lesionados. Revisá cada caso y seleccioná individualmente.'}
+                         </TooltipContent>
+                       </Tooltip>
+                     </TooltipProvider>
+                   ) : (
+                    <Button
+                      onClick={handleSelectAllAthletes}
+                      variant="outline"
+                      size="sm"
+                    >
+                      {selectedAthletes.length === athletes.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+                    </Button>
+                  )}
                   <Badge variant="secondary">
                     {selectedAthletes.length} seleccionado{selectedAthletes.length !== 1 ? 's' : ''}
                   </Badge>
@@ -1433,7 +1670,9 @@ export function CreateTrainingSessionModal({
                   <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Por Sedes</h4>
                   {filteredGroups.map(group => {
                     const groupAthletes = athletes?.filter(athlete => athlete.groupId === group.id) || [];
-                    const allGroupAthletesSelected = group.athleteIds.every(id => selectedAthletes.includes(id));
+                    const sessionDateForGroup = sessionDate;
+                    const assignableAthletes = group.athleteIds.filter(id => canAssignInjury(getAthleteInjury(id), sessionDateForGroup));
+                    const allGroupAthletesSelected = assignableAthletes.every(id => selectedAthletes.includes(id));
                     const someGroupAthletesSelected = group.athleteIds.some(id => selectedAthletes.includes(id));
 
                     return (
@@ -1467,26 +1706,65 @@ export function CreateTrainingSessionModal({
                         </CardHeader>
                         <CardContent className="pt-0">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                            {groupAthletes.map(athlete => (
-                              <div
-                                key={athlete.id}
-                                className="flex items-center gap-3 p-2 rounded hover:bg-muted/30 cursor-pointer"
-                                onClick={() => handleAthleteToggle(athlete.id)}
-                              >
-                                <Checkbox 
-                                  checked={selectedAthletes.includes(athlete.id)}
-                                  onChange={() => handleAthleteToggle(athlete.id)}
-                                />
-                                <div className="flex-1">
-                                  <p className="text-sm font-medium">{athlete.name}</p>
-                                  {athlete.vo2max && (
-                                    <p className="text-xs text-muted-foreground">
-                                      VO₂ Max: {athlete.vo2max} ml/kg/min
-                                    </p>
-                                  )}
+                            {groupAthletes.map(athlete => {
+                              const injury = getAthleteInjury(athlete.id);
+                              const blocked = isInjurySelectionBlocked(injury, sessionDateForGroup);
+                              const assignableInjury = injury && !blocked;
+
+                              return (
+                                <div
+                                  key={athlete.id}
+                                  className={`flex items-center gap-3 p-2 rounded hover:bg-muted/30 ${blocked ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer'}`}
+                                  onClick={() => {
+                                    if (blocked) {
+                                      toast.error(`No puedes asignar a ${injury?.athleteName ?? athlete.name} hasta que supere su lesión.`);
+                                      return;
+                                    }
+                                    handleAthleteToggle(athlete.id);
+                                  }}
+                                >
+                                  <Checkbox 
+                                    checked={selectedAthletes.includes(athlete.id)}
+                                    onChange={() => handleAthleteToggle(athlete.id)}
+                                    disabled={blocked}
+                                  />
+                                  <div className="flex-1">
+                                    <p className="text-sm font-medium">{athlete.name}</p>
+                                    <p className="text-xs text-muted-foreground">{athlete.groupName}</p>
+                                    {athlete.vo2max && (
+                                      <p className="text-xs text-muted-foreground">
+                                        VO₂ Max: {athlete.vo2max} ml/kg/min
+                                      </p>
+                                    )}
+                                    {injury && (
+                                      <div className="flex flex-col gap-1 mt-2">
+                                        <div className="flex flex-wrap items-center gap-2">
+                                          <Badge className={severityBadgeClass(injury.severity)}>
+                                            {severityLabel(injury.severity)}
+                                          </Badge>
+                                          <Badge variant="outline" className="text-xs">
+                                            Impacto: {impactLabel(injury.impactOnTraining)}
+                                          </Badge>
+                                          <span className="text-xs text-muted-foreground">
+                                            Est. recuperación: {injury.recoveryEstimateDate ? new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES') : 'No informada'}
+                                          </span>
+                                        </div>
+                                        {blocked && (
+                                          <span className="text-xs text-red-600">
+                                            No disponible hasta que supere la lesión.
+                                          </span>
+                                        )}
+                                        {assignableInjury && injury.impactOnTraining?.toLowerCase() === 'full' && (
+                                          <span className="text-xs text-amber-600">
+                                            Impacto completo, pero la recuperación estimada es anterior a la sesión.
+                                          </span>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </CardContent>
                       </Card>
@@ -1500,33 +1778,71 @@ export function CreateTrainingSessionModal({
                 <div className="space-y-4">
                   <h4 className="font-medium text-sm text-muted-foreground uppercase tracking-wide">Resultados de Búsqueda</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    {filteredAthletes.map(athlete => (
-                      <Card 
-                        key={athlete.id}
-                        className={`cursor-pointer hover:shadow-md transition-all ${
-                          selectedAthletes.includes(athlete.id) ? 'ring-2 ring-primary bg-primary/5' : ''
-                        }`}
-                        onClick={() => handleAthleteToggle(athlete.id)}
-                      >
-                        <CardContent className="p-4">
-                          <div className="flex items-center gap-3">
-                            <Checkbox 
-                              checked={selectedAthletes.includes(athlete.id)}
-                              onChange={() => handleAthleteToggle(athlete.id)}
-                            />
-                            <div className="flex-1">
-                              <p className="font-medium">{athlete.name}</p>
-                              <p className="text-sm text-muted-foreground">{athlete.groupName}</p>
-                              {athlete.vo2max && (
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  VO₂ Max: {athlete.vo2max} ml/kg/min
-                                </p>
-                              )}
+                    {filteredAthletes.map(athlete => {
+                      const injury = getAthleteInjury(athlete.id);
+                      const blocked = isInjurySelectionBlocked(injury, sessionDate);
+                      const assignableInjury = injury && !blocked;
+
+                      return (
+                        <Card 
+                          key={athlete.id}
+                          className={`cursor-pointer hover:shadow-md transition-all ${
+                            selectedAthletes.includes(athlete.id) ? 'ring-2 ring-primary bg-primary/5' : ''
+                          } ${blocked ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          onClick={() => {
+                            if (blocked) {
+                              toast.error(`No puedes asignar a ${injury?.athleteName ?? athlete.name} porque su lesión tiene impacto completo.`);
+                              return;
+                            }
+                            handleAthleteToggle(athlete.id);
+                          }}
+                        >
+                          <CardContent className="p-4">
+                            <div className="flex items-center gap-3">
+                              <Checkbox 
+                                checked={selectedAthletes.includes(athlete.id)}
+                                onChange={() => handleAthleteToggle(athlete.id)}
+                                disabled={blocked}
+                              />
+                              <div className="flex-1">
+                                <p className="font-medium">{athlete.name}</p>
+                                <p className="text-sm text-muted-foreground">{athlete.groupName}</p>
+                                {athlete.vo2max && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    VO₂ Max: {athlete.vo2max} ml/kg/min
+                                  </p>
+                                )}
+                                {injury && (
+                                  <div className="flex flex-col gap-1 mt-2">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <Badge className={severityBadgeClass(injury.severity)}>
+                                        {severityLabel(injury.severity)}
+                                      </Badge>
+                                      <Badge variant="outline" className="text-xs">
+                                        Impacto: {impactLabel(injury.impactOnTraining)}
+                                      </Badge>
+                                      <span className="text-xs text-muted-foreground">
+                                        Est. recuperación: {injury.recoveryEstimateDate ? new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES') : 'No informada'}
+                                      </span>
+                                    </div>
+                                    {blocked && (
+                                      <span className="text-xs text-red-600">
+                                        No disponible hasta que supere la lesión.
+                                      </span>
+                                    )}
+                                    {assignableInjury && injury.impactOnTraining?.toLowerCase() === 'full' && (
+                                      <span className="text-xs text-amber-600">
+                                        Impacto completo, pero la recuperación estimada es anterior a la sesión.
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </div>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    ))}
+                          </CardContent>
+                        </Card>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1613,6 +1929,76 @@ export function CreateTrainingSessionModal({
           </div>
         </div>
       </DialogContent>
+
+      <AlertDialog
+        open={pendingInjurySelection !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelInjurySelection();
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Asignar atleta lesionado</AlertDialogTitle>
+            <AlertDialogDescription>
+              El atleta seleccionado está lesionado. Confirmá que deseas incluirlo en esta sesión.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          {pendingInjurySelection && (
+            <div className="space-y-3 text-sm">
+              {(() => {
+                const injury = pendingInjurySelection.injury;
+                const blocked = isInjurySelectionBlocked(injury, sessionDate);
+                const assignableFullImpact = injury.impactOnTraining?.toLowerCase() === 'full' && !blocked;
+
+                return (
+                  <>
+                    <div>
+                      <p className="font-medium text-foreground">{pendingInjurySelection.injury.athleteName}</p>
+                      <p className="text-muted-foreground text-sm">{pendingInjurySelection.injury.title}</p>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge className={severityBadgeClass(pendingInjurySelection.injury.severity)}>
+                        {severityLabel(pendingInjurySelection.injury.severity)}
+                      </Badge>
+                      <Badge variant="outline" className="text-xs">
+                        Impacto en entrenamiento: {impactLabel(pendingInjurySelection.injury.impactOnTraining)}
+                      </Badge>
+                    </div>
+                    <div className="text-muted-foreground text-sm space-y-1">
+                      <p>
+                        Estimación de recuperación:{' '}
+                        {pendingInjurySelection.injury.recoveryEstimateDate
+                          ? new Date(pendingInjurySelection.injury.recoveryEstimateDate).toLocaleDateString('es-ES')
+                          : 'No informada'}
+                      </p>
+                      <p>
+                        Fecha de la sesión:{' '}
+                        {sessionDate ? sessionDate.toLocaleDateString('es-ES') : 'No definida'}
+                      </p>
+                    </div>
+                    {assignableFullImpact && (
+                      <p className="text-amber-600 text-sm">
+                        El impacto es completo, pero la fecha estimada de recuperación es anterior a la sesión. Confirmá si continúa siendo apto.
+                      </p>
+                    )}
+                  </>
+                );
+              })()}
+              <p className="text-muted-foreground text-sm">
+                Si decidís continuar, considerá adaptar la carga de trabajo para este atleta.
+              </p>
+            </div>
+          )}
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={handleCancelInjurySelection}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleConfirmInjurySelection}>Asignar atleta</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

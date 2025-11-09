@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -28,36 +28,213 @@ import {
   Edit,
   Trash2,
   Eye,
-  RefreshCw
+  RefreshCw,
+  Loader2
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+import {
+  AthleteInjuryService,
+  type AthleteInjurySummary,
+  type CreateAthleteInjuryPayload,
+  type InjuryLocation,
+  type InjurySeverity,
+  type InjuryStatus,
+  type InjuryTreatmentValue,
+  type InjuryImpactValue
+} from '../services/athleteInjuryService';
+import { AthleteStatusService } from '../services/athleteStatusService';
+
+
+type UiSeverity = 'Leve' | 'Moderada' | 'Grave';
+type UiStatus = 'Activa' | 'Recuperándose' | 'Recuperada' | 'Cancelada';
+type ImpactLabel = 'No especificado' | 'Ninguno' | 'Bajo' | 'Moderado' | 'Alto' | 'Completo';
+
+type TreatmentValue = InjuryTreatmentValue;
+type ImpactValue = InjuryImpactValue;
 
 interface InjuryRecord {
-  id: string;
+  id: number;
   type: string;
   bodyZone: string;
   description: string;
   startDate: Date;
   estimatedEndDate: Date;
   actualEndDate?: Date;
-  severity: 'Leve' | 'Moderada' | 'Grave';
-  treatment: string;
-  status: 'Activa' | 'Recuperándose' | 'Recuperada';
-  impactOnTraining: 'Ninguno' | 'Bajo' | 'Moderado' | 'Alto' | 'Completo';
+  severity: UiSeverity;
+  treatmentLabel: string;
+  treatmentValue: TreatmentValue | null;
+  status: UiStatus;
+  impactLabel: ImpactLabel;
+  impactValue: ImpactValue | null;
   notes: string;
   createdAt: Date;
+  backendStatus: InjuryStatus;
+  backendSeverity: InjurySeverity;
 }
 
 const BODY_ZONES = [
-  'Cabeza', 'Cuello', 'Hombro Derecho', 'Hombro Izquierdo', 
-  'Brazo Derecho', 'Brazo Izquierdo', 'Codo Derecho', 'Codo Izquierdo',
-  'Muñeca Derecha', 'Muñeca Izquierda', 'Mano Derecha', 'Mano Izquierda',
-  'Pecho', 'Espalda Alta', 'Espalda Baja', 'Abdomen', 'Cadera',
-  'Muslo Derecho', 'Muslo Izquierdo', 'Rodilla Derecha', 'Rodilla Izquierda',
-  'Pantorrilla Derecha', 'Pantorrilla Izquierda', 'Tobillo Derecho', 'Tobillo Izquierdo',
-  'Pie Derecho', 'Pie Izquierdo', 'Aquiles Derecho', 'Aquiles Izquierdo'
+  'Cabeza',
+  'Cuello',
+  'Hombro Derecho',
+  'Hombro Izquierdo',
+  'Brazo Derecho',
+  'Brazo Izquierdo',
+  'Codo Derecho',
+  'Codo Izquierdo',
+  'Muñeca Derecha',
+  'Muñeca Izquierda',
+  'Mano Derecha',
+  'Mano Izquierda',
+  'Pecho',
+  'Espalda Alta',
+  'Espalda Baja',
+  'Abdomen',
+  'Cadera',
+  'Muslo Derecho',
+  'Muslo Izquierdo',
+  'Rodilla Derecha',
+  'Rodilla Izquierda',
+  'Pantorrilla Derecha',
+  'Pantorrilla Izquierda',
+  'Tobillo Derecho',
+  'Tobillo Izquierdo',
+  'Pie Derecho',
+  'Pie Izquierdo',
+  'Aquiles Derecho',
+  'Aquiles Izquierdo'
+] as const;
+
+const BODY_ZONE_TO_BACKEND: Record<(typeof BODY_ZONES)[number], InjuryLocation> = {
+  Cabeza: 'Head',
+  Cuello: 'Neck',
+  'Hombro Derecho': 'RightShoulder',
+  'Hombro Izquierdo': 'LeftShoulder',
+  'Brazo Derecho': 'RightArm',
+  'Brazo Izquierdo': 'LeftArm',
+  'Codo Derecho': 'RightElbow',
+  'Codo Izquierdo': 'LeftElbow',
+  'Muñeca Derecha': 'RightWrist',
+  'Muñeca Izquierda': 'LeftWrist',
+  'Mano Derecha': 'RightHand',
+  'Mano Izquierda': 'LeftHand',
+  Pecho: 'Chest',
+  'Espalda Alta': 'UpperBack',
+  'Espalda Baja': 'LowerBack',
+  Abdomen: 'Abdomen',
+  Cadera: 'Hip',
+  'Muslo Derecho': 'RightThigh',
+  'Muslo Izquierdo': 'LeftThigh',
+  'Rodilla Derecha': 'RightKnee',
+  'Rodilla Izquierda': 'LeftKnee',
+  'Pantorrilla Derecha': 'RightCalf',
+  'Pantorrilla Izquierda': 'LeftCalf',
+  'Tobillo Derecho': 'RightAnkle',
+  'Tobillo Izquierdo': 'LeftAnkle',
+  'Pie Derecho': 'RightFoot',
+  'Pie Izquierdo': 'LeftFoot',
+  'Aquiles Derecho': 'RightAchilles',
+  'Aquiles Izquierdo': 'LeftAchilles'
+};
+
+const BACKEND_TO_BODY_ZONE: Record<string, string> = Object.entries(BODY_ZONE_TO_BACKEND).reduce(
+  (acc, [label, backend]) => {
+    acc[backend] = label;
+    const camelKey = backend.charAt(0).toLowerCase() + backend.slice(1);
+    acc[camelKey] = label;
+    return acc;
+  },
+  {} as Record<string, string>
+);
+
+const SEVERITY_BACKEND_TO_UI: Record<string, UiSeverity> = {
+  Mild: 'Leve',
+  mild: 'Leve',
+  Moderate: 'Moderada',
+  moderate: 'Moderada',
+  Severe: 'Grave',
+  severe: 'Grave'
+};
+
+const SEVERITY_UI_TO_BACKEND: Record<UiSeverity, InjurySeverity> = {
+  Leve: 'Mild',
+  Moderada: 'Moderate',
+  Grave: 'Severe'
+};
+
+const STATUS_BACKEND_TO_UI: Record<string, UiStatus> = {
+  Active: 'Activa',
+  active: 'Activa',
+  UnderTreatment: 'Recuperándose',
+  underTreatment: 'Recuperándose',
+  Recovered: 'Recuperada',
+  recovered: 'Recuperada',
+  Cancelled: 'Cancelada',
+  cancelled: 'Cancelada'
+};
+
+const STATUS_UI_TO_BACKEND: Record<UiStatus, InjuryStatus> = {
+  Activa: 'Active',
+  'Recuperándose': 'UnderTreatment',
+  Recuperada: 'Recovered',
+  Cancelada: 'Cancelled'
+};
+
+const TREATMENT_OPTIONS: Array<{ value: TreatmentValue; label: string }> = [
+  { value: 'Rest', label: 'Reposo' },
+  { value: 'Physiotherapy', label: 'Fisioterapia' },
+  { value: 'Medication', label: 'Medicación' },
+  { value: 'Rehabilitation', label: 'Rehabilitación' },
+  { value: 'ManualTherapy', label: 'Terapia Manual' },
+  { value: 'SpecificExercises', label: 'Ejercicios Específicos' },
+  { value: 'Cryotherapy', label: 'Crioterapia' },
+  { value: 'Thermotherapy', label: 'Termoterapia' },
+  { value: 'Electrotherapy', label: 'Electroterapia' },
+  { value: 'Surgery', label: 'Cirugía' },
+  { value: 'Other', label: 'Otro' }
 ];
+
+const TREATMENT_LABELS = TREATMENT_OPTIONS.reduce<Record<TreatmentValue, string>>((acc, option) => {
+  acc[option.value] = option.label;
+  return acc;
+}, {} as Record<TreatmentValue, string>);
+
+const DEFAULT_TREATMENT_LABEL = 'No especificado';
+
+const IMPACT_OPTIONS: Array<{ value: ImpactValue; label: ImpactLabel }> = [
+  { value: 'None', label: 'Ninguno' },
+  { value: 'Low', label: 'Bajo' },
+  { value: 'Moderate', label: 'Moderado' },
+  { value: 'High', label: 'Alto' },
+  { value: 'Full', label: 'Completo' }
+];
+
+const IMPACT_LABELS = IMPACT_OPTIONS.reduce<Record<ImpactValue, ImpactLabel>>((acc, option) => {
+  acc[option.value] = option.label;
+  return acc;
+}, {} as Record<ImpactValue, ImpactLabel>);
+
+const DEFAULT_IMPACT_LABEL: ImpactLabel = 'No especificado';
+
+const normalizeTreatmentValue = (value?: string | null): TreatmentValue | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const match = TREATMENT_OPTIONS.find(option => option.value.toLowerCase() === normalized);
+  return match ? match.value : null;
+};
+
+const normalizeImpactValue = (value?: string | null): ImpactValue | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  const match = IMPACT_OPTIONS.find(option => option.value.toLowerCase() === normalized);
+  return match ? match.value : null;
+};
 
 const INJURY_TYPES = [
   'Contractura', 'Desgarro', 'Esguince', 'Fractura', 'Luxación',
@@ -66,50 +243,13 @@ const INJURY_TYPES = [
   'Periostitis', 'Fractura por Estrés', 'Otro'
 ];
 
-const TREATMENT_TYPES = [
-  'Reposo', 'Fisioterapia', 'Medicación', 'Rehabilitación', 
-  'Terapia Manual', 'Ejercicios Específicos', 'Crioterapia', 
-  'Termoterapia', 'Electroterapia', 'Cirugía', 'Otro'
-];
-
 export function AthleteStatusManagement() {
-  // Mock: Lesión activa por defecto para demostración
-  const mockCurrentInjury: InjuryRecord = {
-    id: '2',
-    type: 'Fascitis Plantar',
-    bodyZone: 'Pie Derecho',
-    description: 'Dolor en la planta del pie al levantarme y después de entrenamientos largos',
-    startDate: new Date('2025-01-20'),
-    estimatedEndDate: new Date('2025-02-20'),
-    severity: 'Moderada',
-    treatment: 'Fisioterapia',
-    status: 'Activa',
-    impactOnTraining: 'Moderado',
-    notes: 'Evitar entrenamientos de alto impacto. Realizar ejercicios de estiramiento.',
-    createdAt: new Date('2025-01-20')
-  };
-
-  const [isActive, setIsActive] = useState(false); // Inactivo por la lesión mock
-  const [currentInjury, setCurrentInjury] = useState<InjuryRecord | null>(mockCurrentInjury);
-  const [injuryHistory, setInjuryHistory] = useState<InjuryRecord[]>([
-    mockCurrentInjury,
-    {
-      id: '1',
-      type: 'Tendinitis',
-      bodyZone: 'Aquiles Derecho',
-      description: 'Dolor en el tendón de Aquiles después de sesión intensa',
-      startDate: new Date('2024-01-15'),
-      estimatedEndDate: new Date('2024-02-15'),
-      actualEndDate: new Date('2024-02-10'),
-      severity: 'Moderada',
-      treatment: 'Fisioterapia',
-      status: 'Recuperada',
-      impactOnTraining: 'Moderado',
-      notes: 'Recuperación exitosa con fisioterapia',
-      createdAt: new Date('2024-01-15')
-    }
-  ]);
-
+  const [injuryHistory, setInjuryHistory] = useState<InjuryRecord[]>([]);
+  const [currentInjury, setCurrentInjury] = useState<InjuryRecord | null>(null);
+  const [isActive, setIsActive] = useState(true);
+  const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [isCreateInjuryModalOpen, setIsCreateInjuryModalOpen] = useState(false);
   const [selectedInjuryForDetails, setSelectedInjuryForDetails] = useState<InjuryRecord | null>(null);
   const [isStatusChangeModalOpen, setIsStatusChangeModalOpen] = useState(false);
@@ -122,62 +262,168 @@ export function AthleteStatusManagement() {
     description: '',
     startDate: new Date(),
     estimatedEndDate: new Date(),
-    severity: 'Leve' as 'Leve' | 'Moderada' | 'Grave',
-    treatment: '',
-    impactOnTraining: 'Bajo' as 'Ninguno' | 'Bajo' | 'Moderado' | 'Alto' | 'Completo',
+    severity: 'Leve' as UiSeverity,
+    treatmentValue: null as TreatmentValue | null,
+    impactValue: null as ImpactValue | null,
     notes: ''
   });
 
-  const handleStatusChange = (newStatus: boolean) => {
-    // Si está cambiando de lesionado a activo y hay una lesión actual
-    if (newStatus && !isActive && currentInjury) {
+  const safeParseDate = useCallback((value?: string | null): Date | null => {
+    if (!value) return null;
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }, []);
+
+  const mapSummaryToRecord = useCallback(
+    (summary: AthleteInjurySummary): InjuryRecord => {
+      const startDate = safeParseDate(summary.diagnosisDate) ?? new Date();
+      const estimateDate =
+        safeParseDate(summary.recoveryEstimateDate ?? undefined) ?? startDate;
+      const recoveryDate = safeParseDate(summary.recoveryDate ?? undefined) ?? undefined;
+
+      const severity = SEVERITY_BACKEND_TO_UI[summary.severity] ?? 'Moderada';
+      const status = STATUS_BACKEND_TO_UI[summary.status] ?? 'Activa';
+      const bodyZone = summary.affectedArea
+        ? BACKEND_TO_BODY_ZONE[summary.affectedArea] ?? 'No especificada'
+        : 'No especificada';
+ 
+      const description = summary.description?.trim() || summary.notes?.trim() || 'Sin descripción provista.';
+      const treatmentValue = normalizeTreatmentValue(summary.treatment as string | undefined);
+      const treatmentLabel = treatmentValue ? TREATMENT_LABELS[treatmentValue] : DEFAULT_TREATMENT_LABEL;
+      const impactValue = normalizeImpactValue(summary.impactOnTraining as string | undefined);
+      const impactLabel: ImpactLabel = impactValue ? IMPACT_LABELS[impactValue] : DEFAULT_IMPACT_LABEL;
+      const notes = summary.notes?.trim() ?? '';
+ 
+      return {
+        id: summary.id,
+        type: summary.title?.trim() || 'Lesión sin título',
+        bodyZone,
+        description,
+        startDate,
+        estimatedEndDate: estimateDate,
+        actualEndDate: recoveryDate ?? undefined,
+        severity,
+        treatmentLabel,
+        treatmentValue,
+        status,
+        impactLabel,
+        impactValue,
+        notes,
+        createdAt: startDate,
+        backendStatus: summary.status,
+        backendSeverity: summary.severity
+      };
+    },
+    [safeParseDate]
+  );
+
+  const loadInjuries = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      const summaries = await AthleteInjuryService.getMyInjuries();
+      const records = summaries
+        .map(mapSummaryToRecord)
+        .sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
+
+      setInjuryHistory(records);
+
+      const activeRecord = records.find(record => record.status === 'Activa' || record.status === 'Recuperándose') ?? null;
+      setCurrentInjury(activeRecord);
+    } catch (error) {
+      console.error('Error loading injuries', error);
+      toast.error('No se pudieron cargar tus lesiones en este momento. Intenta nuevamente más tarde.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [mapSummaryToRecord]);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      const response = await AthleteStatusService.getMyStatus();
+      setIsActive(response.isActive);
+    } catch (error) {
+      console.error('Error loading athlete status', error);
+      toast.error('No se pudo obtener tu estado actual. Intenta nuevamente.');
+    }
+  }, []);
+
+  const updateAthleteStatus = useCallback(
+    async (nextStatus: boolean, options?: { silent?: boolean }) => {
+      const silent = options?.silent ?? false;
+      try {
+        setIsUpdatingStatus(true);
+        await AthleteStatusService.updateStatus({ isActive: nextStatus });
+        setIsActive(nextStatus);
+
+        if (!silent) {
+          if (nextStatus) {
+            toast.success('Marcado como activo. ¡Listo para entrenar!');
+          } else {
+            toast.info('Te marcamos como en recuperación.');
+          }
+        }
+      } catch (error) {
+        console.error('Error updating athlete status', error);
+        toast.error('No pudimos actualizar tu estado. Intenta nuevamente.');
+      } finally {
+        setIsUpdatingStatus(false);
+      }
+    },
+    []
+  );
+ 
+  useEffect(() => {
+    loadInjuries();
+    loadStatus();
+  }, [loadInjuries, loadStatus]);
+
+  const handleStatusChange = async (newStatus: boolean) => {
+    if (isUpdatingStatus || isSubmitting) {
+      return;
+    }
+
+    if (newStatus && currentInjury) {
       setPendingStatusChange(newStatus);
       setIsStatusChangeModalOpen(true);
       return;
     }
-    
-    // Si está cambiando de activo a lesionado
-    if (!newStatus && isActive) {
-      setIsActive(newStatus);
-      toast.info('Marcado como inactivo. Registra tu lesión para un mejor seguimiento.');
-      return;
-    }
-    
-    // Cambio directo sin lesión activa
-    setIsActive(newStatus);
-    if (newStatus) {
-      toast.success('¡Excelente! Marcado como activo y listo para entrenar');
-    }
+
+    await updateAthleteStatus(newStatus, { silent: false });
   };
 
-  const handleConfirmRecovery = () => {
+  const handleConfirmRecovery = async () => {
     if (!currentInjury || pendingStatusChange === null) return;
-    
-    // Marcar lesión como recuperada
-    const updatedInjury = {
-      ...currentInjury,
-      status: 'Recuperada' as const,
-      actualEndDate: new Date()
-    };
-    
-    setInjuryHistory(prev => prev.map(injury => 
-      injury.id === currentInjury.id ? updatedInjury : injury
-    ));
-    setCurrentInjury(null);
-    setIsActive(true);
-    setIsStatusChangeModalOpen(false);
-    setPendingStatusChange(null);
-    
-    toast.success('¡Felicitaciones! Recuperación completada y marcado como activo');
+
+    try {
+      setIsSubmitting(true);
+      await AthleteInjuryService.update(currentInjury.id, {
+        status: STATUS_UI_TO_BACKEND['Recuperada'],
+        recoveryDate: new Date().toISOString()
+      });
+      await updateAthleteStatus(true, { silent: true });
+      await loadInjuries();
+
+      toast.success('¡Felicitaciones! Lesión marcada como recuperada.');
+    } catch (error) {
+      console.error('Error al marcar la lesión como recuperada', error);
+      toast.error('No pudimos actualizar el estado de tu lesión. Intenta nuevamente.');
+    } finally {
+      setIsSubmitting(false);
+      setIsStatusChangeModalOpen(false);
+      setPendingStatusChange(null);
+    }
   };
 
   const handleStayInactive = () => {
-    // Mantener inactivo sin cambiar el estado de la lesión
-    setIsActive(false);
+    if (!currentInjury) {
+      setIsStatusChangeModalOpen(false);
+      setPendingStatusChange(null);
+      return;
+    }
+
+    toast.info('Mantendremos la lesión en seguimiento.');
     setIsStatusChangeModalOpen(false);
     setPendingStatusChange(null);
-    
-    toast.info('Manteniéndote como inactivo. Tu lesión sigue en seguimiento.');
   };
 
   const handleCancelStatusChange = () => {
@@ -185,46 +431,55 @@ export function AthleteStatusManagement() {
     setPendingStatusChange(null);
   };
 
-  const handleCreateInjury = () => {
+  const handleCreateInjury = async () => {
     if (!formData.type || !formData.bodyZone || !formData.description) {
       toast.error('Por favor completa los campos obligatorios');
       return;
     }
 
-    const newInjury: InjuryRecord = {
-      id: Date.now().toString(),
-      type: formData.type,
-      bodyZone: formData.bodyZone,
-      description: formData.description,
-      startDate: formData.startDate,
-      estimatedEndDate: formData.estimatedEndDate,
-      severity: formData.severity,
-      treatment: formData.treatment,
-      status: 'Activa',
-      impactOnTraining: formData.impactOnTraining,
-      notes: formData.notes,
-      createdAt: new Date()
+    const backendLocation = (formData.bodyZone && BODY_ZONE_TO_BACKEND[formData.bodyZone as (typeof BODY_ZONES)[number]]) || undefined;
+ 
+    const notesValue = formData.notes?.trim();
+ 
+    const payload: CreateAthleteInjuryPayload = {
+      title: formData.type.trim(),
+      description: formData.description.trim(),
+      affectedArea: backendLocation,
+      severity: SEVERITY_UI_TO_BACKEND[formData.severity],
+      status: 'Active',
+      diagnosisDate: formData.startDate.toISOString(),
+      recoveryEstimateDate: formData.estimatedEndDate ? formData.estimatedEndDate.toISOString() : undefined,
+      treatment: formData.treatmentValue || undefined,
+      impactOnTraining: formData.impactValue || undefined,
+      notes: notesValue?.length ? notesValue : undefined
     };
 
-    setInjuryHistory(prev => [...prev, newInjury]);
-    setCurrentInjury(newInjury);
-    setIsActive(false);
-    setIsCreateInjuryModalOpen(false);
-    
-    // Reset form
-    setFormData({
-      type: '',
-      bodyZone: '',
-      description: '',
-      startDate: new Date(),
-      estimatedEndDate: new Date(),
-      severity: 'Leve',
-      treatment: '',
-      impactOnTraining: 'Bajo',
-      notes: ''
-    });
-
-    toast.success('Lesión registrada correctamente');
+    try {
+      setIsSubmitting(true);
+      await AthleteInjuryService.create(payload);
+      await updateAthleteStatus(false, { silent: true });
+      await loadInjuries();
+      setIsCreateInjuryModalOpen(false);
+      setFormData({
+        type: '',
+        bodyZone: '',
+        description: '',
+        startDate: new Date(),
+        estimatedEndDate: new Date(),
+        severity: 'Leve',
+        treatmentValue: null,
+        impactValue: null,
+        notes: ''
+      });
+      toast.success('Lesión registrada correctamente');
+    } catch (error) {
+      console.error('Error al registrar la lesión', error);
+      if (!('response' in (error as any))) {
+        toast.error('No se pudo registrar la lesión. Intenta nuevamente.');
+      }
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getSeverityColor = (severity: string) => {
@@ -246,13 +501,27 @@ export function AthleteStatusManagement() {
   };
 
   const calculateRecoveryProgress = (injury: InjuryRecord) => {
-    const now = new Date();
-    const start = injury.startDate;
-    const estimated = injury.estimatedEndDate;
-    const total = estimated.getTime() - start.getTime();
-    const elapsed = now.getTime() - start.getTime();
+    const start = injury.startDate.getTime();
+    const estimated = injury.estimatedEndDate?.getTime() ?? start;
+
+    if (!Number.isFinite(start) || !Number.isFinite(estimated) || estimated <= start) {
+      return injury.actualEndDate ? 100 : 0;
+    }
+
+    const referenceEnd = injury.actualEndDate?.getTime() ?? Date.now();
+    const elapsed = Math.max(0, Math.min(referenceEnd, estimated) - start);
+    const total = estimated - start;
+
     return Math.min(100, Math.max(0, (elapsed / total) * 100));
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex justify-center items-center py-12">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -271,6 +540,21 @@ export function AthleteStatusManagement() {
                     {currentInjury.status}
                   </Badge>
                 </div>
+                {currentInjury.estimatedEndDate && currentInjury.estimatedEndDate < new Date() && !currentInjury.actualEndDate && (
+                  <div className="mb-3">
+                    <div className="rounded-md border border-yellow-300 bg-yellow-50/80 px-4 py-3 text-yellow-900 shadow-sm">
+                      <div className="flex items-start gap-3">
+                        <AlertTriangle className="h-5 w-5 text-yellow-600 mt-0.5" />
+                        <div className="text-sm">
+                          <p className="font-semibold">Fecha estimada superada</p>
+                          <p className="text-yellow-800">
+                            Ya pasó la fecha estimada de recuperación. Si te sentís mejor, actualizá tu estado para que podamos ajustar tus entrenamientos.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-3">
                   <div>
                     <p className="text-red-100 text-sm">Tipo de Lesión</p>
@@ -282,7 +566,7 @@ export function AthleteStatusManagement() {
                   </div>
                   <div>
                     <p className="text-red-100 text-sm">Impacto en Entrenamiento</p>
-                    <p className="font-semibold text-lg">{currentInjury.impactOnTraining}</p>
+                    <p className="font-semibold text-lg">{currentInjury.impactLabel}</p>
                   </div>
                 </div>
                 <p className="text-red-50 text-sm mb-3">{currentInjury.description}</p>
@@ -345,6 +629,7 @@ export function AthleteStatusManagement() {
                     id="status-switch"
                     checked={isActive}
                     onCheckedChange={handleStatusChange}
+                    disabled={isUpdatingStatus || isSubmitting}
                   />
                 </div>
                 {currentInjury && (
@@ -410,58 +695,6 @@ export function AthleteStatusManagement() {
         </CardContent>
       </Card>
 
-      {/* Current Injury */}
-      {currentInjury && (
-        <Card className="border-red-200 bg-red-50/50">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-red-700">
-              <AlertTriangle className="w-5 h-5" />
-              Lesión Actual
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <Label>Tipo de Lesión</Label>
-                  <p className="font-semibold">{currentInjury.type}</p>
-                </div>
-                <div>
-                  <Label>Zona Corporal</Label>
-                  <p className="font-semibold">{currentInjury.bodyZone}</p>
-                </div>
-                <div>
-                  <Label>Gravedad</Label>
-                  <Badge className={getSeverityColor(currentInjury.severity)}>
-                    {currentInjury.severity}
-                  </Badge>
-                </div>
-                <div>
-                  <Label>Impacto en Entrenamiento</Label>
-                  <Badge variant="outline">{currentInjury.impactOnTraining}</Badge>
-                </div>
-              </div>
-              
-              <div>
-                <Label>Progreso de Recuperación</Label>
-                <div className="mt-2">
-                  <Progress value={calculateRecoveryProgress(currentInjury)} className="h-2" />
-                  <div className="flex justify-between text-xs text-muted-foreground mt-1">
-                    <span>Inicio: {currentInjury.startDate.toLocaleDateString('es-ES')}</span>
-                    <span>Estimado: {currentInjury.estimatedEndDate.toLocaleDateString('es-ES')}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div>
-                <Label>Descripción</Label>
-                <p className="text-sm text-muted-foreground">{currentInjury.description}</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
       {/* Actions */}
       <div className="flex gap-4">
         <Dialog open={isCreateInjuryModalOpen} onOpenChange={setIsCreateInjuryModalOpen}>
@@ -523,7 +756,7 @@ export function AthleteStatusManagement() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <Label>Gravedad</Label>
-                  <Select value={formData.severity} onValueChange={(value: 'Leve' | 'Moderada' | 'Grave') => setFormData(prev => ({ ...prev, severity: value }))}>
+                  <Select value={formData.severity} onValueChange={(value: UiSeverity) => setFormData(prev => ({ ...prev, severity: value }))}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -537,16 +770,21 @@ export function AthleteStatusManagement() {
                 
                 <div>
                   <Label>Impacto en Entrenamiento</Label>
-                  <Select value={formData.impactOnTraining} onValueChange={(value: any) => setFormData(prev => ({ ...prev, impactOnTraining: value }))}>
+                  <Select
+                    value={formData.impactValue ?? ''}
+                    onValueChange={(value) =>
+                      setFormData(prev => ({ ...prev, impactValue: value as ImpactValue }))
+                    }
+                  >
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="Ninguno">Ninguno</SelectItem>
-                      <SelectItem value="Bajo">Bajo</SelectItem>
-                      <SelectItem value="Moderado">Moderado</SelectItem>
-                      <SelectItem value="Alto">Alto</SelectItem>
-                      <SelectItem value="Completo">Completo (No puedo entrenar)</SelectItem>
+                      {IMPACT_OPTIONS.map(option => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -554,13 +792,20 @@ export function AthleteStatusManagement() {
               
               <div>
                 <Label>Tratamiento</Label>
-                <Select value={formData.treatment} onValueChange={(value) => setFormData(prev => ({ ...prev, treatment: value }))}>
+                <Select
+                  value={formData.treatmentValue ?? ''}
+                  onValueChange={(value) =>
+                    setFormData(prev => ({ ...prev, treatmentValue: value as TreatmentValue }))
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Seleccionar tratamiento" />
                   </SelectTrigger>
                   <SelectContent>
-                    {TREATMENT_TYPES.map(treatment => (
-                      <SelectItem key={treatment} value={treatment}>{treatment}</SelectItem>
+                    {TREATMENT_OPTIONS.map(option => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
@@ -619,11 +864,16 @@ export function AthleteStatusManagement() {
               </div>
               
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsCreateInjuryModalOpen(false)}>
+                <Button
+                  variant="outline"
+                  onClick={() => setIsCreateInjuryModalOpen(false)}
+                  disabled={isSubmitting}
+                >
                   Cancelar
                 </Button>
-                <Button onClick={handleCreateInjury}>
-                  Registrar Lesión
+                <Button onClick={handleCreateInjury} disabled={isSubmitting} className="flex items-center gap-2">
+                  {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {isSubmitting ? 'Registrando...' : 'Registrar Lesión'}
                 </Button>
               </div>
             </div>
@@ -696,7 +946,8 @@ export function AthleteStatusManagement() {
                 <div className="space-y-2">
                   <Button
                     onClick={handleConfirmRecovery}
-                    className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100 text-green-700 border-2 border-green-200 hover:border-green-300 transition-all"
+                    disabled={isSubmitting}
+                    className="w-full justify-start h-auto p-4 bg-green-50 hover:bg-green-100 text-green-700 border-2 border-green-200 hover:border-green-300 transition-all disabled:opacity-60"
                     variant="outline"
                   >
                     <div className="flex items-center gap-4 w-full">
@@ -710,7 +961,9 @@ export function AthleteStatusManagement() {
                         </p>
                         <div className="mt-2 flex items-center gap-1">
                           <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                          <span className="text-xs text-green-700">Marcar lesión como recuperada</span>
+                          <span className="text-xs text-green-700">
+                            {isSubmitting ? 'Actualizando...' : 'Marcar lesión como recuperada'}
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -718,7 +971,8 @@ export function AthleteStatusManagement() {
                   
                   <Button
                     onClick={handleStayInactive}
-                    className="w-full justify-start h-auto p-4 bg-orange-50 hover:bg-orange-100 text-orange-700 border-2 border-orange-200 hover:border-orange-300 transition-all"
+                    disabled={isSubmitting}
+                    className="w-full justify-start h-auto p-4 bg-orange-50 hover:bg-orange-100 text-orange-700 border-2 border-orange-200 hover:border-orange-300 transition-all disabled:opacity-60"
                     variant="outline"
                   >
                     <div className="flex items-center gap-4 w-full">
@@ -881,11 +1135,11 @@ export function AthleteStatusManagement() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <Label>Tratamiento</Label>
-                    <p className="font-medium">{selectedInjuryForDetails.treatment}</p>
+                    <p className="font-medium">{selectedInjuryForDetails.treatmentLabel}</p>
                   </div>
                   <div>
                     <Label>Impacto en Entrenamiento</Label>
-                    <Badge variant="outline">{selectedInjuryForDetails.impactOnTraining}</Badge>
+                    <Badge variant="outline">{selectedInjuryForDetails.impactLabel}</Badge>
                   </div>
                 </div>
                 

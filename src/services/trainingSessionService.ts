@@ -71,6 +71,8 @@ export interface TrainingSessionResponseDto {
   planningId?: number;
   microcycleId?: number;
   volume?: number;
+  estimatedWorkSeconds?: number;
+  estimatedRecoverySeconds?: number;
 }
 
 export interface TrainingSessionAthleteResponseDto {
@@ -165,6 +167,18 @@ export class TrainingSessionService {
     try {
       const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
         `/api/TrainingSession/planning/${planningId}`
+      );
+      return data.map(normalizeSessionCategory);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  static async getTrainingSessionsByAthleteId(athleteId: number, planningId?: number): Promise<TrainingSessionResponseDto[]> {
+    try {
+      const query = planningId ? `?planningId=${planningId}` : '';
+      const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
+        `/api/TrainingSession/athlete/${athleteId}${query}`
       );
       return data.map(normalizeSessionCategory);
     } catch (error) {

@@ -136,6 +136,40 @@ export class AuthService {
   }
 
   /**
+   * Obtiene el identificador numérico del usuario actual a partir del JWT almacenado.
+   * @returns El id del usuario o null si no se pudo determinar.
+   */
+  static getCurrentUserId(): number | null {
+    const token = this.getAuthToken();
+    if (!token) return null;
+
+    try {
+      const decoded: any = jwtDecode(token);
+      const claimKeys = [
+        'http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier',
+        'nameidentifier',
+        'nameId',
+        'sub',
+        'id'
+      ];
+
+      for (const key of claimKeys) {
+        const value = decoded[key];
+        if (value !== undefined && value !== null) {
+          const numericValue = Number(value);
+          if (!Number.isNaN(numericValue)) {
+            return numericValue;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error al obtener el id del usuario desde el token:', error);
+    }
+
+    return null;
+  }
+
+  /**
    * Elimina el token de autenticación (logout)
    */
   static clearAuthToken(): void {
