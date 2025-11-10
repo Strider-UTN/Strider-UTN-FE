@@ -210,7 +210,7 @@ export function CreateTrainingSessionModal({
   const getMinDate = (): string => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    return today.toISOString().split('T')[0];
+    return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
   };
   
   // Cargar mesociclos y microciclos para validar fechas
@@ -365,7 +365,7 @@ export function CreateTrainingSessionModal({
       }
       // Si ya terminó de cargar y no hay microciclos, mostrar error solo si hay planningId
       if (planningId) {
-        setDateValidationError('No hay microciclos disponibles para esta planificación');
+        setDateValidationError('No hay microciclos disponibles para esta planificación. Configurá al menos uno para poder crear sesiones.');
         return false;
       }
       // Si no hay planningId, no validar contra microciclos
@@ -385,7 +385,7 @@ export function CreateTrainingSessionModal({
     });
     
     if (!isInMicrocycle) {
-      setDateValidationError('La fecha debe estar dentro de un mesociclo y microciclo existentes');
+      setDateValidationError('No hay un microciclo configurado que cubra esta fecha. Seleccioná otra fecha o actualizá la planificación.');
       return false;
     }
     

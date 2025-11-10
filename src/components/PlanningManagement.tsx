@@ -379,8 +379,34 @@ export function PlanningManagement({ onBack }: PlanningManagementProps) {
   };
 
 
+  const parseDateToLocal = (value?: string | null) => {
+    if (!value) return null;
+    const [datePart] = value.split('T');
+    if (!datePart) return null;
+
+    const [yearStr, monthStr, dayStr] = datePart.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+
+    if ([year, month, day].some(number => Number.isNaN(number))) {
+      const fallback = new Date(value);
+      if (Number.isNaN(fallback.getTime())) {
+        return null;
+      }
+      return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
+    }
+
+    return new Date(year, month - 1, day);
+  };
+
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
+    const date = parseDateToLocal(dateString);
+    if (!date) {
+      return dateString;
+    }
+
+    return date.toLocaleDateString('es-ES', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric'

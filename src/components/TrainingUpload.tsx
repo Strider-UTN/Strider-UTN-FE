@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -17,6 +17,7 @@ import { format, addDays, parse, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
+import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
 
 interface InjuryReport {
   bodyPart: string;
@@ -149,6 +150,8 @@ export function TrainingUpload() {
 
   const [sessionId, setSessionId] = useState('');
   const [completedTraining, setCompletedTraining] = useState<TrainingSession | null>(null);
+  const [plannedSessions, setPlannedSessions] = useState<PlannedSession[]>([]);
+  const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   
   // Garmin states
   const [isGarminConnected, setIsGarminConnected] = useState(false);
@@ -308,144 +311,106 @@ export function TrainingUpload() {
     }
   ];
 
-  // Mock data para sesiones planificadas por el entrenador
-  const plannedSessions: PlannedSession[] = [
-    {
-      id: 'session1',
-      date: '2025-01-02',
-      name: 'Carrera Continua Base',
-      type: 'Continuo',
-      plannedDuration: 45,
-      plannedDistance: 8.0,
-      plannedPace: '5:45',
-      targetHR: '130-145 bpm',
-      athleteId: 'athlete1',
-      planningName: 'Mesociclo 1: Base Aeróbica'
-    },
-    {
-      id: 'session2',
-      date: '2025-01-03',
-      name: 'Técnica + Fuerza',
-      type: 'Técnica',
-      plannedDuration: 60,
-      plannedDistance: 5.0,
-      plannedPace: '6:00',
-      targetHR: '120-140 bpm',
-      athleteId: 'athlete1',
-      planningName: 'Mesociclo 1: Base Aeróbica'
-    },
-    {
-      id: 'session3',
-      date: '2025-01-04',
-      name: 'Carrera Larga Suave',
-      type: 'Continuo',
-      plannedDuration: 70,
-      plannedDistance: 12.0,
-      plannedPace: '5:30',
-      targetHR: '140-155 bpm',
-      athleteId: 'athlete1',
-      planningName: 'Mesociclo 1: Base Aeróbica'
-    },
-    {
-      id: 'session5',
-      date: '2025-01-09',
-      name: 'Carrera Tempo',
-      type: 'Tempo',
-      plannedDuration: 50,
-      plannedDistance: 9.0,
-      plannedPace: '5:00',
-      targetHR: '150-165 bpm',
-      athleteId: 'athlete1',
-      planningName: 'Mesociclo 2: Desarrollo de Velocidad',
-      intervals: [
-        { type: 'work', duration: 20, pace: '4:45', intensity: 'Media-Alta', distance: 4.5 },
-        { type: 'rest', duration: 5, pace: '6:00', intensity: 'Baja', distance: 1.0 },
-        { type: 'work', duration: 15, pace: '4:30', intensity: 'Alta', distance: 3.5 }
-      ]
-    },
-    {
-      id: 'session10',
-      date: '2025-01-16',
-      name: 'Intervalos Aeróbicos',
-      type: 'Intervalos',
-      plannedDuration: 65,
-      plannedDistance: 10.0,
-      plannedPace: '4:15',
-      targetHR: '170-180 bpm',
-      athleteId: 'athlete1',
-      planningName: 'Mesociclo 2: Desarrollo de Velocidad',
-      intervals: [
-        { type: 'work', duration: 6, pace: '4:15', intensity: 'Muy Alta', distance: 1.5 },
-        { type: 'rest', duration: 3, pace: '6:30', intensity: 'Baja', distance: 0.8 }
-      ]
-    },
-    {
-      id: 'session26',
-      date: '2025-01-26',
-      name: 'Sesión de Intervalos en Pista',
-      type: 'Intervalos',
-      plannedDuration: 60,
-      plannedDistance: 10.0,
-      plannedPace: '4:30',
-      targetHR: '165-180 bpm',
-      athleteId: 'athlete2',
-      planningName: 'Mesociclo 3: Preparación Competitiva',
-      intervals: [
-        { type: 'work', duration: 5, pace: '4:15', intensity: 'Muy Alta', distance: 1.2 },
-        { type: 'rest', duration: 3, pace: '6:00', intensity: 'Baja', distance: 0.5 }
-      ]
-    },
-    {
-      id: 'session26b',
-      date: '2025-01-26',
-      name: 'Entrenamiento de Velocidad',
-      type: 'Velocidad',
-      plannedDuration: 50,
-      plannedDistance: 8.0,
-      plannedPace: '4:45',
-      targetHR: '160-175 bpm',
-      athleteId: 'athlete2',
-      planningName: 'Mesociclo 3: Preparación Competitiva'
-    },
-    {
-      id: 'session27',
-      date: '2025-01-27',
-      name: 'Carrera Continua Matutina',
-      type: 'Continuo',
-      plannedDuration: 45,
-      plannedDistance: 8.0,
-      plannedPace: '5:15',
-      targetHR: '150-165 bpm',
-      athleteId: 'athlete2',
-      planningName: 'Mesociclo 3: Preparación Competitiva'
-    },
-    {
-      id: 'session27b',
-      date: '2025-01-27',
-      name: 'Rodaje Suave',
-      type: 'Continuo',
-      plannedDuration: 40,
-      plannedDistance: 7.5,
-      plannedPace: '5:30',
-      targetHR: '145-160 bpm',
-      athleteId: 'athlete3',
-      planningName: 'Mesociclo 1: Adaptación General'
-    },
-    {
-      id: 'session27c',
-      date: '2025-01-27',
-      name: 'Carrera Base Aeróbica',
-      type: 'Continuo',
-      plannedDuration: 50,
-      plannedDistance: 9.0,
-      plannedPace: '5:00',
-      targetHR: '155-170 bpm',
-      athleteId: 'athlete3',
-      planningName: 'Mesociclo 1: Adaptación General'
-    }
-  ];
 
-  // Función para obtener TODAS las sesiones planificadas por el entrenador en una fecha (de cualquier atleta)
+  // Cargar sesiones planificadas cuando cambia la fecha seleccionada
+  useEffect(() => {
+    const loadSessionsForDate = async () => {
+      if (!selectedDate) {
+        setPlannedSessions([]);
+        return;
+      }
+
+      setIsLoadingSessions(true);
+      try {
+        const dateStr = format(selectedDate, 'yyyy-MM-dd');
+        const backendSessions = await TrainingSessionService.getMyTrainingSessionsByDate(dateStr);
+        
+        // Mapear sesiones del backend al formato PlannedSession
+        const mappedSessions: PlannedSession[] = backendSessions.map(session => {
+          // Calcular duración estimada desde los intervalos
+          let estimatedDuration = 0;
+          let estimatedDistance = 0;
+          
+          if (session.series && session.series.length > 0) {
+            session.series.forEach(series => {
+              if (series.intervals && series.intervals.length > 0) {
+                series.intervals.forEach(interval => {
+                  if (interval.duration) {
+                    // Parsear duración en formato HH:mm:ss o mm:ss
+                    const parts = interval.duration.split(':').map(Number);
+                    let seconds = 0;
+                    if (parts.length === 3) {
+                      seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+                    } else if (parts.length === 2) {
+                      seconds = parts[0] * 60 + parts[1];
+                    }
+                    estimatedDuration += seconds * (interval.repetitions || 1);
+                  }
+                  if (interval.distance) {
+                    estimatedDistance += interval.distance * (interval.repetitions || 1);
+                  }
+                });
+              }
+            });
+          }
+
+          // Formatear ritmo objetivo si existe
+          let plannedPace = 'N/A';
+          if (session.series && session.series.length > 0) {
+            const firstInterval = session.series[0]?.intervals?.[0];
+            if (firstInterval?.targetSpeed) {
+              plannedPace = firstInterval.targetSpeed;
+            } else if (firstInterval?.pace) {
+              const minutes = Math.floor(firstInterval.pace);
+              const seconds = Math.round((firstInterval.pace - minutes) * 60);
+              plannedPace = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            }
+          }
+
+          return {
+            id: session.id.toString(),
+            date: dateStr,
+            name: session.name,
+            type: session.category === 'training' ? 'Entrenamiento' : 
+                  session.category === 'prep_competition' ? 'Prep. Competencia' : 
+                  'Competencia',
+            plannedDuration: Math.round(estimatedDuration / 60), // Convertir a minutos
+            plannedDistance: Math.round(estimatedDistance * 100) / 100, // Redondear a 2 decimales
+            plannedPace: plannedPace,
+            targetHR: 'N/A', // No viene del backend actualmente
+            athleteId: 'current', // El atleta actual
+            planningName: session.planningId ? `Planificación ${session.planningId}` : 'Sin planificación',
+            intervals: session.series?.flatMap(series => 
+              series.intervals?.map(interval => ({
+                type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
+                duration: interval.duration ? (() => {
+                  const parts = interval.duration.split(':').map(Number);
+                  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+                  if (parts.length === 2) return parts[0] + parts[1] / 60;
+                  return 0;
+                })() : 0,
+                pace: interval.targetSpeed || (interval.pace ? `${Math.floor(interval.pace)}:${Math.round((interval.pace % 1) * 60).toString().padStart(2, '0')}` : 'N/A'),
+                intensity: interval.intensity || 'Moderada',
+                distance: interval.distance
+              })) || []
+            ) || []
+          };
+        });
+
+        setPlannedSessions(mappedSessions);
+      } catch (error) {
+        console.error('Error al cargar sesiones:', error);
+        toast.error('Error al cargar las sesiones planificadas');
+        setPlannedSessions([]);
+      } finally {
+        setIsLoadingSessions(false);
+      }
+    };
+
+    loadSessionsForDate();
+  }, [selectedDate]);
+
+  // Función para obtener las sesiones planificadas para la fecha seleccionada
   const getSessionsByDate = (date: Date | undefined) => {
     if (!date) return [];
     const selectedDateStr = format(date, 'yyyy-MM-dd');
@@ -1159,7 +1124,12 @@ export function TrainingUpload() {
                     Selecciona la sesión planificada por el entrenador para esta fecha
                   </p>
                   
-                  {getSessionsByDate(selectedDate).length > 0 ? (
+                  {isLoadingSessions ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
+                      <span className="text-sm text-muted-foreground">Cargando sesiones planificadas...</span>
+                    </div>
+                  ) : getSessionsByDate(selectedDate).length > 0 ? (
                     <div className="space-y-2">
                       <Label htmlFor="session">Sesiones Planificadas para {format(selectedDate, "d 'de' MMMM", { locale: es })} *</Label>
                       <Select 
@@ -1176,15 +1146,10 @@ export function TrainingUpload() {
                         </SelectTrigger>
                         <SelectContent className="max-w-md">
                           {getSessionsByDate(selectedDate).map(session => {
-                            const athlete = availableAthletes.find(a => a.id === session.athleteId);
                             return (
                               <SelectItem key={session.id} value={session.id} className="py-3">
                                 <div className="flex flex-col gap-1 w-full">
-                                  <div className="flex items-center gap-1.5">
-                                    <User className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
-                                    <span className="font-medium text-foreground">{athlete?.name}</span>
-                                  </div>
-                                  <div className="text-sm text-foreground">{session.name}</div>
+                                  <div className="text-sm font-medium text-foreground">{session.name}</div>
                                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                     <Badge variant="outline" className="text-xs">{session.type}</Badge>
                                     <span>•</span>
@@ -1205,15 +1170,9 @@ export function TrainingUpload() {
                       {/* Mostrar detalles de la sesión seleccionada */}
                       {sessionId && (() => {
                         const selectedSession = getSessionsByDate(selectedDate).find(s => s.id === sessionId);
-                        const selectedAthlete = selectedSession ? availableAthletes.find(a => a.id === selectedSession.athleteId) : null;
                         
                         return selectedSession ? (
                           <div className="mt-3 p-4 bg-muted/50 rounded-lg space-y-2">
-                            <div className="flex items-center gap-2 mb-2">
-                              <User className="w-4 h-4 text-accent" />
-                              <span className="font-medium">Atleta: {selectedAthlete?.name}</span>
-                              <Badge variant="outline">{selectedAthlete?.specialty}</Badge>
-                            </div>
                             <div className="text-sm space-y-1">
                               <div>
                                 <span className="text-muted-foreground">Distancia planeada:</span>
@@ -1227,10 +1186,12 @@ export function TrainingUpload() {
                                 <span className="text-muted-foreground">Ritmo objetivo:</span>
                                 <span className="ml-1 font-medium">{selectedSession.plannedPace}/km</span>
                               </div>
-                              <div>
-                                <span className="text-muted-foreground">FC objetivo:</span>
-                                <span className="ml-1 font-medium">{selectedSession.targetHR}</span>
-                              </div>
+                              {selectedSession.targetHR !== 'N/A' && (
+                                <div>
+                                  <span className="text-muted-foreground">FC objetivo:</span>
+                                  <span className="ml-1 font-medium">{selectedSession.targetHR}</span>
+                                </div>
+                              )}
                             </div>
                           </div>
                         ) : null;
@@ -1253,11 +1214,15 @@ export function TrainingUpload() {
               )}
 
               {/* Botón Continuar */}
-              {selectedDate && getSessionsByDate(selectedDate).length > 0 && (
+              {selectedDate && !isLoadingSessions && getSessionsByDate(selectedDate).length > 0 && (
                 <>
                   <Separator className="mt-6" />
                   <div className="flex justify-end pt-2">
-                    <Button onClick={handleContinueToStep2} className="gap-2">
+                    <Button 
+                      onClick={handleContinueToStep2} 
+                      className="gap-2"
+                      disabled={!sessionId}
+                    >
                       Continuar al Paso 2
                       <ArrowRight className="w-4 h-4" />
                     </Button>

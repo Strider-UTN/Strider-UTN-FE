@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -20,6 +20,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from './ui/alert-dialog';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface PeriodGroup {
   id: string;
@@ -118,6 +119,83 @@ const monthNames = [
 const dayNames = [
   'domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'
 ];
+
+const extractDateParts = (value: string | null | undefined): [number, number, number] | null => {
+  if (!value) return null;
+  const datePart = value.includes('T') ? value.split('T')[0] : value;
+  const segments = datePart.split('-');
+  if (segments.length !== 3) return null;
+  const [yearStr, monthStr, dayStr] = segments;
+  const year = Number(yearStr);
+  const month = Number(monthStr);
+  const day = Number(dayStr);
+  if ([year, month, day].some(number => Number.isNaN(number))) {
+    return null;
+  }
+  return [year, month, day];
+};
+
+const dateToKey = (date: Date): number => {
+  return date.getFullYear() * 10000 + (date.getMonth() + 1) * 100 + date.getDate();
+};
+
+const getDateKey = (value: string | null | undefined): number | null => {
+  const parts = extractDateParts(value);
+  if (!parts) return null;
+  const [year, month, day] = parts;
+  return year * 10000 + month * 100 + day;
+};
+
+const dateKeyToDate = (key: number): Date => {
+  const year = Math.floor(key / 10000);
+  const month = Math.floor((key % 10000) / 100);
+  const day = key % 100;
+  const result = new Date(year, month - 1, day);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const dateKeyToString = (key: number): string => {
+  const year = Math.floor(key / 10000);
+  const month = Math.floor((key % 10000) / 100);
+  const day = key % 100;
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+};
+
+const formatDateToInputValue = (date: Date): string => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+};
+
+const addDays = (date: Date, amount: number): Date => {
+  const result = new Date(date);
+  result.setDate(result.getDate() + amount);
+  result.setHours(0, 0, 0, 0);
+  return result;
+};
+
+const parseDateToLocal = (value: string | null | undefined): Date | null => {
+  const key = getDateKey(value);
+  if (key === null) return null;
+  return dateKeyToDate(key);
+};
+
+const isDateInPast = (value: string | Date): boolean => {
+  let date: Date | null;
+
+  if (value instanceof Date) {
+    date = new Date(value.getFullYear(), value.getMonth(), value.getDate());
+  } else {
+    date = parseDateToLocal(value);
+  }
+
+  if (!date) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  date.setHours(0, 0, 0, 0);
+
+  return date.getTime() < today.getTime();
+};
 
 const getCategoryColor = (category: string) => {
   switch (category) {
@@ -355,12 +433,67 @@ export function PlanningCalendar({
     return trainingSessions.filter(session => session.date === date);
   };
 
+  const isDateWithinPlanningRange = (dateString: string): boolean => {
+    const dateKey = getDateKey(dateString);
+    if (dateKey === null) return false;
+    const startKey = getDateKey(planningStartDate);
+    const endKey = getDateKey(planningEndDate);
+    if (startKey !== null && dateKey < startKey) {
+      return false;
+    }
+    if (endKey !== null && dateKey > endKey) {
+      return false;
+    }
+    return true;
+  };
+
+  const isDateCoveredByAvailableMicrocycles = (dateString: string): boolean => {
+    if (!planningId) return true;
+    if (isLoadingMicrocycles) return true;
+    const dateKey = getDateKey(dateString);
+    if (dateKey === null) return false;
+    if (availableMicrocycles.length === 0) {
+      return false;
+    }
+    return availableMicrocycles.some(microcycle => {
+      const startKey = getDateKey(microcycle.startDate);
+      const endKey = getDateKey(microcycle.endDate);
+      if (startKey === null || endKey === null) {
+        return false;
+      }
+      return dateKey >= startKey && dateKey <= endKey;
+    });
+  };
+
   const handleCreateSession = (date: string) => {
+    const parsedDate = parseDateToLocal(date);
+    if (!parsedDate) {
+      toast.error('La fecha seleccionada no es válida.');
+      return;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (parsedDate.getTime() < today.getTime()) {
+      toast.error('No puedes crear una sesión en fechas anteriores al día de hoy.');
+      return;
+    }
+
+    if (!isDateWithinPlanningRange(date)) {
+      toast.error('Esta fecha está fuera del rango de la planificación.');
+      return;
+    }
+
+    if (!isDateCoveredByAvailableMicrocycles(date)) {
+      toast.error('No puedes crear una sesión en esta fecha porque no está asociada a un microciclo.');
+      return;
+    }
+
     console.log('🚀 Abriendo modal para crear sesión en fecha:', date);
     setSelectedDate(date);
     setIsSessionModalOpen(true);
     
-    // Mensaje de confirmación visual
     if (viewMode === 'month') {
       toast.success(`Creando sesión para ${formatSessionDate(date)}`, {
         duration: 2000
@@ -399,82 +532,97 @@ export function PlanningCalendar({
     setEditingSession(null);
   };
 
-  // Verificar si una fecha es pasada
-  const isDateInPast = (dateString: string): boolean => {
-    const date = new Date(dateString);
+  const nearestValidDateInfo = useMemo((): { date: string | null; reason?: 'no-microcycles' | 'only-past' } => {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    date.setHours(0, 0, 0, 0);
-    return date < today;
-  };
+    const todayKey = dateToKey(today);
+    const todayString = formatDateToInputValue(today);
 
-  // Encontrar la fecha más cercana válida (no pasada y dentro de un microciclo)
-  const findNearestValidDate = (): string | null => {
-    if (!planningId || availableMicrocycles.length === 0) {
-      // Si no hay planningId o microciclos, usar la fecha de hoy
-      const today = new Date();
-      return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    if (!planningId) {
+      return { date: todayString };
     }
 
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    if (isLoadingMicrocycles) {
+      return { date: todayString };
+    }
 
-    // Recopilar todas las fechas válidas de los microciclos
-    const validDates: Date[] = [];
-    
+    if (availableMicrocycles.length === 0) {
+      return { date: null, reason: 'no-microcycles' };
+    }
+
+    const planningStartKey = getDateKey(planningStartDate);
+    const planningEndKey = getDateKey(planningEndDate);
+
+    let nearestValidKey: number | null = null;
+
     for (const microcycle of availableMicrocycles) {
-      const startDateStr = microcycle.startDate.includes('T') 
-        ? microcycle.startDate.split('T')[0] 
-        : microcycle.startDate;
-      const endDateStr = microcycle.endDate.includes('T') 
-        ? microcycle.endDate.split('T')[0] 
-        : microcycle.endDate;
-      
-      const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
-      const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
-      
-      const startDate = new Date(startYear, startMonth - 1, startDay);
-      const endDate = new Date(endYear, endMonth - 1, endDay);
-      
-      // Agregar todas las fechas del microciclo que no sean pasadas
-      const currentDate = new Date(startDate);
+      const startDate = parseDateToLocal(microcycle.startDate);
+      const endDate = parseDateToLocal(microcycle.endDate);
+      if (!startDate || !endDate) continue;
+
+      let currentDate = new Date(startDate);
+      currentDate.setHours(0, 0, 0, 0);
+
       while (currentDate <= endDate) {
-        if (currentDate >= today) {
-          validDates.push(new Date(currentDate));
+        const currentKey = dateToKey(currentDate);
+
+        const passesPlanningStart = planningStartKey === null || currentKey >= planningStartKey;
+        const passesPlanningEnd = planningEndKey === null || currentKey <= planningEndKey;
+
+        if (currentKey >= todayKey && passesPlanningStart && passesPlanningEnd) {
+          if (nearestValidKey === null || currentKey < nearestValidKey) {
+            nearestValidKey = currentKey;
+          }
         }
-        currentDate.setDate(currentDate.getDate() + 1);
+
+        currentDate = addDays(currentDate, 1);
       }
     }
 
-    // Ordenar fechas y encontrar la más cercana
-    if (validDates.length === 0) {
-      return null; // No hay fechas válidas
+    if (nearestValidKey === null) {
+      return { date: null, reason: 'only-past' };
     }
 
-    validDates.sort((a, b) => a.getTime() - b.getTime());
-    const nearestDate = validDates[0];
-    
-    return `${nearestDate.getFullYear()}-${String(nearestDate.getMonth() + 1).padStart(2, '0')}-${String(nearestDate.getDate()).padStart(2, '0')}`;
+    return { date: dateKeyToString(nearestValidKey) };
+  }, [availableMicrocycles, isLoadingMicrocycles, planningEndDate, planningId, planningStartDate]);
+
+  const nearestValidDate = nearestValidDateInfo.date;
+  const nearestValidDateReason = nearestValidDateInfo.reason;
+
+  const handleCreateSessionFromNearest = () => {
+    if (!nearestValidDate) {
+      const message = nearestValidDateReason === 'no-microcycles'
+        ? 'No hay microciclos configurados para esta planificación. Configurá un microciclo antes de crear sesiones.'
+        : 'Todos los microciclos disponibles ya finalizaron. Configurá nuevos microciclos para crear más sesiones.';
+      toast.error(message);
+      return;
+    }
+
+    handleCreateSession(nearestValidDate);
   };
+
+  const createSessionTooltipMessage = (() => {
+    if (userType === 'athlete') {
+      return 'Solo los entrenadores pueden crear sesiones.';
+    }
+    if (!nearestValidDate) {
+      return nearestValidDateReason === 'no-microcycles'
+        ? 'No hay microciclos configurados para esta planificación.'
+        : 'Todos los microciclos disponibles ya finalizaron.';
+    }
+    return 'Crear nueva sesión de entrenamiento (Ctrl+N)';
+  })();
+
+  const isCreateSessionDisabled = userType === 'athlete' || !nearestValidDate;
 
   // Formatear fecha para mostrar
   const formatSessionDate = (dateString: string): string => {
     if (!dateString) return '';
-    
-    // Parsear la fecha como fecha local (sin conversión de timezone)
-    // Si viene en formato YYYY-MM-DD, extraer los componentes directamente
-    let date: Date;
-    if (dateString.includes('T')) {
-      // Si tiene 'T', es una fecha ISO con hora
-      const dateOnly = dateString.split('T')[0];
-      const [year, month, day] = dateOnly.split('-').map(Number);
-      date = new Date(year, month - 1, day);
-    } else {
-      // Si es solo YYYY-MM-DD, parsear directamente
-      const [year, month, day] = dateString.split('-').map(Number);
-      date = new Date(year, month - 1, day);
+    const date = parseDateToLocal(dateString);
+    if (!date) {
+      return dateString;
     }
-    
+
     const dayName = dayNames[date.getDay()];
     const dayNum = date.getDate();
     const monthName = monthNames[date.getMonth()].toLowerCase();
@@ -803,14 +951,19 @@ export function PlanningCalendar({
     const firstDayOfMonth = new Date(currentYear, selectedMonth, 1).getDay();
     const adjustedFirstDay = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1; // Lunes = 0
 
-    const normalizedPlanningStart = planningStartDate
-      ? (planningStartDate.includes('T') ? planningStartDate.split('T')[0] : planningStartDate)
-      : null;
-    const normalizedPlanningEnd = planningEndDate
-      ? (planningEndDate.includes('T') ? planningEndDate.split('T')[0] : planningEndDate)
-      : null;
+    const planningStartKey = getDateKey(planningStartDate);
+    const planningEndKey = getDateKey(planningEndDate);
 
-    const days = [];
+    const days: Array<{
+      day: number;
+      sessions: TrainingSession[];
+      date: string;
+      isInRange: boolean;
+      isPast: boolean;
+      disabledReason: string | null;
+    } | null> = [];
+
+    const enforceMicrocycleRange = Boolean(planningId) && !isLoadingMicrocycles;
     
     // Días vacíos al inicio
     for (let i = 0; i < adjustedFirstDay; i++) {
@@ -821,22 +974,44 @@ export function PlanningCalendar({
     for (let day = 1; day <= daysInMonth; day++) {
       const dayString = `${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
       const daySessions = getSessionsForDate(dayString);
-      // Si hay filtro de microciclo, usar su función específica; si no, usar la de mesociclo/planificación
+      const dayKey = getDateKey(dayString);
       let isInRange = microcycleFilter 
         ? isDateInMicrocycleRange(dayString)
         : isDateInMesocycleRange(dayString);
+      let disabledReason: string | null = null;
+
+      if (microcycleFilter && !isInRange) {
+        disabledReason = `Este día está fuera del rango del microciclo "${microcycleFilter.name}".`;
+      } else if (mesocycleFilter && !isInRange) {
+        disabledReason = `Este día está fuera del rango del mesociclo "${mesocycleFilter.name}".`;
+      }
 
       if (!microcycleFilter && !mesocycleFilter) {
-        if (normalizedPlanningStart && dayString < normalizedPlanningStart) {
+        if (!isDateWithinPlanningRange(dayString)) {
           isInRange = false;
-        } else if (normalizedPlanningEnd && dayString > normalizedPlanningEnd) {
-          isInRange = false;
-        } else if (normalizedPlanningStart || normalizedPlanningEnd) {
-          // Si está dentro de los límites (o solo tenemos un límite), permitirlo
-          isInRange = true;
+          if (dayKey !== null && planningStartKey !== null && dayKey < planningStartKey) {
+            disabledReason = 'Esta fecha es anterior al inicio de la planificación.';
+          } else if (dayKey !== null && planningEndKey !== null && dayKey > planningEndKey) {
+            disabledReason = 'Esta fecha es posterior al fin de la planificación.';
+          } else {
+            disabledReason = 'Esta fecha está fuera del rango de la planificación.';
+          }
         }
       }
-      days.push({ day, sessions: daySessions, date: dayString, isInRange });
+
+      if (disabledReason === null && enforceMicrocycleRange && !isDateCoveredByAvailableMicrocycles(dayString)) {
+        isInRange = false;
+        disabledReason = availableMicrocycles.length === 0
+          ? 'No hay microciclos configurados para esta planificación.'
+          : 'No hay un microciclo configurado para esta fecha.';
+      }
+
+      const isPastDay = isDateInPast(dayString);
+      if (disabledReason === null && isPastDay) {
+        disabledReason = 'No puedes crear una sesión en fechas anteriores al día de hoy.';
+      }
+
+      days.push({ day, sessions: daySessions, date: dayString, isInRange, isPast: isPastDay, disabledReason });
     }
 
     return (
@@ -874,23 +1049,25 @@ export function PlanningCalendar({
             )}
           </div>
           
-          <Button 
-            onClick={() => {
-              const validDate = findNearestValidDate();
-              if (!validDate) {
-                toast.error('No hay fechas válidas disponibles para crear sesiones');
-                return;
-              }
-              console.log('🎯 Botón "Agregar Sesión" clickeado. Fecha:', validDate);
-              handleCreateSession(validDate);
-            }}
-            className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105 hover:shadow-lg"
-            disabled={userType === 'athlete'}
-            title={userType === 'athlete' ? 'Solo los entrenadores pueden crear sesiones' : 'Crear nueva sesión de entrenamiento (Ctrl+N)'}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Agregar Sesión
-          </Button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button 
+                    onClick={handleCreateSessionFromNearest}
+                    className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105 hover:shadow-lg"
+                    disabled={isCreateSessionDisabled}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Agregar Sesión
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {createSessionTooltipMessage}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
 
         {/* Calendario mensual */}
@@ -917,10 +1094,10 @@ export function PlanningCalendar({
             {/* Días del calendario */}
             <div className="grid grid-cols-7 gap-2">
               {days.map((dayData, index) => {
-                // Si hay un filtro de mesociclo y el día no está en el rango, deshabilitarlo visualmente
-                const isDayInRange = dayData ? (dayData.isInRange !== false) : true;
-                const isDayDisabled = (mesocycleFilter || microcycleFilter) && dayData && !dayData.isInRange;
-                const isClickable = !!(dayData && userType === 'coach' && isDayInRange && !isDayDisabled);
+                const disabledReason = dayData?.disabledReason ?? null;
+                const isDayDisabled = Boolean(disabledReason);
+                const isClickable = Boolean(dayData && userType === 'coach' && !isDayDisabled);
+                const highlightRange = Boolean(dayData && dayData.isInRange && !isDayDisabled && (mesocycleFilter || microcycleFilter));
                 
                 return (
                   <div 
@@ -929,28 +1106,31 @@ export function PlanningCalendar({
                       !dayData 
                         ? 'bg-muted/20'
                         : isDayDisabled
-                          ? 'bg-muted/30 opacity-40 cursor-not-allowed'
+                          ? 'bg-muted/30 opacity-50 cursor-not-allowed'
                           : isClickable
                             ? 'bg-background hover:bg-accent/5 hover:border-accent/30 cursor-pointer hover:shadow-sm' 
                             : 'bg-background cursor-default'
-                    } ${dayData && dayData.isInRange && (mesocycleFilter || microcycleFilter) ? 'ring-2 ring-primary/20' : ''}`}
+                    } ${highlightRange ? 'ring-2 ring-primary/20' : ''}`}
                     onClick={() => {
-                      if (isClickable && dayData) {
-                        console.log('🖱️ Click en día del calendario:', dayData.date);
-                        handleCreateSession(dayData.date);
+                      if (!dayData) {
+                        return;
                       }
+
+                      if (isDayDisabled) {
+                        if (disabledReason) {
+                          toast.error(disabledReason);
+                        }
+                        return;
+                      }
+
+                      console.log('🖱️ Click en día del calendario:', dayData.date);
+                      handleCreateSession(dayData.date);
                     }}
                     title={
                       dayData 
-                        ? isDayDisabled 
-                          ? microcycleFilter
-                            ? `Este día está fuera del rango del microciclo "${microcycleFilter.name}"`
-                            : mesocycleFilter
-                              ? `Este día está fuera del rango del mesociclo "${mesocycleFilter.name}"`
-                              : undefined
-                          : userType === 'coach' 
+                        ? disabledReason ?? (userType === 'coach' 
                             ? `Hacer clic para agregar sesión el ${dayData.date}`
-                            : undefined
+                            : undefined)
                         : undefined
                     }
                   >
@@ -960,7 +1140,7 @@ export function PlanningCalendar({
                           <div className={`font-medium ${isDayDisabled ? 'text-muted-foreground' : 'text-primary'}`}>
                             {dayData.day}
                           </div>
-                          {dayData.sessions.length === 0 && userType === 'coach' && isDayInRange && (
+                          {dayData.sessions.length === 0 && isClickable && (
                             <Plus className="w-4 h-4 text-muted-foreground opacity-60 hover:opacity-100 transition-opacity" />
                           )}
                         </div>
@@ -1138,23 +1318,25 @@ export function PlanningCalendar({
               : `Vista General - ${year}`}
         </h3>
         <div className="flex gap-2">
-          <Button 
-            onClick={() => {
-              const validDate = findNearestValidDate();
-              if (!validDate) {
-                toast.error('No hay fechas válidas disponibles para crear sesiones');
-                return;
-              }
-              console.log('🎯 Botón "Crear Sesión" de vista general clickeado. Fecha:', validDate);
-              handleCreateSession(validDate);
-            }}
-            className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105"
-            disabled={userType === 'athlete'}
-            title={userType === 'athlete' ? 'Solo los entrenadores pueden crear sesiones' : 'Crear sesión de entrenamiento'}
-          >
-            <Plus className="w-4 h-4 mr-2" />
-            Crear Sesión
-          </Button>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button 
+                    onClick={handleCreateSessionFromNearest}
+                    className="bg-accent hover:bg-accent/90 transition-all duration-200 hover:scale-105"
+                    disabled={isCreateSessionDisabled}
+                  >
+                    <Plus className="w-4 h-4 mr-2" />
+                    Crear Sesión
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {createSessionTooltipMessage}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
 

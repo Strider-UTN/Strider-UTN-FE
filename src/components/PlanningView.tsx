@@ -265,8 +265,34 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
     ).values()
   );
 
+  const parseDateToLocal = (value?: string | null) => {
+    if (!value) return null;
+    const [datePart] = value.split('T');
+    if (!datePart) return null;
+
+    const [yearStr, monthStr, dayStr] = datePart.split('-');
+    const year = Number(yearStr);
+    const month = Number(monthStr);
+    const day = Number(dayStr);
+
+    if ([year, month, day].some(number => Number.isNaN(number))) {
+      const fallback = new Date(value);
+      if (Number.isNaN(fallback.getTime())) {
+        return null;
+      }
+      return new Date(fallback.getFullYear(), fallback.getMonth(), fallback.getDate());
+    }
+
+    return new Date(year, month - 1, day);
+  };
+
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
+    const date = parseDateToLocal(dateString);
+    if (!date) {
+      return dateString;
+    }
+
+    return date.toLocaleDateString('es-ES', {
       day: '2-digit',
       month: 'long',
       year: 'numeric'
@@ -274,11 +300,12 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
   };
 
   const toLocalDateOnly = (value?: string | null) => {
-    if (!value) return null;
-    const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
+    const date = parseDateToLocal(value);
+    if (!date) {
+      if (!value) return null;
       return value.includes('T') ? value.split('T')[0] : value;
     }
+
     const year = date.getFullYear();
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');

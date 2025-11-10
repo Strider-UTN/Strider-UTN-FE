@@ -1,6 +1,7 @@
 import { apiClient } from './apiClient';
 import { toast } from 'sonner';
 import { mapTrainingCategoryToBackend, mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
+import { AuthService } from './authService';
 
 export interface CreateTrainingSessionDto {
   name: string;
@@ -192,6 +193,38 @@ export class TrainingSessionService {
         `/api/TrainingSession/microcycle/${microcycleId}`
       );
       return data.map(normalizeSessionCategory);
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  static async getMyTrainingSessionsByDate(date: string): Promise<TrainingSessionResponseDto[]> {
+    try {
+      // Formatear fecha a YYYY-MM-DD si viene en otro formato
+      const dateStr = date.includes('T') ? date.split('T')[0] : date;
+      
+      // Obtener el ID del atleta actual desde el token como fallback
+      const athleteId = AuthService.getCurrentUserId();
+      
+      // Intentar usar el endpoint "mine" primero (más seguro y conveniente)
+      try {
+        const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
+          `/api/TrainingSession/athlete/mine?date=${dateStr}`
+        );
+        return data.map(normalizeSessionCategory);
+      } catch (error: any) {
+        // Si el endpoint "mine" no existe (404), usar el endpoint con ID del atleta y filtrar por fecha
+        if ((error.response?.status === 404 || error.response?.status === 400) && athleteId) {
+          // Obtener todas las sesiones del atleta actual y filtrar por fecha
+          const allSessions = await this.getTrainingSessionsByAthleteId(athleteId);
+          const filtered = allSessions.filter(session => {
+            const sessionDate = session.date.includes('T') ? session.date.split('T')[0] : session.date;
+            return sessionDate === dateStr;
+          });
+          return filtered;
+        }
+        throw error;
+      }
     } catch (error) {
       throw error;
     }
