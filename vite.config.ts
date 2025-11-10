@@ -56,5 +56,10 @@
     server: {
       port: 3000,
       open: true,
+      headers: {
+        'X-Frame-Options': 'SAMEORIGIN',
+        'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
+        'Cross-Origin-Embedder-Policy': 'unsafe-none',
+      },
     },
   });
