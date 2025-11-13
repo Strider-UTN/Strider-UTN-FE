@@ -517,7 +517,8 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        {/* Botón Configurar oculto temporalmente */}
+        {/* <div className="flex items-center gap-2">
           <Button 
             variant="outline"
             onClick={() => setIsConfigurationModalOpen(true)}
@@ -525,7 +526,7 @@ export function PlanningView({ planning, athletes, onBack, onUpdate }: PlanningV
             <Settings className="w-4 h-4 mr-2" />
             Configurar
           </Button>
-        </div>
+        </div> */}
       </div>
 
 

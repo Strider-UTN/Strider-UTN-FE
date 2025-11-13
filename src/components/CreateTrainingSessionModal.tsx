@@ -205,6 +205,7 @@ export function CreateTrainingSessionModal({
   const [isLoadingCycles, setIsLoadingCycles] = useState(false);
   const [dateValidationError, setDateValidationError] = useState<string>('');
   const [isHydratingSession, setIsHydratingSession] = useState(false);
+  const [showNoAthletesConfirmDialog, setShowNoAthletesConfirmDialog] = useState(false);
   
   // Obtener fecha mínima (hoy)
   const getMinDate = (): string => {
@@ -516,31 +517,11 @@ export function CreateTrainingSessionModal({
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = async () => {
-    if (!formData.name.trim()) {
-      toast.error('El nombre de la sesión es requerido');
-      return;
-    }
-
-    const seriesPayload = buildSeriesPayload();
-    if (seriesPayload.length === 0) {
-      toast.error('Debes agregar al menos una serie con intervalos');
-      return;
-    }
-
-    if (selectedAthletes.length === 0) {
-      toast.error('Debe seleccionar al menos un atleta');
-      return;
-    }
-
-    if (!validateDate(formData.date)) {
-      toast.error('Por favor corrige la fecha antes de crear la sesión');
-      return;
-    }
-
+  const submitSession = async () => {
     setIsSubmitting(true);
 
     try {
+      const seriesPayload = buildSeriesPayload();
       const sessionDateIso = formData.date.includes('T')
         ? formData.date
         : `${formData.date}T00:00:00.000Z`;
@@ -571,6 +552,7 @@ export function CreateTrainingSessionModal({
         if (onSessionCreated) onSessionCreated();
       }
 
+      setShowNoAthletesConfirmDialog(false);
       handleReset();
       onClose();
     } catch (error) {
@@ -579,6 +561,33 @@ export function CreateTrainingSessionModal({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleSubmit = async () => {
+    if (!formData.name.trim()) {
+      toast.error('El nombre de la sesión es requerido');
+      return;
+    }
+
+    const seriesPayload = buildSeriesPayload();
+    if (seriesPayload.length === 0) {
+      toast.error('Debes agregar al menos una serie con intervalos');
+      return;
+    }
+
+    if (!validateDate(formData.date)) {
+      toast.error('Por favor corrige la fecha antes de crear la sesión');
+      return;
+    }
+
+    // Si no hay atletas seleccionados, mostrar modal de confirmación
+    if (selectedAthletes.length === 0) {
+      setShowNoAthletesConfirmDialog(true);
+      return;
+    }
+
+    // Si hay atletas, proceder directamente
+    await submitSession();
   };
 
   const mapPaceTypeToBackend = (paceType?: string) => {
@@ -919,10 +928,7 @@ export function CreateTrainingSessionModal({
     formData.date && 
     !dateValidationError && 
     planningId !== undefined && // Validar que haya planningId
-    selectedAthletes.length > 0 && 
     (intervals.length > 0 || series.length > 0) && 
-    athletes && 
-    athletes.length > 0 &&
     !isHydratingSession;
 
   const mapBackendSeriesToSeriesSets = (backendSeries: TrainingSeriesResponseDto[] | undefined): SeriesSet[] => {
@@ -1858,11 +1864,11 @@ export function CreateTrainingSessionModal({
               )}
 
               {selectedAthletes.length === 0 && athletes.length > 0 && (
-                <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mt-4">
-                  <AlertCircle className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" />
+                <div className="flex items-start gap-2 p-3 bg-blue-50 border border-blue-200 rounded-lg mt-4">
+                  <AlertCircle className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" />
                   <div>
-                    <p className="text-sm font-medium text-amber-900">Atletas requeridos</p>
-                    <p className="text-sm text-amber-700">Debes seleccionar al menos un atleta para crear la sesión</p>
+                    <p className="text-sm font-medium text-blue-900">Atletas opcionales</p>
+                    <p className="text-sm text-blue-700">Puedes crear la sesión sin atletas asignados y agregarlos más adelante</p>
                   </div>
                 </div>
               )}
@@ -1996,6 +2002,25 @@ export function CreateTrainingSessionModal({
           <AlertDialogFooter>
             <AlertDialogCancel onClick={handleCancelInjurySelection}>Cancelar</AlertDialogCancel>
             <AlertDialogAction onClick={handleConfirmInjurySelection}>Asignar atleta</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal de confirmación para crear sin atletas */}
+      <AlertDialog open={showNoAthletesConfirmDialog} onOpenChange={setShowNoAthletesConfirmDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Crear sesión sin atletas asignados</AlertDialogTitle>
+            <AlertDialogDescription>
+              Estás por crear una sesión de entrenamiento sin atletas asignados. 
+              Podrás asignar atletas a esta sesión más adelante desde el calendario de planificación.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={submitSession} disabled={isSubmitting}>
+              {isSubmitting ? 'Creando...' : 'Continuar sin atletas'}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

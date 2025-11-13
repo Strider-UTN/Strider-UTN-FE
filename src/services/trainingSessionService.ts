@@ -74,6 +74,8 @@ export interface TrainingSessionResponseDto {
   volume?: number;
   estimatedWorkSeconds?: number;
   estimatedRecoverySeconds?: number;
+  trainingSessionAthleteId?: number; // ID de la relación TrainingSessionAthlete (solo cuando se consulta por atleta)
+  hasCompletedWorkout?: boolean; // Indica si el atleta tiene un entrenamiento completado para esta sesión
 }
 
 export interface TrainingSessionAthleteResponseDto {

@@ -1,5 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -9,7 +19,7 @@ import { Checkbox } from './ui/checkbox';
 import { Badge } from './ui/badge';
 
 import { RadioGroup, RadioGroupItem } from './ui/radio-group';
-import { Calendar, X, Save, Users, User, MapPin, Loader2, Edit } from 'lucide-react';
+import { Calendar, X, Save, Users, User, MapPin, Loader2, Edit, AlertCircle } from 'lucide-react';
 import { PlanningService } from '../services/planningService';
 import { apiClient } from '../services/apiClient';
 import { toast } from 'sonner';
@@ -65,6 +75,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingAssignedAthletes, setIsLoadingAssignedAthletes] = useState(false);
   const [originalAssignedAthletes, setOriginalAssignedAthletes] = useState<string[]>([]); // IDs originales en modo edición
+  const [showNoAthletesConfirmDialog, setShowNoAthletesConfirmDialog] = useState(false);
 
   // Función para formatear fecha ISO a formato input date (YYYY-MM-DD)
   const formatDateForInput = (isoDate: string): string => {
@@ -215,6 +226,17 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
     // En modo creación, NO es obligatorio tener atletas asignados (se pueden asignar después)
     // La validación de atletas se ha removido para permitir planificaciones sin atletas
 
+    // Si no hay atletas ni grupos seleccionados y estamos creando (no editando), mostrar modal de confirmación
+    if (!editingPlanning && selectedAthletes.length === 0 && selectedGroups.length === 0) {
+      setShowNoAthletesConfirmDialog(true);
+      return;
+    }
+
+    // Si hay atletas/grupos o estamos editando, proceder directamente
+    await submitPlanning();
+  };
+
+  const submitPlanning = async () => {
     setIsSubmitting(true);
 
     try {
@@ -276,6 +298,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
         };
 
         await PlanningService.createPlanning(createDto);
+        setShowNoAthletesConfirmDialog(false);
       }
 
       // Si hay un callback, llamarlo
@@ -387,6 +410,7 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
     // No validar que haya atletas seleccionados - se puede guardar sin atletas
 
   return (
+    <>
     <Dialog open={isOpen} onOpenChange={handleClose}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
@@ -860,5 +884,25 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
         </DialogFooter>
       </DialogContent>
     </Dialog>
+
+    {/* Modal de confirmación para crear sin atletas */}
+    <AlertDialog open={showNoAthletesConfirmDialog} onOpenChange={setShowNoAthletesConfirmDialog}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Crear planificación sin atletas asignados</AlertDialogTitle>
+          <AlertDialogDescription>
+            Estás por crear una planificación sin atletas ni grupos asignados. 
+            Podrás asignar atletas y grupos a esta planificación más adelante.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancelar</AlertDialogCancel>
+          <AlertDialogAction onClick={submitPlanning} disabled={isSubmitting}>
+            {isSubmitting ? 'Creando...' : 'Continuar sin asignar'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }

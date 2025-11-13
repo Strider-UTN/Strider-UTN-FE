@@ -3,7 +3,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Textarea } from './ui/textarea';
-
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
+import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { CompletedWorkoutService, CompletedWorkoutResponseDto, WorkoutLapResponseDto } from '../services/completedWorkoutService';
 import { 
   MessageSquare,
   Send,
@@ -12,9 +14,17 @@ import {
   AlertTriangle,
   AlertCircle,
   Activity,
-  ShieldAlert
+  ShieldAlert,
+  Target,
+  Loader2,
+  Clock,
+  Info
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { Label } from './ui/label';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { format, parseISO } from 'date-fns';
+import { es } from 'date-fns/locale';
 
 interface PlannedSession {
   id: string;
@@ -71,6 +81,8 @@ interface SessionRetroalimentacionModalProps {
   athleteName: string;
   onSaveFeedback: (feedback: CoachFeedback) => void;
   readOnly?: boolean;
+  completedWorkoutId?: number; // ID del CompletedWorkout para cargar datos del backend
+  trainingSessionId?: number; // ID de la sesión planificada para cargar desde el backend
 }
 
 export function SessionRetroalimentacionModal({
@@ -81,12 +93,69 @@ export function SessionRetroalimentacionModal({
   existingFeedback,
   athleteName,
   onSaveFeedback,
-  readOnly = false
+  readOnly = false,
+  completedWorkoutId,
+  trainingSessionId
 }: SessionRetroalimentacionModalProps) {
   const [rating, setRating] = useState<CoachFeedback['rating']>('good');
   const [retroalimentacionText, setRetroalimentacionText] = useState('');
   const [recommendations, setRecommendations] = useState('');
+  const [plannedSessionData, setPlannedSessionData] = useState<TrainingSessionResponseDto | null>(null);
+  const [isLoadingPlannedSession, setIsLoadingPlannedSession] = useState(false);
+  const [completedWorkoutData, setCompletedWorkoutData] = useState<CompletedWorkoutResponseDto | null>(null);
+  const [isLoadingCompletedWorkout, setIsLoadingCompletedWorkout] = useState(false);
+  const [lapFeedbacks, setLapFeedbacks] = useState<Record<number, string>>({});
 
+  // Cargar sesión planificada desde el backend cuando se abre el modal
+  useEffect(() => {
+    if (isOpen && trainingSessionId) {
+      setIsLoadingPlannedSession(true);
+      TrainingSessionService.getTrainingSessionById(trainingSessionId)
+        .then(session => {
+          setPlannedSessionData(session);
+        })
+        .catch(error => {
+          console.error('Error al cargar sesión planificada:', error);
+          setPlannedSessionData(null);
+        })
+        .finally(() => {
+          setIsLoadingPlannedSession(false);
+        });
+    } else {
+      setPlannedSessionData(null);
+    }
+  }, [isOpen, trainingSessionId]);
+
+  // Cargar CompletedWorkout completo desde el backend cuando se abre el modal
+  useEffect(() => {
+    if (isOpen && completedWorkoutId) {
+      setIsLoadingCompletedWorkout(true);
+      CompletedWorkoutService.getCompletedWorkoutById(completedWorkoutId)
+        .then(workout => {
+          setCompletedWorkoutData(workout);
+          // Cargar feedbacks de laps existentes si hay feedback
+          if (workout?.feedback?.lapFeedbacks) {
+            const lapFeedbacksMap: Record<number, string> = {};
+            workout.feedback.lapFeedbacks.forEach(lf => {
+              lapFeedbacksMap[lf.workoutLapId] = lf.feedback;
+            });
+            setLapFeedbacks(lapFeedbacksMap);
+          } else {
+            setLapFeedbacks({});
+          }
+        })
+        .catch(error => {
+          console.error('Error al cargar completed workout:', error);
+          setCompletedWorkoutData(null);
+        })
+        .finally(() => {
+          setIsLoadingCompletedWorkout(false);
+        });
+    } else {
+      setCompletedWorkoutData(null);
+      setLapFeedbacks({});
+    }
+  }, [isOpen, completedWorkoutId]);
 
   // Inicializar formulario con datos existentes
   useEffect(() => {
@@ -94,21 +163,129 @@ export function SessionRetroalimentacionModal({
       setRating(existingFeedback.rating);
       setRetroalimentacionText(existingFeedback.feedbackText);
       setRecommendations(existingFeedback.recommendations || '');
+    } else if (completedWorkoutData?.feedback) {
+      // Si tenemos datos del backend, usar esos
+      const ratingToUse = completedWorkoutData.feedback.rating || completedWorkoutData.rating;
+      // Normalizar a minúsculas para comparación case-insensitive
+      const normalizedRating = typeof ratingToUse === 'string' ? ratingToUse.toLowerCase() : '';
+      const backendRating = normalizedRating === 'excellent' ? 'excellent' :
+                            normalizedRating === 'good' ? 'good' :
+                            normalizedRating === 'needsimprovement' ? 'needs_improvement' : 'concerning';
+      setRating(backendRating as CoachFeedback['rating']);
+      setRetroalimentacionText(completedWorkoutData.feedback.feedback);
+      setRecommendations(completedWorkoutData.feedback.recommendations || '');
     } else {
       setRating('good');
       setRetroalimentacionText('');
       setRecommendations('');
     }
-  }, [existingFeedback, isOpen]);
+  }, [existingFeedback, completedWorkoutData, isOpen]);
 
 
+
+  // Función helper para parsear fechas correctamente evitando problemas de zona horaria
+  const parseDate = (dateString: string): Date => {
+    // Si la fecha viene solo como "YYYY-MM-DD", tratarla como fecha local
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      const [year, month, day] = dateString.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    // Si viene con hora, usar parseISO y luego ajustar a fecha local
+    try {
+      const parsed = parseISO(dateString);
+      // Si la fecha tiene hora UTC (termina en Z), extraer solo la parte de fecha
+      if (dateString.includes('T') && dateString.endsWith('Z')) {
+        const dateOnly = dateString.split('T')[0];
+        const [year, month, day] = dateOnly.split('-').map(Number);
+        return new Date(year, month - 1, day);
+      }
+      return parsed;
+    } catch {
+      return new Date(dateString);
+    }
+  };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
-      weekday: 'long',
-      day: '2-digit',
-      month: 'short'
-    });
+    const date = parseDate(dateString);
+    return format(date, 'EEEE, d MMM', { locale: es });
+  };
+
+  // Función helper para calcular el ritmo en formato mm:ss/km
+  const calculatePace = (distanceKm: number, durationSeconds: number): string => {
+    if (distanceKm === 0 || durationSeconds === 0) return '00:00/km';
+    const secondsPerKm = durationSeconds / distanceKm;
+    const minutes = Math.floor(secondsPerKm / 60);
+    const seconds = Math.round(secondsPerKm % 60);
+    return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
+  };
+
+  // Función helper para formatear duración de segundos a mm:ss
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Calcular duración real del workout: usar laps si están disponibles, sino usar el valor del workout
+  const calculateActualDuration = (): number => {
+    // Si tenemos datos del completedWorkout, usar esos
+    if (completedWorkoutData) {
+      // Si hay laps, calcular la duración total de las laps
+      if (completedWorkoutData.laps && completedWorkoutData.laps.length > 0) {
+        const totalDurationSeconds = completedWorkoutData.laps.reduce((sum, lap) => sum + lap.duration, 0);
+        return totalDurationSeconds / 60; // Convertir a minutos
+      }
+      // Si no hay laps, usar la duración del workout (ya está en segundos)
+      return completedWorkoutData.duration / 60; // Convertir a minutos
+    }
+    
+    // Fallback: usar actualSession si está disponible
+    if (actualSession) {
+      // Si actualSession.actualDuration es 0 o no existe, intentar calcular de intervals
+      if (actualSession.actualDuration > 0) {
+        return actualSession.actualDuration; // Ya está en minutos según el código
+      }
+      // Si hay intervals, calcular de ahí
+      if (actualSession.intervals && actualSession.intervals.length > 0) {
+        const totalDurationSeconds = actualSession.intervals.reduce((sum, interval) => 
+          sum + (interval.actualDuration || 0), 0);
+        return totalDurationSeconds / 60; // Convertir a minutos
+      }
+    }
+    
+    return 0;
+  };
+
+  // Calcular distancia real del workout: usar laps si están disponibles
+  const calculateActualDistance = (): number => {
+    if (completedWorkoutData) {
+      // Si hay laps, calcular la distancia total de las laps
+      if (completedWorkoutData.laps && completedWorkoutData.laps.length > 0) {
+        return completedWorkoutData.laps.reduce((sum, lap) => sum + lap.distance, 0);
+      }
+      return completedWorkoutData.distance;
+    }
+    return actualSession?.actualDistance || 0;
+  };
+
+  // Obtener laps para mostrar
+  const getLapsToDisplay = (): WorkoutLapResponseDto[] => {
+    if (completedWorkoutData?.laps && completedWorkoutData.laps.length > 0) {
+      return completedWorkoutData.laps.sort((a, b) => a.index - b.index);
+    }
+    // Fallback: convertir intervals a formato de laps si están disponibles
+    if (actualSession?.intervals && actualSession.intervals.length > 0) {
+      return actualSession.intervals.map((interval, idx) => ({
+        id: idx + 1,
+        index: interval.intervalNumber || idx + 1,
+        distance: interval.actualDistance || 0,
+        duration: (interval.actualDuration || 0) * 60, // Convertir minutos a segundos
+        averageHR: interval.avgHeartRate || 0,
+        speed: 0, // Calcular si es necesario
+        startTime: new Date().toISOString()
+      }));
+    }
+    return [];
   };
 
 
@@ -143,33 +320,183 @@ export function SessionRetroalimentacionModal({
       case 'excellent': return 'Excelente';
       case 'good': return 'Bueno';
       case 'needs_improvement': return 'Necesita Mejora';
-      case 'concerning': return 'Preocupante';
+      case 'concerning': return 'No Cumple los Objetivos';
       default: return 'Sin Evaluar';
     }
   };
 
+  // Función para traducir nombres de partes del cuerpo del inglés al español
+  const mapInjuryLocationToSpanish = (location: string): string => {
+    if (!location) return location;
+    const normalized = location.trim();
+    const mapping: Record<string, string> = {
+      'Head': 'Cabeza',
+      'head': 'Cabeza',
+      'Neck': 'Cuello',
+      'neck': 'Cuello',
+      'RightShoulder': 'Hombro Derecho',
+      'rightShoulder': 'Hombro Derecho',
+      'rightshoulder': 'Hombro Derecho',
+      'LeftShoulder': 'Hombro Izquierdo',
+      'leftShoulder': 'Hombro Izquierdo',
+      'leftshoulder': 'Hombro Izquierdo',
+      'RightArm': 'Brazo Derecho',
+      'rightArm': 'Brazo Derecho',
+      'rightarm': 'Brazo Derecho',
+      'LeftArm': 'Brazo Izquierdo',
+      'leftArm': 'Brazo Izquierdo',
+      'leftarm': 'Brazo Izquierdo',
+      'RightElbow': 'Codo Derecho',
+      'rightElbow': 'Codo Derecho',
+      'rightelbow': 'Codo Derecho',
+      'LeftElbow': 'Codo Izquierdo',
+      'leftElbow': 'Codo Izquierdo',
+      'leftelbow': 'Codo Izquierdo',
+      'RightWrist': 'Muñeca Derecha',
+      'rightWrist': 'Muñeca Derecha',
+      'rightwrist': 'Muñeca Derecha',
+      'LeftWrist': 'Muñeca Izquierda',
+      'leftWrist': 'Muñeca Izquierda',
+      'leftwrist': 'Muñeca Izquierda',
+      'RightHand': 'Mano Derecha',
+      'rightHand': 'Mano Derecha',
+      'righthand': 'Mano Derecha',
+      'LeftHand': 'Mano Izquierda',
+      'leftHand': 'Mano Izquierda',
+      'lefthand': 'Mano Izquierda',
+      'Chest': 'Pecho',
+      'chest': 'Pecho',
+      'UpperBack': 'Espalda Alta',
+      'upperBack': 'Espalda Alta',
+      'upperback': 'Espalda Alta',
+      'LowerBack': 'Espalda Baja',
+      'lowerBack': 'Espalda Baja',
+      'lowerback': 'Espalda Baja',
+      'Abdomen': 'Abdomen',
+      'abdomen': 'Abdomen',
+      'Hip': 'Cadera',
+      'hip': 'Cadera',
+      'RightThigh': 'Muslo Derecho',
+      'rightThigh': 'Muslo Derecho',
+      'rightthigh': 'Muslo Derecho',
+      'LeftThigh': 'Muslo Izquierdo',
+      'leftThigh': 'Muslo Izquierdo',
+      'leftthigh': 'Muslo Izquierdo',
+      'RightKnee': 'Rodilla Derecha',
+      'rightKnee': 'Rodilla Derecha',
+      'rightknee': 'Rodilla Derecha',
+      'LeftKnee': 'Rodilla Izquierda',
+      'leftKnee': 'Rodilla Izquierda',
+      'leftknee': 'Rodilla Izquierda',
+      'RightCalf': 'Pantorrilla Derecha',
+      'rightCalf': 'Pantorrilla Derecha',
+      'rightcalf': 'Pantorrilla Derecha',
+      'LeftCalf': 'Pantorrilla Izquierda',
+      'leftCalf': 'Pantorrilla Izquierda',
+      'leftcalf': 'Pantorrilla Izquierda',
+      'RightAnkle': 'Tobillo Derecho',
+      'rightAnkle': 'Tobillo Derecho',
+      'rightankle': 'Tobillo Derecho',
+      'LeftAnkle': 'Tobillo Izquierdo',
+      'leftAnkle': 'Tobillo Izquierdo',
+      'leftankle': 'Tobillo Izquierdo',
+      'RightFoot': 'Pie Derecho',
+      'rightFoot': 'Pie Derecho',
+      'rightfoot': 'Pie Derecho',
+      'LeftFoot': 'Pie Izquierdo',
+      'leftFoot': 'Pie Izquierdo',
+      'leftfoot': 'Pie Izquierdo',
+      'RightAchilles': 'Aquiles Derecho',
+      'rightAchilles': 'Aquiles Derecho',
+      'rightachilles': 'Aquiles Derecho',
+      'LeftAchilles': 'Aquiles Izquierdo',
+      'leftAchilles': 'Aquiles Izquierdo',
+      'leftachilles': 'Aquiles Izquierdo'
+    };
+    return mapping[normalized] || location;
+  };
 
 
-  const handleSave = () => {
+
+  const handleSave = async () => {
     if (!retroalimentacionText.trim()) {
       toast.error('Por favor, escribe un comentario antes de guardar');
       return;
     }
 
-    const feedback: CoachFeedback = {
-      id: existingFeedback?.id || `retroalimentacion-${Date.now()}`,
-      sessionId: plannedSession.id,
-      microcycleId: 'current-microcycle', // Se debería pasar como prop
-      feedbackText: retroalimentacionText.trim(),
-      rating,
-      recommendations: recommendations.trim() || undefined,
-      createdAt: existingFeedback?.createdAt || new Date().toISOString(),
-      updatedAt: existingFeedback ? new Date().toISOString() : undefined
-    };
+    // Si tenemos un completedWorkoutId, guardar en el backend
+    if (completedWorkoutId) {
+      try {
+        // Mapear el rating del formato antiguo al nuevo formato del backend
+        const backendRating = rating === 'excellent' ? 'Excellent' :
+                             rating === 'good' ? 'Good' :
+                             rating === 'needs_improvement' ? 'NeedsImprovement' : 'DoesNotMeetObjectives';
 
-    onSaveFeedback(feedback);
-    toast.success('Retroalimentación guardada exitosamente');
-    onClose();
+        // Preparar feedbacks de laps
+        const lapsToDisplay = getLapsToDisplay();
+        const lapFeedbacksArray = lapsToDisplay
+          .map(lap => {
+            const lapFeedback = lapFeedbacks[lap.id];
+            if (lapFeedback && lapFeedback.trim()) {
+              return {
+                workoutLapId: lap.id,
+                feedback: lapFeedback.trim()
+              };
+            }
+            return null;
+          })
+          .filter((fb): fb is { workoutLapId: number; feedback: string } => fb !== null);
+
+        const feedbackData = {
+          rating: backendRating as 'Excellent' | 'Good' | 'NeedsImprovement' | 'DoesNotMeetObjectives',
+          feedback: retroalimentacionText.trim(),
+          recommendations: recommendations.trim() || undefined,
+          lapFeedbacks: lapFeedbacksArray
+        };
+
+        if (existingFeedback) {
+          // Actualizar feedback existente
+          await CompletedWorkoutService.updateWorkoutFeedback(completedWorkoutId, feedbackData);
+          toast.success('Retroalimentación actualizada exitosamente');
+        } else {
+          // Crear nuevo feedback
+          await CompletedWorkoutService.submitWorkoutFeedback(completedWorkoutId, feedbackData);
+          toast.success('Retroalimentación guardada exitosamente');
+        }
+
+        // También llamar al callback para actualizar el estado local si es necesario
+        const feedback: CoachFeedback = {
+          id: existingFeedback?.id || `retroalimentacion-${Date.now()}`,
+          sessionId: plannedSession.id,
+          microcycleId: 'current-microcycle',
+          feedbackText: retroalimentacionText.trim(),
+          rating,
+          recommendations: recommendations.trim() || undefined,
+          createdAt: existingFeedback?.createdAt || new Date().toISOString(),
+          updatedAt: existingFeedback ? new Date().toISOString() : undefined
+        };
+        onSaveFeedback(feedback);
+        onClose();
+      } catch (error: any) {
+        console.error('Error al guardar feedback:', error);
+        toast.error(error?.response?.data?.message || 'Error al guardar la retroalimentación');
+      }
+    } else {
+      // Fallback al comportamiento anterior si no hay completedWorkoutId
+      const feedback: CoachFeedback = {
+        id: existingFeedback?.id || `retroalimentacion-${Date.now()}`,
+        sessionId: plannedSession.id,
+        microcycleId: 'current-microcycle',
+        feedbackText: retroalimentacionText.trim(),
+        rating,
+        recommendations: recommendations.trim() || undefined,
+        createdAt: existingFeedback?.createdAt || new Date().toISOString(),
+        updatedAt: existingFeedback ? new Date().toISOString() : undefined
+      };
+      onSaveFeedback(feedback);
+      toast.success('Retroalimentación guardada exitosamente');
+      onClose();
+    }
   };
 
   const handleCancel = () => {
@@ -194,136 +521,465 @@ export function SessionRetroalimentacionModal({
 
         <div className="space-y-6">
           {/* Header de la sesión */}
-          <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-            <div className="flex items-center gap-3">
-              <div>
-                <h3 className="font-medium">{plannedSession.name}</h3>
-                <p className="text-sm text-muted-foreground">
-                  {formatDate(plannedSession.date)} • {plannedSession.type}
-                </p>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
+              <div className="flex items-center gap-3">
+                <div>
+                  <h3 className="font-medium">{plannedSession.name}</h3>
+                  <p className="text-sm text-muted-foreground">
+                    {formatDate(plannedSession.date)} • {plannedSession.type}
+                  </p>
+                </div>
               </div>
+              {existingFeedback && (
+                <Badge className={`${getRatingColor(existingFeedback.rating)} flex items-center gap-1 break-words whitespace-normal`}>
+                  {getRatingIcon(existingFeedback.rating)}
+                  <span className="break-words whitespace-normal">{getRatingLabel(existingFeedback.rating)}</span>
+                </Badge>
+              )}
             </div>
-            {existingFeedback && (
-              <Badge className={`${getRatingColor(existingFeedback.rating)} flex items-center gap-1`}>
-                {getRatingIcon(existingFeedback.rating)}
-                {getRatingLabel(existingFeedback.rating)}
-              </Badge>
-            )}
+            
+            {/* Información de planificación */}
+            {(plannedSession as any).planningName || (plannedSession as any).mesocycleName || (plannedSession as any).microcycleName ? (
+              <div className="flex flex-wrap items-center gap-4 text-sm text-muted-foreground px-4">
+                {(plannedSession as any).planningName && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Planificación:</span>
+                    <span>{(plannedSession as any).planningName}</span>
+                  </div>
+                )}
+                {(plannedSession as any).mesocycleName && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Mesociclo:</span>
+                    <span>{(plannedSession as any).mesocycleName}</span>
+                  </div>
+                )}
+                {(plannedSession as any).microcycleName && (
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">Microciclo:</span>
+                    <span>{(plannedSession as any).microcycleName}</span>
+                  </div>
+                )}
+              </div>
+            ) : null}
           </div>
 
+          {/* Comparación Planificado vs Realizado */}
+          {isLoadingPlannedSession ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="w-6 h-6 animate-spin text-primary" />
+              <span className="ml-2 text-muted-foreground">Cargando sesión planificada...</span>
+            </div>
+          ) : (
+            plannedSessionData && actualSession && (
+              <div className="space-y-4">
+                <h4 className="font-semibold text-base">Comparación: Planificado vs Realizado</h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {/* Columna Planificado */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <Target className="w-4 h-4 text-blue-600" />
+                        Planificado
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Distancia:</span>
+                          <p className="font-medium">
+                            {plannedSessionData.volume ? `${plannedSessionData.volume.toFixed(1)} km` : plannedSession.plannedDistance ? `${plannedSession.plannedDistance} km` : 'N/A'}
+                          </p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Duración:</span>
+                          <p className="font-medium">
+                            {plannedSessionData.estimatedWorkSeconds 
+                              ? `${Math.floor(plannedSessionData.estimatedWorkSeconds / 60)} min`
+                              : plannedSession.plannedDuration 
+                              ? `${plannedSession.plannedDuration} min`
+                              : 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+                      {plannedSessionData.description && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Descripción:</span>
+                          <p className="mt-1">{plannedSessionData.description}</p>
+                        </div>
+                      )}
+                      
+                      {/* Series e Intervalos */}
+                      {plannedSessionData.series && plannedSessionData.series.length > 0 && (
+                        <div className="text-sm space-y-2">
+                          <span className="text-muted-foreground font-medium">Series e Intervalos:</span>
+                          <div className="space-y-2 mt-2">
+                            {plannedSessionData.series.map((series, seriesIdx) => (
+                              <div key={series.id || seriesIdx} className="bg-muted/50 rounded-lg p-2">
+                                {series.name && (
+                                  <p className="font-medium text-xs mb-1">{series.name}</p>
+                                )}
+                                {series.intervals && series.intervals.length > 0 && (
+                                  <div className="space-y-1">
+                                    {series.intervals.map((interval, intervalIdx) => (
+                                      <div key={interval.id || intervalIdx} className="text-xs">
+                                        <span className="font-medium">
+                                          {interval.repetitions}x
+                                        </span>
+                                        {' '}
+                                        {interval.distance > 0 && (
+                                          <span>
+                                            {interval.distance >= 1000 
+                                              ? `${(interval.distance / 1000).toFixed(1)} km`
+                                              : `${interval.distance} m`}
+                                          </span>
+                                        )}
+                                        {interval.duration && (
+                                          <span>{interval.duration}</span>
+                                        )}
+                                        {interval.targetTime && (
+                                          <span>{interval.targetTime}</span>
+                                        )}
+                                        {interval.recoveryTime && (
+                                          <span className="text-muted-foreground">
+                                            {' '}· Recuperación: {interval.recoveryTime}
+                                          </span>
+                                        )}
+                                        {interval.description && (
+                                          <span className="text-muted-foreground block mt-0.5">
+                                            {interval.description}
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                                {series.repetitions > 1 && (
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    {series.repetitions} series · Recuperación entre series: {series.recoveryBetweenSets}
+                                  </p>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {/* Intervalos directos (si no hay series) */}
+                      {(!plannedSessionData.series || plannedSessionData.series.length === 0) && 
+                       plannedSessionData.intervals && plannedSessionData.intervals.length > 0 && (
+                        <div className="text-sm space-y-2">
+                          <span className="text-muted-foreground font-medium">Intervalos:</span>
+                          <div className="space-y-1">
+                            {plannedSessionData.intervals.map((interval, idx) => (
+                              <div key={interval.id || idx} className="text-xs bg-muted/50 rounded-lg p-2">
+                                <span className="font-medium">
+                                  {interval.repetitions}x
+                                </span>
+                                {' '}
+                                {interval.distance > 0 && (
+                                  <span>
+                                    {interval.distance >= 1000 
+                                      ? `${(interval.distance / 1000).toFixed(1)} km`
+                                      : `${interval.distance} m`}
+                                  </span>
+                                )}
+                                {interval.duration && (
+                                  <span>{interval.duration}</span>
+                                )}
+                                {interval.targetTime && (
+                                  <span>{interval.targetTime}</span>
+                                )}
+                                {interval.recoveryTime && (
+                                  <span className="text-muted-foreground">
+                                    {' '}· Recuperación: {interval.recoveryTime}
+                                  </span>
+                                )}
+                                {interval.description && (
+                                  <span className="text-muted-foreground block mt-0.5">
+                                    {interval.description}
+                                  </span>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      
+                      {plannedSessionData.notes && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Notas:</span>
+                          <p className="mt-1">{plannedSessionData.notes}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+
+                  {/* Columna Realizado */}
+                  <Card>
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-sm font-medium flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-green-600" />
+                        Realizado
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-3">
+                      <div className="grid grid-cols-2 gap-3 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">Distancia:</span>
+                          <p className="font-medium">{actualSession.actualDistance} km</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Duración:</span>
+                          <p className="font-medium">{Math.floor(actualSession.actualDuration)} min</p>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">Ritmo:</span>
+                          <p className="font-medium">{actualSession.actualPace}</p>
+                        </div>
+                        {actualSession.heartRate && (
+                          <div>
+                            <span className="text-muted-foreground">FC Promedio:</span>
+                            <p className="font-medium">{actualSession.heartRate.avg} bpm</p>
+                          </div>
+                        )}
+                      </div>
+                      {actualSession.comments && (
+                        <div className="text-sm">
+                          <span className="text-muted-foreground">Comentarios:</span>
+                          <p className="mt-1">{actualSession.comments}</p>
+                        </div>
+                      )}
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            )
+          )}
+
           {/* Información reportada por el atleta */}
-          {actualSession && (
-            <div className="border rounded-lg p-6 space-y-4 bg-blue-50/30 border-blue-200">
+          {(actualSession || completedWorkoutData) && (
+            <div className="border rounded-lg p-6 space-y-4 bg-muted/30 border-border">
               <h4 className="font-medium flex items-center gap-2">
                 <Activity className="w-4 h-4 text-accent" />
                 Información Reportada por el Atleta
               </h4>
 
-              {/* Métricas de la sesión */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-white/80 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Distancia</p>
-                  <p className="font-medium">{actualSession.actualDistance} km</p>
-                  <p className="text-xs text-muted-foreground">
-                    Planeado: {plannedSession.plannedDistance} km
-                  </p>
+              {isLoadingCompletedWorkout ? (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                  <span className="ml-2 text-muted-foreground">Cargando datos del entrenamiento...</span>
                 </div>
-                <div className="bg-white/80 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Ritmo</p>
-                  <p className="font-medium">{actualSession.actualPace}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Planeado: {plannedSession.plannedPace}
-                  </p>
-                </div>
-                <div className="bg-white/80 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Duración</p>
-                  <p className="font-medium">{Math.floor(actualSession.actualDuration / 60)} min</p>
-                  <p className="text-xs text-muted-foreground">
-                    Planeado: {Math.floor(plannedSession.plannedDuration / 60)} min
-                  </p>
-                </div>
-                <div className="bg-white/80 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-1">Esfuerzo Percibido</p>
-                  <p className="font-medium">{actualSession.perceivedExertion}/10</p>
-                  <p className="text-xs text-muted-foreground">
-                    Planeado: {plannedSession.plannedIntensity}/10
-                  </p>
-                </div>
-              </div>
-
-              {/* Frecuencia cardíaca si está disponible */}
-              {actualSession.heartRate && (
-                <div className="bg-white/80 rounded-lg p-3">
-                  <p className="text-xs text-muted-foreground mb-2">Frecuencia Cardíaca</p>
-                  <div className="flex gap-6">
-                    <div>
-                      <p className="text-xs text-muted-foreground">Promedio</p>
-                      <p className="font-medium">{actualSession.heartRate.avg} bpm</p>
+              ) : (
+                <>
+                  {/* Métricas de la sesión */}
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div className="bg-card rounded-lg p-3 border border-border">
+                      <p className="text-xs text-muted-foreground mb-1">Distancia</p>
+                      <p className="font-medium">{calculateActualDistance().toFixed(2)} km</p>
                     </div>
-                    <div>
-                      <p className="text-xs text-muted-foreground">Máxima</p>
-                      <p className="font-medium">{actualSession.heartRate.max} bpm</p>
+                    <div className="bg-card rounded-lg p-3 border border-border">
+                      <p className="text-xs text-muted-foreground mb-1">Ritmo</p>
+                      <p className="font-medium">
+                        {completedWorkoutData 
+                          ? calculatePace(completedWorkoutData.distance, completedWorkoutData.duration)
+                          : actualSession?.actualPace || 'N/A'}
+                      </p>
+                    </div>
+                    <div className="bg-card rounded-lg p-3 border border-border">
+                      <p className="text-xs text-muted-foreground mb-1">Duración</p>
+                      <p className="font-medium">{Math.floor(calculateActualDuration())} min</p>
+                    </div>
+                    <div className="bg-card rounded-lg p-3 border border-border">
+                      <p className="text-xs text-muted-foreground mb-1">Esfuerzo Percibido</p>
+                      <p className="font-medium">
+                        {completedWorkoutData?.sensations?.effort || actualSession?.perceivedExertion || 'N/A'}/10
+                      </p>
                     </div>
                   </div>
-                </div>
-              )}
 
-              {/* Molestias o dolencias */}
-              {actualSession.injuries && actualSession.injuries.length > 0 && (
-                <div className="bg-red-50/50 border border-red-200 rounded-lg p-4">
-                  <h5 className="font-medium flex items-center gap-2 mb-3 text-red-900">
-                    <ShieldAlert className="w-4 h-4" />
-                    Molestias o Dolencias Reportadas
-                  </h5>
-                  <div className="space-y-3">
-                    {actualSession.injuries.map((injury, index) => (
-                      <div key={index} className="bg-white/80 rounded-lg p-3">
-                        <div className="flex items-center justify-between mb-2">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="outline" className={
-                              injury.type === 'Dolor' 
-                                ? 'bg-red-100 text-red-800 border-red-300'
-                                : 'bg-orange-100 text-orange-800 border-orange-300'
-                            }>
-                              {injury.type}
-                            </Badge>
-                            <span className="font-medium">{injury.location}</span>
-                          </div>
-                          <Badge variant="outline" className="bg-gray-100">
-                            Severidad: {injury.severity}/10
-                          </Badge>
-                        </div>
-                        {injury.description && (
-                          <p className="text-sm text-muted-foreground">
-                            {injury.description}
+                  {/* Frecuencia cardíaca si está disponible */}
+                  {(completedWorkoutData?.averageHR || actualSession?.heartRate) && (
+                    <div className="bg-card rounded-lg p-3 border border-border">
+                      <p className="text-xs text-muted-foreground mb-2">Frecuencia Cardíaca</p>
+                      <div className="flex gap-6">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Promedio</p>
+                          <p className="font-medium">
+                            {completedWorkoutData?.averageHR || actualSession?.heartRate?.avg || 'N/A'} bpm
                           </p>
+                        </div>
+                        {actualSession?.heartRate?.max && (
+                          <div>
+                            <p className="text-xs text-muted-foreground">Máxima</p>
+                            <p className="font-medium">{actualSession.heartRate.max} bpm</p>
+                          </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                </div>
-              )}
+                    </div>
+                  )}
 
-              {/* Comentarios del atleta */}
-              {(actualSession.notes || actualSession.sensations) && (
-                <div className="bg-white/80 rounded-lg p-4">
-                  <h5 className="font-medium flex items-center gap-2 mb-2">
-                    <MessageSquare className="w-4 h-4" />
-                    Comentarios del Atleta
-                  </h5>
-                  {actualSession.sensations && (
-                    <div className="mb-3">
-                      <p className="text-xs text-muted-foreground mb-1">Sensaciones durante el entrenamiento:</p>
-                      <p className="text-sm">{actualSession.sensations}</p>
+                  {/* Molestias o dolencias */}
+                  {((completedWorkoutData?.injuries && completedWorkoutData.injuries.length > 0) || 
+                    (actualSession?.injuries && actualSession.injuries.length > 0)) && (
+                    <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4">
+                      <h5 className="font-medium flex items-center gap-2 mb-3 text-destructive">
+                        <ShieldAlert className="w-4 h-4" />
+                        Molestias o Dolencias Reportadas
+                      </h5>
+                      <div className="space-y-3">
+                        {(completedWorkoutData?.injuries || actualSession?.injuries || []).map((injury: any, index: number) => (
+                          <div key={index} className="bg-card rounded-lg p-3 border border-border">
+                            <div className="flex items-center justify-between mb-2">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className={
+                                  injury.type === 'Dolor' 
+                                    ? 'bg-destructive/20 text-destructive border-destructive/30'
+                                    : 'bg-orange-500/20 text-orange-600 dark:text-orange-400 border-orange-500/30'
+                                }>
+                                  {injury.type}
+                                </Badge>
+                                <span className="font-medium">{mapInjuryLocationToSpanish(injury.location || injury.bodyPart)}</span>
+                              </div>
+                              <Badge variant="outline" className="bg-muted">
+                                Severidad: {injury.severity}/10
+                              </Badge>
+                            </div>
+                            {injury.description && (
+                              <p className="text-sm text-muted-foreground">
+                                {injury.description}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
-                  {actualSession.notes && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">Notas adicionales:</p>
-                      <p className="text-sm">{actualSession.notes}</p>
+
+                  {/* Sensaciones del atleta */}
+                  {(completedWorkoutData?.sensations || actualSession?.sensations) && (
+                    <div className="bg-card rounded-lg p-4 border border-border">
+                      <h5 className="font-medium flex items-center gap-2 mb-3">
+                        <MessageSquare className="w-4 h-4" />
+                        Sensaciones durante el entrenamiento
+                      </h5>
+                      {completedWorkoutData?.sensations ? (
+                        <TooltipProvider>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div className="flex items-center justify-between p-2 bg-muted rounded border border-border">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium">Esfuerzo</span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <span className="font-medium">1</span> = Muy fácil<br />
+                                      <span className="font-medium">10</span> = Máximo esfuerzo
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <Badge variant="outline" className="ml-2">
+                                {completedWorkoutData.sensations.effort}/10
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted rounded border border-border">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium">Fatiga</span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <span className="font-medium">1</span> = Sin fatiga<br />
+                                      <span className="font-medium">10</span> = Fatiga extrema
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <Badge variant="outline" className="ml-2">
+                                {completedWorkoutData.sensations.fatigue}/10
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted rounded border border-border">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium">Motivación</span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <span className="font-medium">1</span> = Sin motivación<br />
+                                      <span className="font-medium">10</span> = Muy motivado
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <Badge variant="outline" className="ml-2">
+                                {completedWorkoutData.sensations.motivation}/10
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted rounded border border-border">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium">Carga muscular</span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <span className="font-medium">1</span> = Sin carga<br />
+                                      <span className="font-medium">10</span> = Carga máxima
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <Badge variant="outline" className="ml-2">
+                                {completedWorkoutData.sensations.muscularLoad}/10
+                              </Badge>
+                            </div>
+                            <div className="flex items-center justify-between p-2 bg-muted rounded border border-border col-span-2">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-sm font-medium">Sensación general</span>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                  </TooltipTrigger>
+                                  <TooltipContent className="max-w-xs">
+                                    <p className="text-xs">
+                                      <span className="font-medium">1</span> = Me sentí muy mal<br />
+                                      <span className="font-medium">10</span> = Me sentí excelente
+                                    </p>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </div>
+                              <Badge variant="outline" className="ml-2">
+                                {completedWorkoutData.sensations.overallFeeling}/10
+                              </Badge>
+                            </div>
+                          </div>
+                        </TooltipProvider>
+                      ) : (
+                        <p className="text-sm">{actualSession?.sensations}</p>
+                      )}
                     </div>
                   )}
-                </div>
+
+                  {/* Comentarios del atleta */}
+                  {(completedWorkoutData?.comments || actualSession?.notes) && (
+                    <div className="bg-card rounded-lg p-4 border border-border">
+                      <h5 className="font-medium flex items-center gap-2 mb-2">
+                        <MessageSquare className="w-4 h-4" />
+                        Comentarios del Atleta
+                      </h5>
+                      <p className="text-sm text-foreground">{completedWorkoutData?.comments || actualSession?.notes}</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           )}
@@ -350,7 +1006,7 @@ export function SessionRetroalimentacionModal({
                   >
                     <div className="flex flex-col items-center gap-1 w-full">
                       {getRatingIcon(ratingOption)}
-                      <span className="text-xs">{getRatingLabel(ratingOption)}</span>
+                      <span className="text-xs text-center break-words whitespace-normal">{getRatingLabel(ratingOption)}</span>
                     </div>
                   </Button>
                 ))}
@@ -391,6 +1047,56 @@ export function SessionRetroalimentacionModal({
                 disabled={readOnly || !!existingFeedback}
               />
             </div>
+
+            {/* Feedback por Laps */}
+            {getLapsToDisplay().length > 0 && (
+              <div className="space-y-4">
+                <label className="block text-sm font-medium">Feedback por Lap</label>
+                <div className="space-y-3">
+                  {getLapsToDisplay().map((lap) => (
+                    <Card key={lap.id} className="bg-muted/30">
+                      <CardHeader className="pb-3">
+                        <CardTitle className="text-sm font-medium flex items-center gap-2">
+                          <Clock className="w-4 h-4" />
+                          Lap {lap.index}
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="space-y-3">
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                          <div>
+                            <span className="text-muted-foreground">Distancia:</span>
+                            <p className="font-medium">{lap.distance.toFixed(2)} km</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Duración:</span>
+                            <p className="font-medium">{formatDuration(lap.duration)}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Ritmo:</span>
+                            <p className="font-medium">{calculatePace(lap.distance, lap.duration)}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">FC Promedio:</span>
+                            <p className="font-medium">{lap.averageHR} bpm</p>
+                          </div>
+                        </div>
+                        <div>
+                          <Label className="text-xs">Feedback para este lap (opcional)</Label>
+                          <Textarea
+                            placeholder={`Comentarios específicos sobre el lap ${lap.index}...`}
+                            value={lapFeedbacks[lap.id] || ''}
+                            onChange={(e) => setLapFeedbacks(prev => ({ ...prev, [lap.id]: e.target.value }))}
+                            rows={2}
+                            className="resize-none text-sm"
+                            disabled={readOnly || !!existingFeedback}
+                          />
+                        </div>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </div>
+            )}
 
           </div>
         </div>

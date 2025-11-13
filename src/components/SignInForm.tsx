@@ -93,6 +93,9 @@ export function SignInForm({
     return (
       <div className="w-full max-w-md mx-auto">
         <div className="mb-8 text-center">
+          <h1 className="text-5xl font-extrabold bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent mb-2 tracking-tight">
+            Strider
+          </h1>
           <h2 className="text-3xl font-bold text-primary mb-3">¡Bienvenido de vuelta!</h2>
           <p className="text-lg text-muted-foreground">
             Selecciona tu tipo de perfil para iniciar sesión
@@ -169,6 +172,9 @@ export function SignInForm({
             <ChevronLeft className="w-4 h-4" />
           </Button>
           <div className="text-center flex-1">
+            <h1 className="text-5xl font-extrabold bg-gradient-to-r from-primary via-primary to-primary/80 bg-clip-text text-transparent mb-2 tracking-tight">
+              Strider
+            </h1>
             <h2 className="text-3xl font-bold text-primary mb-3">
               {userType === 'athlete' ? 'Acceso de Atleta' : 'Acceso de Entrenador'}
             </h2>

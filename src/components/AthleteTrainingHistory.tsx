@@ -42,7 +42,7 @@ import {
 import { format, isAfter, isBefore, isEqual, startOfDay, endOfDay, subDays, subWeeks, subMonths } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
-import { CoachFeedbackView } from './CoachFeedbackView';
+import { CompletedWorkoutService, CompletedWorkoutResponseDto } from '../services/completedWorkoutService';
 
 interface IndividualAthlete {
   id: string;
@@ -555,6 +555,8 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [currentView, setCurrentView] = useState<'history' | 'feedback'>('history');
   const [currentMonth, setCurrentMonth] = useState(new Date(2024, 0, 1)); // Enero 2024
+  const [workoutsWithFeedback, setWorkoutsWithFeedback] = useState<CompletedWorkoutResponseDto[]>([]);
+  const [isLoadingFeedback, setIsLoadingFeedback] = useState(false);
 
   // Validar que el atleta existe
   if (!athlete || !athlete.id) {
@@ -743,7 +745,7 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
       case 'excellent': return 'Excelente';
       case 'good': return 'Bueno';
       case 'needs_improvement': return 'Necesita Mejora';
-      case 'concerning': return 'Preocupante';
+      case 'concerning': return 'No Cumple los Objetivos';
       default: return 'Sin Evaluar';
     }
   };
@@ -751,9 +753,9 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
   const renderCoachRating = (rating?: string) => {
     if (!rating) return null;
     return (
-      <Badge className={`${getRatingColor(rating)} flex items-center gap-1 px-2 py-1`}>
+      <Badge className={`${getRatingColor(rating)} flex items-center gap-1 px-2 py-1 break-words whitespace-normal`}>
         {getRatingIcon(rating)}
-        <span className="text-xs">{getRatingLabel(rating)}</span>
+        <span className="text-xs break-words whitespace-normal">{getRatingLabel(rating)}</span>
       </Badge>
     );
   };
@@ -771,7 +773,7 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
             <div>
               <h2>Retroalimentación - {athlete.name}</h2>
               <p className="text-muted-foreground">
-                Proporciona feedback detallado para los entrenamientos
+                La retroalimentación se gestiona desde la sección principal de Retroalimentación en el menú del entrenador
               </p>
             </div>
           </div>
@@ -781,9 +783,15 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
           </Button>
         </div>
 
-        <div className="border rounded-lg">
-          <CoachFeedbackView />
-        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-12">
+            <MessageSquare className="w-12 h-12 text-muted-foreground mb-4" />
+            <h3 className="text-lg font-semibold mb-2">Vista de Retroalimentación</h3>
+            <p className="text-muted-foreground text-center">
+              Para proporcionar retroalimentación a los entrenamientos, ve a la sección "Retroalimentación" en el menú principal del entrenador.
+            </p>
+          </CardContent>
+        </Card>
       </div>
     );
   }

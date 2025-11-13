@@ -21,6 +21,7 @@ import { GroupConfigurationModal } from './GroupConfigurationModal';
 import { GroupAthleteManagementModal } from './GroupAthleteManagementModal';
 import { InviteAthleteToGroupModal } from './InviteAthleteToGroupModal';
 import { FeedbackManagement } from './FeedbackManagement';
+import { AthleteFeedbackView } from './AthleteFeedbackView';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { 
   Users, 
@@ -134,7 +135,7 @@ type CoachActiveView =
   | 'feedback'
   | 'templates';
 
-type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations';
+type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations' | 'feedback';
 
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
   const [coachActiveView, setCoachActiveView] = useState<CoachActiveView>('my-athletes');
@@ -286,6 +287,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     { id: 'training-history', label: 'Histórico de entrenamientos', icon: FileText },
     { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
     { id: 'status', label: 'Estado y Lesiones', icon: Heart },
+    { id: 'feedback', label: 'Retroalimentaciones', icon: MessageSquare },
     { id: 'invitations', label: 'Invitaciones', icon: Mail, badgeCount: pendingInvitationsCount }
   ];
 
@@ -637,7 +639,22 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
 
     switch (athleteActiveView) {
       case 'calendar':
-        return <AthleteCalendar athleteId={resolvedAthleteId} />;
+        return (
+          <AthleteCalendar 
+            athleteId={resolvedAthleteId} 
+            onNavigateToUpload={(date, sessionId) => {
+              setAthleteActiveView('upload-training');
+              // Guardar los parámetros para TrainingUpload
+              // Guardar como string YYYY-MM-DD para evitar problemas de zona horaria
+              const year = date.getFullYear();
+              const month = String(date.getMonth() + 1).padStart(2, '0');
+              const day = String(date.getDate()).padStart(2, '0');
+              const dateStr = `${year}-${month}-${day}`;
+              sessionStorage.setItem('trainingUpload_initialDate', dateStr);
+              sessionStorage.setItem('trainingUpload_initialSessionId', sessionId);
+            }}
+          />
+        );
       case 'training-plan':
         return <AthleteTrainingPlan />;
       case 'upload-training':
@@ -675,6 +692,8 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         );
       case 'status':
         return <AthleteStatusManagement />;
+      case 'feedback':
+        return <AthleteFeedbackView />;
       case 'invitations':
         return <InvitationsView onInvitationResponded={loadPendingInvitationsCount} />;
       default:
@@ -688,8 +707,12 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         <Sidebar>
           <SidebarHeader className="border-b p-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-semibold">S</span>
+              <div className="w-12 h-12 rounded-lg flex items-center justify-center overflow-hidden">
+                <img 
+                  src="/LogoStriderSinTexto.png" 
+                  alt="Strider Logo" 
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div>
                 <p className="font-semibold">Strider</p>

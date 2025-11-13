@@ -154,8 +154,31 @@ export function CoachRetroalimentacionSystem({
     recommendations: microcycle.microcycleFeedback?.recommendations || ''
   });
 
+  // Función helper para parsear fechas correctamente evitando problemas de zona horaria
+  const parseDate = (dateString: string): Date => {
+    if (!dateString) return new Date();
+    // Si la fecha viene solo como "YYYY-MM-DD", tratarla como fecha local
+    if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+      const [year, month, day] = dateString.split('-').map(Number);
+      return new Date(year, month - 1, day);
+    }
+    // Si viene con hora, usar parseISO y luego ajustar a fecha local
+    try {
+      // Si la fecha tiene hora UTC (termina en Z o tiene T), extraer solo la parte de fecha
+      if (dateString.includes('T')) {
+        const dateOnly = dateString.split('T')[0];
+        const [year, month, day] = dateOnly.split('-').map(Number);
+        return new Date(year, month - 1, day);
+      }
+      return new Date(dateString);
+    } catch {
+      return new Date(dateString);
+    }
+  };
+
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('es-ES', {
+    const date = parseDate(dateString);
+    return date.toLocaleDateString('es-ES', {
       weekday: 'long',
       day: '2-digit',
       month: 'short'
@@ -244,7 +267,7 @@ export function CoachRetroalimentacionSystem({
       case 'excellent': return 'Excelente';
       case 'good': return 'Bueno';
       case 'needs_improvement': return 'Necesita Mejora';
-      case 'concerning': return 'Preocupante';
+      case 'concerning': return 'No Cumple los Objetivos';
       default: return 'Sin Evaluar';
     }
   };
@@ -329,7 +352,6 @@ export function CoachRetroalimentacionSystem({
     <div className="space-y-6">
       {/* Header del microciclo con feedback general */}
       <div className="mb-6">
-        <h2 className="mb-6">{athlete.name}</h2>
 
         {/* Retroalimentación del microciclo */}
         {editingMicrocycleRetroalimentacion && (
@@ -349,7 +371,7 @@ export function CoachRetroalimentacionSystem({
                   className={microcycleRetroalimentacionForm.overallRating === rating ? getRatingColor(rating) : ''}
                 >
                   {getRatingIcon(rating)}
-                  <span className="ml-2">{getRatingLabel(rating)}</span>
+                  <span className="ml-2 break-words whitespace-normal">{getRatingLabel(rating)}</span>
                 </Button>
               ))}
             </div>
@@ -422,15 +444,22 @@ export function CoachRetroalimentacionSystem({
                               </Badge>
                             )}
                             {existingFeedback && (
-                              <Badge className={`${getRatingColor(existingFeedback.rating)} text-xs flex items-center gap-1`}>
+                              <Badge className={`${getRatingColor(existingFeedback.rating)} text-xs flex items-center gap-1 break-words whitespace-normal`}>
                                 {getRatingIcon(existingFeedback.rating)}
-                                {getRatingLabel(existingFeedback.rating)}
+                                <span className="break-words whitespace-normal">{getRatingLabel(existingFeedback.rating)}</span>
                               </Badge>
                             )}
                           </div>
                           <p className="text-sm text-muted-foreground">
                             {formatDate(session.plan.date)} • {session.plan.type}
                           </p>
+                          {(session.plan as any).planningName || (session.plan as any).mesocycleName || (session.plan as any).microcycleName ? (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {(session.plan as any).planningName && `Planificación: ${(session.plan as any).planningName}`}
+                              {(session.plan as any).mesocycleName && ` • Mesociclo: ${(session.plan as any).mesocycleName}`}
+                              {(session.plan as any).microcycleName && ` • Microciclo: ${(session.plan as any).microcycleName}`}
+                            </p>
+                          ) : null}
                         </div>
                       </div>
 
@@ -452,10 +481,17 @@ export function CoachRetroalimentacionSystem({
                               </Button>
                             ) : (
                               <Button
-                                onClick={() => setEditingSessionRetroalimentacion(session.plan.id)}
+                                onClick={() => {
+                                  if (onOpenSessionFeedback) {
+                                    onOpenSessionFeedback(session.plan, session.actual || undefined);
+                                  } else {
+                                    setEditingSessionRetroalimentacion(session.plan.id);
+                                  }
+                                }}
                                 size="sm"
                                 variant="default"
                                 className="bg-accent hover:bg-accent/90"
+                                type="button"
                               >
                                 <MessageSquare className="w-4 h-4 mr-1" />
                                 Añadir Retroalimentación
@@ -471,11 +507,6 @@ export function CoachRetroalimentacionSystem({
                     <div className="px-6 pb-6 border-t bg-muted/20">
                       <div className="pt-4 space-y-4">
                         
-                        {/* Identificación del atleta */}
-                        <div className="flex items-center gap-2 pb-2 border-b border-muted">
-                          <span className="text-sm text-muted-foreground">Atleta:</span>
-                          <span className="font-medium text-primary">{athlete.name}</span>
-                        </div>
                         
                         {/* Formulario de retroalimentación de sesión */}
                         {editingSessionRetroalimentacion === session.plan.id && (
@@ -495,7 +526,7 @@ export function CoachRetroalimentacionSystem({
                                   className={sessionRetroalimentaciones[session.plan.id]?.rating === rating ? getRatingColor(rating) : ''}
                                 >
                                   {getRatingIcon(rating)}
-                                  <span className="ml-2">{getRatingLabel(rating)}</span>
+                                  <span className="ml-2 break-words whitespace-normal">{getRatingLabel(rating)}</span>
                                 </Button>
                               ))}
                             </div>
@@ -543,9 +574,9 @@ export function CoachRetroalimentacionSystem({
                         {session.coachFeedback && editingSessionRetroalimentacion !== session.plan.id && (
                           <div className="border rounded-lg p-4 bg-primary/5">
                             <div className="flex items-start justify-between mb-2">
-                              <h5 className="font-medium flex items-center gap-2">
+                              <h5 className="font-medium flex items-center gap-2 break-words whitespace-normal">
                                 {getRatingIcon(session.coachFeedback.rating)}
-                                Feedback del Entrenador - {getRatingLabel(session.coachFeedback.rating)}
+                                <span>Feedback del Entrenador - <span className="break-words whitespace-normal">{getRatingLabel(session.coachFeedback.rating)}</span></span>
                               </h5>
                               <Button
                                 variant="ghost"
