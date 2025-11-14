@@ -526,28 +526,46 @@ export function CreateTrainingSessionModal({
         ? formData.date
         : `${formData.date}T00:00:00.000Z`;
 
-      const payload: CreateTrainingSessionDto = {
-        name: formData.name.trim(),
-        description: formData.description?.trim() || undefined,
-        date: sessionDateIso,
-        category: mapTrainingCategoryToBackend(formData.category),
-        notes: formData.notes?.trim() || undefined,
-        planningId: planningId ? Number(planningId) : 0,
-        athleteIds: selectedAthletes.map(id => Number(id)),
-        series: seriesPayload
-      };
-
-      if (!payload.planningId) {
-        toast.error('No se puede crear la sesión sin una planificación asociada');
-        return;
-      }
-
       if (editingSession) {
-        await TrainingSessionService.updateTrainingSession(Number(editingSession.id), payload);
+        // Para actualizar, usar UpdateTrainingSessionDto (sin planningId)
+        const updatePayload: UpdateTrainingSessionDto = {
+          name: formData.name.trim(),
+          description: formData.description?.trim() || undefined,
+          date: sessionDateIso,
+          category: mapTrainingCategoryToBackend(formData.category),
+          notes: formData.notes?.trim() || undefined,
+          athleteIds: selectedAthletes.map(id => Number(id)),
+          series: seriesPayload
+        };
+        
+        console.log('Actualizando sesión:', {
+          sessionId: editingSession.id,
+          payload: updatePayload,
+          athleteIds: updatePayload.athleteIds
+        });
+        
+        await TrainingSessionService.updateTrainingSession(Number(editingSession.id), updatePayload);
         toast.success('Sesión actualizada');
         if (onSessionUpdated) onSessionUpdated();
       } else {
-        await TrainingSessionService.createTrainingSession(payload);
+        // Para crear, usar CreateTrainingSessionDto (con planningId)
+        const createPayload: CreateTrainingSessionDto = {
+          name: formData.name.trim(),
+          description: formData.description?.trim() || undefined,
+          date: sessionDateIso,
+          category: mapTrainingCategoryToBackend(formData.category),
+          notes: formData.notes?.trim() || undefined,
+          planningId: planningId ? Number(planningId) : 0,
+          athleteIds: selectedAthletes.map(id => Number(id)),
+          series: seriesPayload
+        };
+
+        if (!createPayload.planningId) {
+          toast.error('No se puede crear la sesión sin una planificación asociada');
+          return;
+        }
+
+        await TrainingSessionService.createTrainingSession(createPayload);
         toast.success('Sesión creada');
         if (onSessionCreated) onSessionCreated();
       }
