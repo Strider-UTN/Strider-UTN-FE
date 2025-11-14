@@ -985,11 +985,13 @@ export function SessionRetroalimentacionModal({
           )}
 
           {/* Formulario de Retroalimentación */}
-          {(existingFeedback || completedWorkoutData?.feedback) && (
+          {(!readOnly || existingFeedback || completedWorkoutData?.feedback) && (
             <div className="border rounded-lg p-6 space-y-6">
               <h4 className="font-medium flex items-center gap-2">
                 <MessageSquare className="w-4 h-4" />
-                Evaluación del Entrenador {completedWorkoutData?.feedback?.coachName ? completedWorkoutData.feedback.coachName : ''}
+                {existingFeedback || completedWorkoutData?.feedback 
+                  ? `Evaluación del Entrenador ${completedWorkoutData?.feedback?.coachName ? completedWorkoutData.feedback.coachName : ''}`
+                  : 'Dar Retroalimentación de Sesión'}
               </h4>
             
             {/* Selector de calificación */}
@@ -1001,8 +1003,8 @@ export function SessionRetroalimentacionModal({
                     key={ratingOption}
                     variant={rating === ratingOption ? "default" : "outline"}
                     size="sm"
-                    onClick={() => !readOnly && !existingFeedback && setRating(ratingOption)}
-                    disabled={readOnly || !!existingFeedback}
+                    onClick={() => !readOnly && !existingFeedback && !completedWorkoutData?.feedback && setRating(ratingOption)}
+                    disabled={readOnly || !!existingFeedback || !!completedWorkoutData?.feedback}
                     className={`justify-start h-auto p-3 ${rating === ratingOption ? getRatingColor(ratingOption) : ''}`}
                   >
                     <div className="flex flex-col items-center gap-1 w-full">
@@ -1017,7 +1019,7 @@ export function SessionRetroalimentacionModal({
             {/* Comentarios */}
             <div>
               <label className="block text-sm font-medium mb-2">
-                Comentarios sobre la Sesión {!readOnly && !existingFeedback && '*'}
+                Comentarios sobre la Sesión {!readOnly && !existingFeedback && !completedWorkoutData?.feedback && '*'}
               </label>
               <Textarea
                 placeholder="Evalúa el rendimiento del atleta en esta sesión específica. Menciona aspectos positivos, áreas de mejora, cumplimiento de objetivos, técnica, actitud, etc."
@@ -1025,9 +1027,9 @@ export function SessionRetroalimentacionModal({
                 onChange={(e) => setRetroalimentacionText(e.target.value)}
                 rows={4}
                 className="resize-none"
-                disabled={readOnly || !!existingFeedback}
+                disabled={readOnly || !!existingFeedback || !!completedWorkoutData?.feedback}
               />
-              {!readOnly && !existingFeedback && (
+              {!readOnly && !existingFeedback && !completedWorkoutData?.feedback && (
                 <p className="text-xs text-muted-foreground mt-1">
                   Sé específico y constructivo en tu retroalimentación
                 </p>
@@ -1045,7 +1047,7 @@ export function SessionRetroalimentacionModal({
                 onChange={(e) => setRecommendations(e.target.value)}
                 rows={3}
                 className="resize-none"
-                disabled={readOnly || !!existingFeedback}
+                disabled={readOnly || !!existingFeedback || !!completedWorkoutData?.feedback}
               />
             </div>
 
@@ -1089,7 +1091,7 @@ export function SessionRetroalimentacionModal({
                             onChange={(e) => setLapFeedbacks(prev => ({ ...prev, [lap.id]: e.target.value }))}
                             rows={2}
                             className="resize-none text-sm"
-                            disabled={readOnly || !!existingFeedback}
+                            disabled={readOnly || !!existingFeedback || !!completedWorkoutData?.feedback}
                           />
                         </div>
                       </CardContent>
@@ -1104,7 +1106,7 @@ export function SessionRetroalimentacionModal({
         </div>
 
         <DialogFooter>
-          {readOnly || existingFeedback ? (
+          {readOnly || existingFeedback || completedWorkoutData?.feedback ? (
             <Button onClick={handleCancel}>
               Cerrar
             </Button>
