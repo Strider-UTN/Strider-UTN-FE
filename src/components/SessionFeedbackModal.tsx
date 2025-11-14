@@ -985,11 +985,12 @@ export function SessionRetroalimentacionModal({
           )}
 
           {/* Formulario de Retroalimentación */}
-          <div className="border rounded-lg p-6 space-y-6">
-            <h4 className="font-medium flex items-center gap-2">
-              <MessageSquare className="w-4 h-4" />
-              Tu Evaluación como Entrenador
-            </h4>
+          {(existingFeedback || completedWorkoutData?.feedback) && (
+            <div className="border rounded-lg p-6 space-y-6">
+              <h4 className="font-medium flex items-center gap-2">
+                <MessageSquare className="w-4 h-4" />
+                Evaluación del Entrenador {completedWorkoutData?.feedback?.coachName ? completedWorkoutData.feedback.coachName : ''}
+              </h4>
             
             {/* Selector de calificación */}
             <div>
@@ -1098,7 +1099,8 @@ export function SessionRetroalimentacionModal({
               </div>
             )}
 
-          </div>
+            </div>
+          )}
         </div>
 
         <DialogFooter>

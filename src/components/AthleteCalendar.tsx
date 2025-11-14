@@ -810,7 +810,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
 
   // Estadísticas rápidas
   const totalSessions = trainingSessions.length;
-  const completedCount = trainingSessions.filter(s => s.status === 'completed').length;
+  const completedCount = trainingSessions.filter(s => s.hasCompletedWorkout === true).length;
   const pendingCount = totalSessions - completedCount;
   const thisMonthSessions = trainingSessions.filter(s => {
     if (!s.date) return false;

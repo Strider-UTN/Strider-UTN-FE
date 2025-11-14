@@ -1,17 +1,26 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Progress } from './ui/progress';
-import { Calendar, Clock, Target, ChevronRight, ChevronDown, BookOpen, CalendarDays, Eye, MapPin, Timer, Play, CheckCircle, ChevronLeft, Home, Info } from 'lucide-react';
+import { Calendar, Clock, Target, ChevronRight, ChevronDown, BookOpen, CalendarDays, Eye, MapPin, Timer, Play, CheckCircle, ChevronLeft, Home, Info, Loader2 } from 'lucide-react';
 import { Separator } from './ui/separator';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Calendar as CalendarComponent } from './ui/calendar';
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from './ui/breadcrumb';
 import { Alert, AlertDescription } from './ui/alert';
 import { toast } from 'sonner';
+import { PlanningService } from '../services/planningService';
+import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleService';
+import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
+import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
+import { AuthService } from '../services/authService';
+import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
+import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
+import { CompletedWorkoutService } from '../services/completedWorkoutService';
 
 // Interfaces para la estructura jerárquica de planificación
 interface Macrocycle {
@@ -26,6 +35,10 @@ interface Macrocycle {
   totalWeeks: number;
   status: 'active' | 'completed' | 'planned' | 'paused';
   mesocycles: Mesocycle[];
+  _planningData?: {
+    mesocyclesCount?: number;
+    hasEndDate: boolean;
+  };
 }
 
 interface Mesocycle {
@@ -51,6 +64,7 @@ interface Microcycle {
   focus: string;
   totalLoad: number; // Carga de entrenamiento semanal
   sessions: TrainingSession[];
+  sessionsCount: number; // Número de sesiones del backend
 }
 
 interface TrainingSession {
@@ -92,402 +106,588 @@ export function AthleteTrainingPlan() {
   const [selectedMesocycle, setSelectedMesocycle] = useState<string | null>(null);
   const [selectedMicrocycle, setSelectedMicrocycle] = useState<string | null>(null);
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
+  const [selectedSessionFull, setSelectedSessionFull] = useState<any | null>(null); // Sesión completa del backend
   const [isSessionDetailOpen, setIsSessionDetailOpen] = useState(false);
-  const [completedSessions, setCompletedSessions] = useState<Set<string>>(new Set(['session1', 'session4']));
-  const [currentMonth, setCurrentMonth] = useState(new Date(2025, 0, 1)); // Enero 2025
+  const [isLoadingSessionDetail, setIsLoadingSessionDetail] = useState(false);
+  const [hasCompletedWorkout, setHasCompletedWorkout] = useState<boolean>(false);
+  const [completedWorkout, setCompletedWorkout] = useState<any>(null);
+  const [completedSessions, setCompletedSessions] = useState<Set<string>>(new Set());
+  const [currentMonth, setCurrentMonth] = useState(new Date());
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
 
-  // Macrociclos disponibles del atleta
-  const macrocycles: Macrocycle[] = [
-    {
-      id: 'macro1',
-      name: 'Temporada 2025 - Desarrollo de Medio Fondo',
-      description: 'Planificación anual enfocada en competencias de 5K y 10K con picos competitivos en primavera y otoño',
-      coach: 'María González',
-      athlete: 'Ana Martínez',
-      startDate: '2025-01-01',
-      endDate: '2025-12-31',
-      objective: 'Mejorar marcas personales en 5K (objetivo: sub 20:00) y 10K (objetivo: sub 42:00)',
-      totalWeeks: 52,
-      status: 'active',
-      mesocycles: [
-        {
-          id: 'meso1',
-          macrocycleId: 'macro1',
-          name: 'Mesociclo 1: Base Aeróbica',
-          description: 'Desarrollo de la capacidad aeróbica y construcción de base de entrenamiento',
-          startDate: '2025-01-01',
-          endDate: '2025-01-28',
-          phase: 'base',
-          objectives: [
-            'Desarrollar base aeróbica sólida',
-            'Aumentar volumen de entrenamiento gradualmente',
-            'Establecer rutinas de entrenamiento',
-            'Prevenir lesiones con trabajo de fuerza'
-          ],
-          weekCount: 4,
-          microcycles: [
-            {
-              id: 'micro1',
-              mesocycleId: 'meso1',
-              weekNumber: 1,
-              name: 'Semana 1: Adaptación Inicial',
-              startDate: '2025-01-01',
-              endDate: '2025-01-07',
-              focus: 'Adaptación progresiva al volumen de entrenamiento',
-              totalLoad: 85,
-              sessions: [
-                {
-                  id: 'session1',
-                  microcycleId: 'micro1',
-                  date: '2025-01-02',
-                  time: '07:00',
-                  name: 'Carrera Continua Base',
-                  type: 'training',
-                  duration: 45,
-                  intensity: 'low',
-                  location: 'Parque Central',
-                  status: 'completed',
-                  coach: 'María González',
-                  description: 'Carrera continua a ritmo aeróbico para establecer base cardiovascular',
-                  warmup: '10 min trote suave + movilidad articular',
-                  cooldown: '10 min caminata + estiramientos',
-                  objectives: [
-                    'Establecer ritmo aeróbico base',
-                    'Adaptación cardiovascular gradual',
-                    'Técnica de carrera relajada'
-                  ],
-                  equipment: ['Zapatillas running', 'Hidratación'],
-                  targetZones: {
-                    heartRate: '130-145 bpm',
-                    pace: '5:30-6:00 min/km',
-                    effort: '5-6/10'
-                  }
-                },
-                {
-                  id: 'session2',
-                  microcycleId: 'micro1',
-                  date: '2025-01-03',
-                  time: '18:30',
-                  name: 'Técnica + Fuerza',
-                  type: 'training',
-                  duration: 60,
-                  intensity: 'low',
-                  location: 'Gimnasio Municipal',
-                  status: 'pending',
-                  coach: 'María González',
-                  description: 'Trabajo técnico de carrera y fortalecimiento general',
-                  warmup: '15 min calentamiento dinámico',
-                  cooldown: '15 min estiramientos específicos',
-                  objectives: [
-                    'Mejorar técnica de carrera',
-                    'Fortalecimiento core y tren inferior',
-                    'Prevención de lesiones'
-                  ],
-                  equipment: ['Conos', 'Bandas elásticas', 'Colchonetas'],
-                  targetZones: {
-                    heartRate: '120-140 bpm',
-                    pace: 'Variable según ejercicio',
-                    effort: '4-5/10'
-                  }
-                },
-                {
-                  id: 'session3',
-                  microcycleId: 'micro1',
-                  date: '2025-01-04',
-                  time: '07:00',
-                  name: 'Carrera Larga Suave',
-                  type: 'training',
-                  duration: 70,
-                  intensity: 'medium',
-                  location: 'Ruta Costera',
-                  status: 'pending',
-                  coach: 'María González',
-                  description: 'Primera carrera larga de la temporada, énfasis en resistencia aeróbica',
-                  warmup: '10 min trote muy suave',
-                  cooldown: '10 min caminata + hidratación',
-                  notes: 'Mantener ritmo conversacional durante toda la carrera',
-                  objectives: [
-                    'Desarrollar resistencia aeróbica',
-                    'Adaptación a volumen sostenido',
-                    'Economía de carrera'
-                  ],
-                  equipment: ['Zapatillas trail', 'Hidratación', 'Gels energéticos'],
-                  targetZones: {
-                    heartRate: '140-155 bpm',
-                    pace: '5:15-5:45 min/km',
-                    effort: '6-7/10'
-                  }
-                },
-                {
-                  id: 'session4',
-                  microcycleId: 'micro1',
-                  date: '2025-01-06',
-                  time: '17:00',
-                  name: 'Recuperación Activa',
-                  type: 'recovery',
-                  duration: 30,
-                  intensity: 'recovery',
-                  location: 'Parque Central',
-                  status: 'completed',
-                  coach: 'María González',
-                  description: 'Carrera suave de recuperación activa',
-                  warmup: '5 min caminata dinámica',
-                  cooldown: '15 min estiramientos profundos',
-                  objectives: [
-                    'Recuperación muscular activa',
-                    'Mantener movilidad',
-                    'Relajación mental'
-                  ],
-                  equipment: ['Zapatillas suaves'],
-                  targetZones: {
-                    heartRate: '110-130 bpm',
-                    pace: '6:30-7:00 min/km',
-                    effort: '3-4/10'
-                  }
-                }
-              ]
-            },
-            {
-              id: 'micro2',
-              mesocycleId: 'meso1',
-              weekNumber: 2,
-              name: 'Semana 2: Incremento de Volumen',
-              startDate: '2025-01-08',
-              endDate: '2025-01-14',
-              focus: 'Incremento gradual del volumen semanal',
-              totalLoad: 95,
-              sessions: [
-                {
-                  id: 'session5',
-                  microcycleId: 'micro2',
-                  date: '2025-01-09',
-                  time: '07:00',
-                  name: 'Fartlek Suave',
-                  type: 'training',
-                  duration: 50,
-                  intensity: 'medium',
-                  location: 'Parque del Este',
-                  status: 'pending',
-                  coach: 'María González',
-                  description: 'Trabajo de velocidad variable para desarrollo aeróbico',
-                  intervals: [
-                    { work: '5 min ritmo base', rest: '2 min suave', repetitions: 6 }
-                  ],
-                  warmup: '15 min calentamiento progresivo',
-                  cooldown: '10 min trote suave',
-                  objectives: [
-                    'Adaptación a cambios de ritmo',
-                    'Desarrollo aeróbico con estímulos variados',
-                    'Economía de carrera'
-                  ],
-                  equipment: ['Zapatillas running', 'Reloj GPS'],
-                  targetZones: {
-                    heartRate: 'Base: 140-150 / Rápido: 160-170 bpm',
-                    pace: 'Base: 5:30 / Rápido: 4:50 min/km',
-                    effort: '6-8/10'
-                  }
-                }
-              ]
-            },
-            {
-              id: 'micro3',
-              mesocycleId: 'meso1',
-              weekNumber: 3,
-              name: 'Semana 3: Consolidación',
-              startDate: '2025-01-15',
-              endDate: '2025-01-21',
-              focus: 'Consolidación de adaptaciones',
-              totalLoad: 100,
-              sessions: []
-            },
-            {
-              id: 'micro4',
-              mesocycleId: 'meso1',
-              weekNumber: 4,
-              name: 'Semana 4: Descarga',
-              startDate: '2025-01-22',
-              endDate: '2025-01-28',
-              focus: 'Semana de descarga y recuperación',
-              totalLoad: 65,
-              sessions: []
-            }
-          ]
-        },
-        {
-          id: 'meso2',
-          macrocycleId: 'macro1',
-          name: 'Mesociclo 2: Desarrollo de Velocidad',
-          description: 'Desarrollo de velocidad aeróbica y trabajo de umbral',
-          startDate: '2025-01-29',
-          endDate: '2025-02-25',
-          phase: 'build',
-          objectives: [
-            'Desarrollar velocidad aeróbica',
-            'Mejorar umbral anaeróbico',
-            'Introducir trabajo de intervalos',
-            'Mantener base aeróbica'
-          ],
-          weekCount: 4,
-          microcycles: [
-            {
-              id: 'micro5',
-              mesocycleId: 'meso2',
-              weekNumber: 5,
-              name: 'Semana 5: Introducción a Intervalos',
-              startDate: '2025-01-29',
-              endDate: '2025-02-04',
-              focus: 'Primera semana con trabajo estructurado de intervalos',
-              totalLoad: 100,
-              sessions: [
-                {
-                  id: 'session6',
-                  microcycleId: 'micro5',
-                  date: '2025-01-30',
-                  time: '07:00',
-                  name: 'Intervalos 1000m',
-                  type: 'training',
-                  duration: 55,
-                  intensity: 'high',
-                  location: 'Pista de Atletismo',
-                  status: 'pending',
-                  coach: 'María González',
-                  description: 'Trabajo tempo con progresivos finales',
-                  intervals: [
-                    { work: '1000m', rest: '400m trote', repetitions: 5 }
-                  ],
-                  warmup: '20 min calentamiento + drills',
-                  cooldown: '15 min enfriamiento',
-                  objectives: [
-                    'Desarrollo de velocidad aeróbica',
-                    'Adaptación al trabajo de intervalos',
-                    'Economía de carrera a ritmo objetivo'
-                  ],
-                  equipment: ['Zapatillas pista', 'Cronómetro'],
-                  targetZones: {
-                    heartRate: '170-180 bpm',
-                    pace: '4:20-4:30 min/km',
-                    effort: '8-9/10'
-                  }
-                }
-              ]
-            },
-            {
-              id: 'micro6',
-              mesocycleId: 'meso2',
-              weekNumber: 6,
-              name: 'Semana 6: Intensificación',
-              startDate: '2025-02-05',
-              endDate: '2025-02-11',
-              focus: 'Aumento de intensidad en intervalos',
-              totalLoad: 105,
-              sessions: []
-            },
-            {
-              id: 'micro7',
-              mesocycleId: 'meso2',
-              weekNumber: 7,
-              name: 'Semana 7: Trabajo Umbral',
-              startDate: '2025-02-12',
-              endDate: '2025-02-18',
-              focus: 'Desarrollo del umbral anaeróbico',
-              totalLoad: 110,
-              sessions: []
-            },
-            {
-              id: 'micro8',
-              mesocycleId: 'meso2',
-              weekNumber: 8,
-              name: 'Semana 8: Test y Evaluación',
-              startDate: '2025-02-19',
-              endDate: '2025-02-25',
-              focus: 'Evaluación de progreso con test específico',
-              totalLoad: 85,
-              sessions: []
-            }
-          ]
-        },
-        {
-          id: 'meso3',
-          macrocycleId: 'macro1',
-          name: 'Mesociclo 3: Preparación Competitiva',
-          description: 'Puesta a punto para primera competencia importante de la temporada',
-          startDate: '2025-02-26',
-          endDate: '2025-03-25',
-          phase: 'peak',
-          objectives: [
-            'Afinamiento para competencia objetivo',
-            'Desarrollar velocidad específica de carrera',
-            'Optimizar estrategias de carrera',
-            'Maximizar economía de carrera'
-          ],
-          weekCount: 4,
-          microcycles: [
-            {
-              id: 'micro9',
-              mesocycleId: 'meso3',
-              weekNumber: 9,
-              name: 'Semana 9: Puesta a Punto',
-              startDate: '2025-02-26',
-              endDate: '2025-03-04',
-              focus: 'Afinamiento específico para competencia',
-              totalLoad: 90,
-              sessions: []
-            },
-            {
-              id: 'micro10',
-              mesocycleId: 'meso3',
-              weekNumber: 10,
-              name: 'Semana 10: Velocidad Específica',
-              startDate: '2025-03-05',
-              endDate: '2025-03-11',
-              focus: 'Trabajo específico al ritmo de competencia',
-              totalLoad: 85,
-              sessions: []
-            },
-            {
-              id: 'micro11',
-              mesocycleId: 'meso3',
-              weekNumber: 11,
-              name: 'Semana 11: Pre-Competencia',
-              startDate: '2025-03-12',
-              endDate: '2025-03-18',
-              focus: 'Preparación final y descanso activo',
-              totalLoad: 60,
-              sessions: []
-            },
-            {
-              id: 'micro12',
-              mesocycleId: 'meso3',
-              weekNumber: 12,
-              name: 'Semana 12: Competencia',
-              startDate: '2025-03-19',
-              endDate: '2025-03-25',
-              focus: 'Semana de competencia principal',
-              totalLoad: 40,
-              sessions: []
-            }
-          ]
-        }
-      ]
+  // Estados para datos del backend
+  const [plannings, setPlannings] = useState<any[]>([]);
+  const [isLoadingPlannings, setIsLoadingPlannings] = useState(true);
+
+  // Estados para caché (Map)
+  const [mesocyclesCache, setMesocyclesCache] = useState<Map<number, Mesocycle[]>>(new Map());
+  const [microcyclesCache, setMicrocyclesCache] = useState<Map<number, Microcycle[]>>(new Map());
+  const [sessionsCache, setSessionsCache] = useState<Map<number, TrainingSession[]>>(new Map());
+
+  // Estados para tracking de carga (evitar llamadas duplicadas)
+  const [loadingMesocycles, setLoadingMesocycles] = useState<Set<number>>(new Set());
+  const [loadingMicrocycles, setLoadingMicrocycles] = useState<Set<number>>(new Set());
+  const [loadingSessions, setLoadingSessions] = useState<Set<number>>(new Set());
+
+  // Obtener ID del atleta logueado
+  const athleteId = AuthService.getCurrentUserId();
+
+  // Función helper para extraer fecha sin timezone
+  const extractDateOnly = (dateString: string): string => {
+    if (!dateString) return '';
+    // Si viene como "YYYY-MM-DD" o "YYYY-MM-DDTHH:mm:ss.sssZ", extraer solo la parte de fecha
+    return dateString.split('T')[0];
+  };
+
+  // Función helper para calcular semanas entre dos fechas
+  const calculateWeeks = (startDate: string, endDate: string): number => {
+    // Usar extractDateOnly para evitar problemas de timezone
+    const startDateOnly = extractDateOnly(startDate);
+    const endDateOnly = extractDateOnly(endDate);
+    
+    // Parsear como fecha local (YYYY-MM-DD)
+    const [startYear, startMonth, startDay] = startDateOnly.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDateOnly.split('-').map(Number);
+    
+    const start = new Date(startYear, startMonth - 1, startDay);
+    const end = new Date(endYear, endMonth - 1, endDay);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return Math.ceil(diffDays / 7);
+  };
+
+  // Función para mapear Planning a Macrocycle
+  const mapPlanningToMacrocycle = (planning: any): Macrocycle => {
+    const startDate = extractDateOnly(planning.startDate);
+    const endDate = planning.endDate ? extractDateOnly(planning.endDate) : null;
+    // Calcular semanas solo si hay fecha fin, usando las fechas ya extraídas
+    const totalWeeks = endDate ? calculateWeeks(startDate, endDate) : 0;
+
+    return {
+      id: `planning-${planning.id}`,
+      name: planning.name,
+      description: planning.description || '',
+      coach: planning.coachName || 'Entrenador', // El backend siempre debería enviar coachName
+      athlete: 'Yo', // El atleta logueado
+      startDate,
+      endDate: endDate || startDate, // Si no hay fecha fin, usar la de inicio como fallback
+      objective: planning.description || 'Sin objetivo específico',
+      totalWeeks,
+      status: planning.status === 'active' ? 'active' : 
+              planning.status === 'completed' ? 'completed' : 
+              planning.status === 'draft' ? 'planned' : 'planned',
+      mesocycles: [], // Se cargarán lazy
+      // Guardar datos adicionales del planning para uso posterior
+      _planningData: {
+        mesocyclesCount: planning.mesocyclesCount ?? 0, // El backend siempre debería enviar mesocyclesCount
+        hasEndDate: !!planning.endDate
+      }
+    };
+  };
+
+  // Función para mapear MesocycleResponseDto a Mesocycle
+  const mapMesocycleDtoToMesocycle = (mesocycleDto: MesocycleResponseDto, planningId: number): Mesocycle => {
+    const startDate = extractDateOnly(mesocycleDto.startDate);
+    const endDate = extractDateOnly(mesocycleDto.endDate);
+    
+    // Mapear status a phase (simplificado)
+    let phase: 'base' | 'build' | 'peak' | 'recovery' | 'competition' = 'base';
+    if (mesocycleDto.status === 'active') phase = 'build';
+    if (mesocycleDto.status === 'completed') phase = 'peak';
+
+    return {
+      id: `mesocycle-${mesocycleDto.id}`,
+      macrocycleId: `planning-${planningId}`,
+      name: mesocycleDto.name,
+      description: mesocycleDto.description || '',
+      startDate,
+      endDate,
+      phase,
+      objectives: mesocycleDto.objective ? [mesocycleDto.objective] : [],
+      weekCount: mesocycleDto.weeksCount || calculateWeeks(mesocycleDto.startDate, mesocycleDto.endDate),
+      microcycles: [] // Se cargarán lazy
+    };
+  };
+
+  // Función para mapear MicrocycleResponseDto a Microcycle
+  const mapMicrocycleDtoToMicrocycle = (microcycleDto: MicrocycleResponseDto, mesocycleId: number): Microcycle => {
+    const startDate = extractDateOnly(microcycleDto.startDate);
+    const endDate = extractDateOnly(microcycleDto.endDate);
+
+    // Mapear focus (puede ser número, string o null)
+    let focusText = 'Sin enfoque específico';
+    if (microcycleDto.focus !== null && microcycleDto.focus !== undefined) {
+      if (typeof microcycleDto.focus === 'string') {
+        focusText = microcycleDto.focus;
+      } else if (typeof microcycleDto.focus === 'number') {
+        // Mapear números a texto (simplificado)
+        const focusMap: { [key: number]: string } = {
+          0: 'Resistencia Aeróbica',
+          1: 'Velocidad',
+          2: 'Fuerza',
+          3: 'Recuperación',
+          4: 'Trabajo Anaeróbico',
+          5: 'Técnica de Carrera',
+          6: 'Competición',
+          7: 'Transición',
+          8: 'Descanso Activo'
+        };
+        focusText = focusMap[microcycleDto.focus] || `Semana ${microcycleDto.weekNumber}`;
+      }
+    } else {
+      focusText = microcycleDto.name || `Semana ${microcycleDto.weekNumber}`;
     }
-  ];
 
-  // Obtener macrociclo, mesociclo y microciclo actual
-  const currentMacrocycle = macrocycles.find(m => m.id === selectedMacrocycle);
-  const currentMesocycle = currentMacrocycle?.mesocycles.find(m => m.id === selectedMesocycle);
-  const currentMicrocycle = currentMesocycle?.microcycles.find(m => m.id === selectedMicrocycle);
+    // Calcular sessionsCount: usar trainingSessionsCount si existe y es válido, sino sessions, sino 0
+    const sessionsCount = (microcycleDto.trainingSessionsCount != null && microcycleDto.trainingSessionsCount >= 0) 
+      ? microcycleDto.trainingSessionsCount 
+      : (microcycleDto.sessions != null && microcycleDto.sessions >= 0)
+        ? microcycleDto.sessions
+        : 0;
 
-  // Obtener todas las sesiones según el contexto de navegación
+    return {
+      id: `microcycle-${microcycleDto.id}`,
+      mesocycleId: `mesocycle-${mesocycleId}`,
+      weekNumber: microcycleDto.weekNumber,
+      name: microcycleDto.name || `Semana ${microcycleDto.weekNumber}`,
+      startDate,
+      endDate,
+      focus: focusText,
+      totalLoad: microcycleDto.volume || 0,
+      sessions: [], // Se cargarán lazy
+      sessionsCount // Número de sesiones del backend
+    };
+  };
+
+  // Función para mapear TrainingSessionResponseDto a TrainingSession
+  const mapSessionDtoToTrainingSession = (sessionDto: TrainingSessionResponseDto, microcycleId: number): TrainingSession => {
+    const dateStr = extractDateOnly(sessionDto.date);
+    const dateObj = new Date(sessionDto.date);
+    const time = dateObj.toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' });
+
+    // Mapear category a type
+    let type: 'training' | 'prep_competition' | 'main_competition' | 'recovery' = 'training';
+    const categoryLower = (sessionDto.category || '').toLowerCase();
+    if (categoryLower.includes('competition') || categoryLower.includes('competencia')) {
+      type = categoryLower.includes('main') || categoryLower.includes('principal') ? 'main_competition' : 'prep_competition';
+    } else if (categoryLower.includes('recovery') || categoryLower.includes('recuperación')) {
+      type = 'recovery';
+    }
+
+    // Mapear intensity (del microciclo o calcular desde series)
+    let intensity: 'low' | 'medium' | 'high' | 'recovery' = 'medium';
+    if (type === 'recovery') {
+      intensity = 'recovery';
+    } else {
+      // Intentar inferir desde las series/intervals
+      const hasHighIntensity = sessionDto.series?.some(s => 
+        s.intervals?.some(i => 
+          i.intensity === 'high' || 
+          (i.vo2MaxPercentage && i.vo2MaxPercentage > 85)
+        )
+      );
+      if (hasHighIntensity) intensity = 'high';
+    }
+
+    // Construir intervals desde series
+    const intervals: { work: string; rest: string; repetitions: number }[] = [];
+    sessionDto.series?.forEach(series => {
+      series.intervals?.forEach(interval => {
+        const work = interval.distance 
+          ? `${interval.distance}m` 
+          : interval.duration || interval.targetTime || 'N/A';
+        const rest = interval.recoveryTime || 'N/A';
+        intervals.push({
+          work,
+          rest,
+          repetitions: interval.repetitions || series.repetitions || 1
+        });
+      });
+    });
+
+    // Calcular duración estimada
+    let duration = 0;
+    if (sessionDto.estimatedWorkSeconds) {
+      duration = Math.ceil(sessionDto.estimatedWorkSeconds / 60);
+    } else if (sessionDto.series && sessionDto.series.length > 0) {
+      // Calcular desde intervals
+      duration = 60; // Default
+    } else {
+      duration = 60; // Default
+    }
+
+    return {
+      id: `session-${sessionDto.id}`,
+      microcycleId: `microcycle-${microcycleId}`,
+      date: dateStr,
+      time,
+      name: sessionDto.name,
+      type,
+      duration,
+      intensity,
+      location: 'No especificada',
+      status: sessionDto.hasCompletedWorkout ? 'completed' : 'pending',
+      coach: sessionDto.createdByName || 'Entrenador',
+      description: sessionDto.description || '',
+      intervals: intervals.length > 0 ? intervals : undefined,
+      notes: sessionDto.notes,
+      objectives: sessionDto.description ? [sessionDto.description] : undefined
+    };
+  };
+
+  // Cargar planificaciones al montar el componente
+  useEffect(() => {
+    const loadPlannings = async () => {
+      if (!athleteId) {
+        setIsLoadingPlannings(false);
+        return;
+      }
+
+      try {
+        setIsLoadingPlannings(true);
+        const planningsData = await PlanningService.getPlanningsByAthleteId(athleteId);
+        const mappedPlannings = planningsData.map(mapPlanningToMacrocycle);
+        setPlannings(mappedPlannings);
+      } catch (error) {
+        console.error('Error al cargar planificaciones:', error);
+        toast.error('Error al cargar planificaciones');
+      } finally {
+        setIsLoadingPlannings(false);
+      }
+    };
+
+    loadPlannings();
+  }, [athleteId]);
+
+  // Función helper para calcular fecha de fin basada en fecha de inicio y cantidad de semanas
+  const calculateEndDateFromWeeks = (startDate: string, weeksCount: number): string => {
+    const [year, month, day] = startDate.split('-').map(Number);
+    const start = new Date(year, month - 1, day);
+    // Sumar semanas: semanas * 7 días - 1 día (porque el primer día cuenta)
+    const end = new Date(start);
+    end.setDate(end.getDate() + (weeksCount * 7 - 1));
+    
+    // Formatear como YYYY-MM-DD
+    const endYear = end.getFullYear();
+    const endMonth = String(end.getMonth() + 1).padStart(2, '0');
+    const endDay = String(end.getDate()).padStart(2, '0');
+    return `${endYear}-${endMonth}-${endDay}`;
+  };
+
+  // Función para cargar mesociclos de una planificación (lazy con caché)
+  const loadMesocycles = async (planningId: number) => {
+    // Verificar caché
+    if (mesocyclesCache.has(planningId)) {
+      return mesocyclesCache.get(planningId)!;
+    }
+
+    // Verificar si ya se está cargando
+    if (loadingMesocycles.has(planningId)) {
+      return [];
+    }
+
+    try {
+      setLoadingMesocycles(prev => new Set(prev).add(planningId));
+      const mesocyclesData = await MesocycleService.getMesocyclesByPlanningId(planningId);
+      const mappedMesocycles = mesocyclesData.map(dto => mapMesocycleDtoToMesocycle(dto, planningId));
+      
+      // Ordenar por fecha de inicio (usando parseo correcto de fechas)
+      mappedMesocycles.sort((a, b) => {
+        const [yearA, monthA, dayA] = a.startDate.split('-').map(Number);
+        const [yearB, monthB, dayB] = b.startDate.split('-').map(Number);
+        const dateA = new Date(yearA, monthA - 1, dayA);
+        const dateB = new Date(yearB, monthB - 1, dayB);
+        return dateA.getTime() - dateB.getTime();
+      });
+      
+      // Guardar en caché
+      setMesocyclesCache(prev => new Map(prev).set(planningId, mappedMesocycles));
+      return mappedMesocycles;
+    } catch (error) {
+      console.error(`Error al cargar mesociclos de planificación ${planningId}:`, error);
+      toast.error('Error al cargar mesociclos');
+      return [];
+    } finally {
+      setLoadingMesocycles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(planningId);
+        return newSet;
+      });
+    }
+  };
+
+  // Función para cargar microciclos de un mesociclo (lazy con caché)
+  const loadMicrocycles = async (mesocycleId: number) => {
+    // Verificar caché
+    if (microcyclesCache.has(mesocycleId)) {
+      return microcyclesCache.get(mesocycleId)!;
+    }
+
+    // Verificar si ya se está cargando
+    if (loadingMicrocycles.has(mesocycleId)) {
+      return [];
+    }
+
+    try {
+      setLoadingMicrocycles(prev => new Set(prev).add(mesocycleId));
+      const microcyclesData = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycleId);
+      const mappedMicrocycles = microcyclesData.map(dto => mapMicrocycleDtoToMicrocycle(dto, mesocycleId));
+      
+      // Ordenar microciclos por weekNumber
+      mappedMicrocycles.sort((a, b) => a.weekNumber - b.weekNumber);
+      
+      // Guardar en caché
+      setMicrocyclesCache(prev => new Map(prev).set(mesocycleId, mappedMicrocycles));
+      
+      // Recalcular fecha de fin del mesociclo basándose en la cantidad de microciclos
+      if (mappedMicrocycles.length > 0) {
+        // Buscar el mesociclo en el caché para obtener el planningId y actualizar fecha de fin
+        setMesocyclesCache(prev => {
+          const updated = new Map(prev);
+          // Buscar en todos los plannings
+          for (const [planningId, mesocycles] of updated.entries()) {
+            const mesocycle = mesocycles.find(m => m.id === `mesocycle-${mesocycleId}`);
+            if (mesocycle) {
+              // Calcular fecha de fin basada en cantidad de microciclos
+              const calculatedEndDate = calculateEndDateFromWeeks(mesocycle.startDate, mappedMicrocycles.length);
+              const updatedMesocycles = mesocycles.map(m => {
+                if (m.id === `mesocycle-${mesocycleId}`) {
+                  return {
+                    ...m,
+                    endDate: calculatedEndDate,
+                    weekCount: mappedMicrocycles.length
+                  };
+                }
+                return m;
+              });
+              
+              // Reordenar por fecha de inicio después de actualizar
+              updatedMesocycles.sort((a, b) => {
+                const [yearA, monthA, dayA] = a.startDate.split('-').map(Number);
+                const [yearB, monthB, dayB] = b.startDate.split('-').map(Number);
+                const dateA = new Date(yearA, monthA - 1, dayA);
+                const dateB = new Date(yearB, monthB - 1, dayB);
+                return dateA.getTime() - dateB.getTime();
+              });
+              
+              updated.set(planningId, updatedMesocycles);
+              break;
+            }
+          }
+          return updated;
+        });
+      }
+      
+      return mappedMicrocycles;
+    } catch (error) {
+      console.error(`Error al cargar microciclos del mesociclo ${mesocycleId}:`, error);
+      toast.error('Error al cargar microciclos');
+      return [];
+    } finally {
+      setLoadingMicrocycles(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(mesocycleId);
+        return newSet;
+      });
+    }
+  };
+
+  // Función para cargar sesiones de un microciclo (lazy con caché)
+  const loadSessions = async (microcycleId: number, planningId: number) => {
+    // Verificar caché
+    if (sessionsCache.has(microcycleId)) {
+      return sessionsCache.get(microcycleId)!;
+    }
+
+    // Verificar si ya se está cargando
+    if (loadingSessions.has(microcycleId)) {
+      return [];
+    }
+
+    try {
+      setLoadingSessions(prev => new Set(prev).add(microcycleId));
+      
+      // Cargar todas las sesiones del atleta para esta planificación
+      if (!athleteId) return [];
+      
+      const sessionsData = await TrainingSessionService.getTrainingSessionsByAthleteId(athleteId, planningId);
+      
+      // Filtrar sesiones que pertenecen a este microciclo
+      const filteredSessions = sessionsData.filter(s => s.microcycleId === microcycleId);
+      const mappedSessions = filteredSessions.map(dto => mapSessionDtoToTrainingSession(dto, microcycleId));
+      
+      // Guardar en caché
+      setSessionsCache(prev => new Map(prev).set(microcycleId, mappedSessions));
+      return mappedSessions;
+    } catch (error) {
+      console.error(`Error al cargar sesiones del microciclo ${microcycleId}:`, error);
+      toast.error('Error al cargar sesiones');
+      return [];
+    } finally {
+      setLoadingSessions(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(microcycleId);
+        return newSet;
+      });
+    }
+  };
+
+  // Macrociclos disponibles del atleta (desde backend)
+  const macrocycles: Macrocycle[] = useMemo(() => {
+    return plannings.map(planning => {
+      // Si la planificación está seleccionada y tiene mesociclos en caché, incluirlos
+      const planningId = parseInt(planning.id.replace('planning-', ''));
+      let cachedMesocycles = mesocyclesCache.get(planningId);
+      
+      // Asegurar que los mesociclos estén ordenados por fecha de inicio
+      if (cachedMesocycles && cachedMesocycles.length > 0) {
+        cachedMesocycles = [...cachedMesocycles].sort((a, b) => {
+          const [yearA, monthA, dayA] = a.startDate.split('-').map(Number);
+          const [yearB, monthB, dayB] = b.startDate.split('-').map(Number);
+          const dateA = new Date(yearA, monthA - 1, dayA);
+          const dateB = new Date(yearB, monthB - 1, dayB);
+          return dateA.getTime() - dateB.getTime();
+        });
+      }
+      
+      return {
+        ...planning,
+        mesocycles: cachedMesocycles || [],
+        // Preservar _planningData si existe
+        _planningData: planning._planningData || {
+          mesocyclesCount: 0,
+          hasEndDate: !!planning.endDate
+        }
+      };
+    });
+  }, [plannings, mesocyclesCache]);
+
+  // Obtener macrociclo, mesociclo y microciclo actual con datos del backend
+  const currentMacrocycle = useMemo(() => {
+    return macrocycles.find(m => m.id === selectedMacrocycle);
+  }, [macrocycles, selectedMacrocycle]);
+
+  const currentMesocycle = useMemo(() => {
+    if (!currentMacrocycle || !selectedMesocycle) return null;
+    return currentMacrocycle.mesocycles.find(m => m.id === selectedMesocycle);
+  }, [currentMacrocycle, selectedMesocycle]);
+
+  const currentMicrocycle = useMemo(() => {
+    if (!currentMesocycle || !selectedMicrocycle) return null;
+    return currentMesocycle.microcycles.find(m => m.id === selectedMicrocycle);
+  }, [currentMesocycle, selectedMicrocycle]);
+
+  // Cargar mesociclos cuando se selecciona una planificación
+  useEffect(() => {
+    if (selectedMacrocycle) {
+      const planningId = parseInt(selectedMacrocycle.replace('planning-', ''));
+      if (planningId && !mesocyclesCache.has(planningId) && !loadingMesocycles.has(planningId)) {
+        loadMesocycles(planningId);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMacrocycle]);
+
+  // Cargar microciclos cuando se selecciona un mesociclo
+  useEffect(() => {
+    if (selectedMesocycle && currentMesocycle) {
+      const mesocycleId = parseInt(selectedMesocycle.replace('mesocycle-', ''));
+      if (mesocycleId && !microcyclesCache.has(mesocycleId) && !loadingMicrocycles.has(mesocycleId)) {
+        loadMicrocycles(mesocycleId).then(microcycles => {
+          // Actualizar el mesociclo en el caché con sus microciclos y fecha de fin recalculada
+          if (currentMacrocycle) {
+            const planningId = parseInt(currentMacrocycle.id.replace('planning-', ''));
+            setMesocyclesCache(prev => {
+              const updated = new Map(prev);
+              const mesocycles = updated.get(planningId) || [];
+              const updatedMesocycles = mesocycles.map(m => {
+                if (m.id === selectedMesocycle) {
+                  // Recalcular fecha de fin basada en cantidad de microciclos
+                  const calculatedEndDate = calculateEndDateFromWeeks(m.startDate, microcycles.length);
+                  return {
+                    ...m,
+                    microcycles,
+                    endDate: calculatedEndDate,
+                    weekCount: microcycles.length
+                  };
+                }
+                return m;
+              });
+              
+              // Reordenar por fecha de inicio después de actualizar
+              updatedMesocycles.sort((a, b) => {
+                const [yearA, monthA, dayA] = a.startDate.split('-').map(Number);
+                const [yearB, monthB, dayB] = b.startDate.split('-').map(Number);
+                const dateA = new Date(yearA, monthA - 1, dayA);
+                const dateB = new Date(yearB, monthB - 1, dayB);
+                return dateA.getTime() - dateB.getTime();
+              });
+              
+              updated.set(planningId, updatedMesocycles);
+              return updated;
+            });
+          }
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMesocycle]);
+
+  // Cargar sesiones cuando se selecciona un microciclo y posicionar calendario en la semana del microciclo
+  useEffect(() => {
+    if (selectedMicrocycle && currentMicrocycle && currentMacrocycle) {
+      const microcycleId = parseInt(selectedMicrocycle.replace('microcycle-', ''));
+      const planningId = parseInt(currentMacrocycle.id.replace('planning-', ''));
+      
+      // Posicionar el calendario en la fecha de inicio del microciclo
+      const startDateOnly = extractDateOnly(currentMicrocycle.startDate);
+      const [year, month, day] = startDateOnly.split('-').map(Number);
+      const microcycleStartDate = new Date(year, month - 1, day);
+      setCurrentMonth(microcycleStartDate);
+      
+      if (microcycleId && planningId && !sessionsCache.has(microcycleId) && !loadingSessions.has(microcycleId)) {
+        loadSessions(microcycleId, planningId).then(sessions => {
+          // Actualizar el microciclo en el caché con sus sesiones
+          if (currentMesocycle) {
+            const mesocycleId = parseInt(currentMesocycle.id.replace('mesocycle-', ''));
+            setMicrocyclesCache(prev => {
+              const updated = new Map(prev);
+              const microcycles = updated.get(mesocycleId) || [];
+              const updatedMicrocycles = microcycles.map(m => 
+                m.id === selectedMicrocycle ? { 
+                  ...m, 
+                  sessions,
+                  // Preservar sessionsCount si ya existe, o usar la longitud de las sesiones cargadas como fallback
+                  sessionsCount: m.sessionsCount ?? sessions.length
+                } : m
+              );
+              updated.set(mesocycleId, updatedMicrocycles);
+              return updated;
+            });
+          }
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedMicrocycle]);
+
+  // Obtener todas las sesiones según el contexto de navegación (actualizado para usar datos del backend)
   const getAllSessions = (): TrainingSession[] => {
     if (selectedMicrocycle && currentMicrocycle) {
       // Si hay un microciclo seleccionado, mostrar solo sus sesiones
-      return currentMicrocycle.sessions;
+      const microcycleId = parseInt(selectedMicrocycle.replace('microcycle-', ''));
+      return sessionsCache.get(microcycleId) || currentMicrocycle.sessions || [];
     } else if (selectedMesocycle && currentMesocycle) {
       // Si hay un mesociclo seleccionado, mostrar sesiones de todos sus microciclos
       const sessions: TrainingSession[] = [];
       currentMesocycle.microcycles.forEach(microcycle => {
-        sessions.push(...microcycle.sessions);
+        const microcycleId = parseInt(microcycle.id.replace('microcycle-', ''));
+        const cachedSessions = sessionsCache.get(microcycleId);
+        if (cachedSessions) {
+          sessions.push(...cachedSessions);
+        } else {
+          sessions.push(...(microcycle.sessions || []));
+        }
       });
       return sessions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     } else if (selectedMacrocycle && currentMacrocycle) {
@@ -495,7 +695,13 @@ export function AthleteTrainingPlan() {
       const sessions: TrainingSession[] = [];
       currentMacrocycle.mesocycles.forEach(mesocycle => {
         mesocycle.microcycles.forEach(microcycle => {
-          sessions.push(...microcycle.sessions);
+          const microcycleId = parseInt(microcycle.id.replace('microcycle-', ''));
+          const cachedSessions = sessionsCache.get(microcycleId);
+          if (cachedSessions) {
+            sessions.push(...cachedSessions);
+          } else {
+            sessions.push(...(microcycle.sessions || []));
+          }
         });
       });
       return sessions.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -530,8 +736,28 @@ export function AthleteTrainingPlan() {
 
   const getSessionsForDay = (date: Date) => {
     const dateString = date.toISOString().split('T')[0];
+    
+    // Si estamos en la vista del microciclo, solo mostrar sesiones de ese microciclo
+    if (selectedMicrocycle && currentMicrocycle) {
+      const microcycleId = parseInt(selectedMicrocycle.replace('microcycle-', ''));
+      const cachedSessions = sessionsCache.get(microcycleId) || currentMicrocycle.sessions || [];
+      return cachedSessions.filter(session => session.date === dateString);
+    }
+    
+    // Si estamos en otra vista, usar getAllSessions()
     const allSessions = getAllSessions();
     return allSessions.filter(session => session.date === dateString);
+  };
+  
+  // Función para verificar si una fecha está dentro del rango del microciclo
+  const isDateInMicrocycleRange = (date: Date): boolean => {
+    if (!currentMicrocycle) return false;
+    
+    const dateString = date.toISOString().split('T')[0];
+    const startDateOnly = extractDateOnly(currentMicrocycle.startDate);
+    const endDateOnly = extractDateOnly(currentMicrocycle.endDate);
+    
+    return dateString >= startDateOnly && dateString <= endDateOnly;
   };
 
   const navigateMonth = (direction: 'prev' | 'next') => {
@@ -597,10 +823,47 @@ export function AthleteTrainingPlan() {
     }
   };
 
-  const formatDateRange = (startDate: string, endDate: string) => {
-    const start = new Date(startDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
-    const end = new Date(endDate).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  // Función para formatear fecha inicio y fin de microciclo (semana)
+  const formatMicrocycleDateRange = (startDate: string, endDate: string) => {
+    const startDateOnly = extractDateOnly(startDate);
+    const endDateOnly = extractDateOnly(endDate);
+    
+    const [startYear, startMonth, startDay] = startDateOnly.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDateOnly.split('-').map(Number);
+    
+    const start = new Date(startYear, startMonth - 1, startDay);
+    const end = new Date(endYear, endMonth - 1, endDay);
+    
+    const startFormatted = start.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    const endFormatted = end.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+    
+    return `${startFormatted} - ${endFormatted}`;
+  };
+
+  const formatDateRange = (startDate: string, endDate: string, hasEndDate?: boolean) => {
+    // Usar extractDateOnly para evitar problemas de timezone
+    const startDateOnly = extractDateOnly(startDate);
+    const endDateOnly = endDate ? extractDateOnly(endDate) : null;
+    
+    // Parsear como fecha local (YYYY-MM-DD) para evitar problemas de timezone
+    const [startYear, startMonth, startDay] = startDateOnly.split('-').map(Number);
+    const start = new Date(startYear, startMonth - 1, startDay).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
+    
+    // Si no hay fecha fin o es la misma que la de inicio, mostrar solo inicio
+    if (!hasEndDate || !endDateOnly || endDateOnly === startDateOnly) {
+      return start;
+    }
+    
+    const [endYear, endMonth, endDay] = endDateOnly.split('-').map(Number);
+    const end = new Date(endYear, endMonth - 1, endDay).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
     return `${start} - ${end}`;
+  };
+
+  // Función para formatear solo la fecha de inicio
+  const formatStartDate = (startDate: string) => {
+    const startDateOnly = extractDateOnly(startDate);
+    const [year, month, day] = startDateOnly.split('-').map(Number);
+    return new Date(year, month - 1, day).toLocaleDateString('es-ES', { day: 'numeric', month: 'short', year: 'numeric' });
   };
 
   const formatTime = (minutes: number) => {
@@ -610,7 +873,10 @@ export function AthleteTrainingPlan() {
   };
 
   const formatSessionDate = (dateString: string) => {
-    const date = new Date(dateString);
+    // Usar extractDateOnly para evitar problemas de timezone
+    const dateOnly = extractDateOnly(dateString);
+    const [year, month, day] = dateOnly.split('-').map(Number);
+    const date = new Date(year, month - 1, day); // month es 0-indexed
     return date.toLocaleDateString('es-ES', {
       weekday: 'long',
       day: 'numeric',
@@ -618,9 +884,353 @@ export function AthleteTrainingPlan() {
     });
   };
 
-  const handleSessionDetail = (session: TrainingSession) => {
+  // Funciones helper para formatear datos del modal (igual que AthleteCalendar)
+  const parseDurationToSeconds = (value?: string | null): number | null => {
+    if (!value) return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    if (/^PT/i.test(trimmed)) {
+      const match = trimmed.match(/^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i);
+      if (match) {
+        const hours = Number(match[1] ?? 0);
+        const minutes = Number(match[2] ?? 0);
+        const seconds = Number(match[3] ?? 0);
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+      return null;
+    }
+
+    if (trimmed.includes(':')) {
+      const segments = trimmed.split(':');
+      const numbers = segments.map(segment => Number(segment));
+      if (numbers.some(num => Number.isNaN(num))) {
+        return null;
+      }
+
+      if (segments.length === 2) {
+        const [minutes, seconds] = numbers;
+        return minutes * 60 + seconds;
+      }
+
+      if (segments.length === 3) {
+        const [hours, minutes, seconds] = numbers;
+        return hours * 3600 + minutes * 60 + seconds;
+      }
+
+      return null;
+    }
+
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return numeric * 60;
+    }
+
+    return null;
+  };
+
+  const formatSecondsAsClock = (seconds?: number | null): string => {
+    if (seconds === undefined || seconds === null || Number.isNaN(seconds)) {
+      return '—';
+    }
+
+    if (seconds >= 3600) {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const formatDurationLabel = (value?: string | null): string => {
+    const seconds = parseDurationToSeconds(value);
+    if (seconds === null) {
+      return value?.trim() || '—';
+    }
+
+    if (seconds >= 3600) {
+      const hours = Math.floor(seconds / 3600);
+      const minutes = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  };
+
+  const formatDistanceMeters = (meters?: number): string => {
+    if (meters === undefined || meters === null || Number.isNaN(meters)) return '—';
+    if (meters >= 1000) {
+      return `${(meters / 1000).toFixed(2)} km`;
+    }
+    return `${meters.toFixed(0)} m`;
+  };
+
+  const formatDistanceKm = (kilometers?: number): string => {
+    if (kilometers === undefined || kilometers === null || Number.isNaN(kilometers)) {
+      return '—';
+    }
+    return `${kilometers.toFixed(2)} km`;
+  };
+
+  const formatIntervalIntensityLabel = (intensity?: string): string | undefined => {
+    switch (intensity) {
+      case 'easy':
+        return 'Suave';
+      case 'moderate':
+        return 'Moderada';
+      case 'hard':
+        return 'Alta';
+      case 'very_hard':
+        return 'Muy alta';
+      case 'max':
+        return 'Máxima';
+      default:
+        return undefined;
+    }
+  };
+
+  const summarizeIntervalWork = (interval: TrainingIntervalResponseDto): string => {
+    if (interval.duration) {
+      return formatDurationLabel(interval.duration);
+    }
+
+    if (interval.targetTime) {
+      return formatDurationLabel(interval.targetTime);
+    }
+
+    if (interval.distance) {
+      return `${interval.distance} m`;
+    }
+
+    if (interval.pace && interval.paceType) {
+      return `${interval.paceType} ${interval.pace}`;
+    }
+
+    if (interval.description) {
+      return interval.description;
+    }
+
+    return 'Intervalo';
+  };
+
+  const determineTargetPace = (interval: TrainingIntervalResponseDto): string | undefined => {
+    if (interval.targetSpeed) {
+      return interval.targetSpeed;
+    }
+
+    if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
+      return `${interval.pace} ${interval.paceType}`;
+    }
+
+    if (interval.targetTime) {
+      return formatDurationLabel(interval.targetTime);
+    }
+
+    return undefined;
+  };
+
+  const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto) => {
+    const repetitions = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
+    const distancePerRepMeters = typeof interval.distance === 'number' ? interval.distance : undefined;
+    const totalDistanceMeters = distancePerRepMeters ? distancePerRepMeters * repetitions : undefined;
+
+    return {
+      id: interval.id?.toString() ?? `interval-${Math.random().toString(36).slice(2, 10)}`,
+      workSummary: summarizeIntervalWork(interval),
+      repetitions,
+      distancePerRepMeters,
+      totalDistanceMeters,
+      targetPace: determineTargetPace(interval),
+      recoveryTime: interval.recoveryTime,
+      intensity: mapIntervalIntensityFromBackend(interval.intensity),
+      notes: interval.description,
+      work: summarizeIntervalWork(interval),
+      rest: interval.recoveryTime || '00:00'
+    };
+  };
+
+  const buildSeriesStructure = (session: TrainingSessionResponseDto) => {
+    const isSimpleStructure = session.structureType?.toLowerCase() === 'simple';
+    const fallbackIntervals = session.intervals ?? [];
+    const hasBackendSeries = Array.isArray(session.series) && session.series.length > 0;
+
+    const backendSeries = hasBackendSeries
+      ? session.series!
+      : [{
+          id: 0,
+          name: 'Intervalos Simples',
+          repetitions: 1,
+          recoveryBetweenSets: '00:00',
+          orderIndex: 0,
+          notes: undefined,
+          intervals: fallbackIntervals
+        } as TrainingSessionResponseDto['series'][number]];
+
+    if (isSimpleStructure) {
+      return [];
+    }
+
+    return backendSeries.map((series, index) => {
+      const mappedIntervals = (series.intervals ?? []).map(mapIntervalToCalendarInterval);
+      const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
+      const baseDistance = mappedIntervals.reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
+      const totalDistanceMeters = baseDistance * seriesRepetitions;
+
+      return {
+        id: series.id?.toString() ?? `series-${index}`,
+        name: series.name?.trim() || `Serie ${index + 1}`,
+        repetitions: seriesRepetitions,
+        recoveryBetweenSets: series.recoveryBetweenSets,
+        intervals: mappedIntervals,
+        totalDistanceMeters
+      };
+    });
+  };
+
+  const calculateSessionDistanceKm = (
+    series: any[],
+    simpleIntervals?: any[],
+    fallbackVolume?: number
+  ): number | undefined => {
+    const seriesMeters = series.reduce((sum, serie) => sum + (serie.totalDistanceMeters ?? 0), 0);
+    const intervalsMeters = (simpleIntervals ?? []).reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
+    const totalMeters = seriesMeters + intervalsMeters;
+    if (totalMeters > 0) {
+      return totalMeters / 1000;
+    }
+
+    if (fallbackVolume && !Number.isNaN(Number(fallbackVolume))) {
+      return Number(fallbackVolume);
+    }
+
+    return undefined;
+  };
+
+  const getIntervalsFromSession = (session: TrainingSessionResponseDto): TrainingIntervalResponseDto[] => {
+    const structure = session.structureType?.toLowerCase();
+    if ((structure === 'simple' || structure === 'intervals') && session.intervals && session.intervals.length > 0) {
+      return session.intervals;
+    }
+
+    if (session.series && session.series.length > 0) {
+      return session.series.flatMap(serie => serie.intervals ?? []);
+    }
+
+    return session.intervals ?? [];
+  };
+
+  const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto) => {
+    const rawDate = session.date?.toString() ?? '';
+    const dateString = rawDate
+      ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate)
+      : extractDateOnly(new Date().toISOString());
+    const intervals = getIntervalsFromSession(session);
+    const series = buildSeriesStructure(session);
+    const simpleIntervalDetails = session.structureType?.toLowerCase() === 'simple'
+      ? intervals.map(mapIntervalToCalendarInterval)
+      : undefined;
+    const totalDistanceKm = calculateSessionDistanceKm(
+      series,
+      simpleIntervalDetails,
+      session.volume ? Number(session.volume) : undefined
+    );
+
+    return {
+      id: session.id.toString(),
+      microcycleId: session.microcycleId ? session.microcycleId.toString() : undefined,
+      date: dateString,
+      name: session.name || 'Sesión sin nombre',
+      type: mapTrainingCategoryFromBackend(session.category) as 'training' | 'prep_competition' | 'main_competition' | 'recovery',
+      intensity: 'medium' as const,
+      description: session.description ?? undefined,
+      intervals: session.structureType?.toLowerCase() === 'simple' && simpleIntervalDetails && simpleIntervalDetails.length > 0
+        ? simpleIntervalDetails.map(detail => ({
+            id: detail.id,
+            work: detail.workSummary,
+            rest: detail.recoveryTime || '00:00',
+            recoveryTime: detail.recoveryTime,
+            repetitions: detail.repetitions ?? 1,
+            distancePerRepMeters: detail.distancePerRepMeters,
+            totalDistanceMeters: detail.totalDistanceMeters,
+            targetPace: detail.targetPace,
+            intensity: detail.intensity,
+            notes: detail.notes
+          }))
+        : undefined,
+      series,
+      warmup: undefined,
+      cooldown: undefined,
+      notes: session.notes ?? undefined,
+      objectives: undefined,
+      equipment: undefined,
+      targetZones: undefined,
+      structureType: (session.structureType as 'simple' | 'advanced') ?? undefined,
+      volume: session.volume ? Number(session.volume) : undefined,
+      totalDistanceKm,
+      estimatedWorkSeconds: session.estimatedWorkSeconds ?? undefined,
+      estimatedRecoverySeconds: session.estimatedRecoverySeconds ?? undefined,
+      trainingSessionAthleteId: session.trainingSessionAthleteId,
+      hasCompletedWorkout: session.hasCompletedWorkout ?? false
+    };
+  };
+
+  const handleSessionDetail = async (session: TrainingSession) => {
     setSelectedSession(session);
     setIsSessionDetailOpen(true);
+    setIsLoadingSessionDetail(true);
+    
+    try {
+      // Extraer el ID numérico de la sesión (formato: "session-123")
+      const sessionId = parseInt(session.id.replace('session-', ''));
+      if (!sessionId) {
+        console.error('No se pudo extraer el ID de la sesión');
+        setIsLoadingSessionDetail(false);
+        return;
+      }
+
+      // Cargar la sesión completa del backend
+      const fullSession = await TrainingSessionService.getTrainingSessionById(sessionId);
+      if (!fullSession) {
+        toast.error('No se pudo cargar la sesión');
+        setIsLoadingSessionDetail(false);
+        return;
+      }
+      
+      const mappedSession = mapBackendSessionToCalendar(fullSession);
+      setSelectedSessionFull(mappedSession);
+      
+      // Verificar si hay workout completado
+      const hasResults = mappedSession.hasCompletedWorkout ?? false;
+      setHasCompletedWorkout(hasResults);
+      
+      // Si hay resultados, cargar los detalles del workout
+      if (hasResults && mappedSession.trainingSessionAthleteId) {
+        try {
+          const workout = await CompletedWorkoutService.getCompletedWorkoutByTrainingSessionAthleteIdAndDate(
+            mappedSession.trainingSessionAthleteId,
+            mappedSession.date
+          );
+          setCompletedWorkout(workout);
+        } catch (error) {
+          console.error('Error al cargar detalles del workout:', error);
+          setCompletedWorkout(null);
+        }
+      } else {
+        setCompletedWorkout(null);
+      }
+    } catch (error) {
+      console.error('Error al cargar la sesión completa:', error);
+      toast.error('Error al cargar los detalles de la sesión');
+    } finally {
+      setIsLoadingSessionDetail(false);
+    }
   };
 
   const handleToggleCompleted = (sessionId: string) => {
@@ -739,58 +1349,90 @@ export function AthleteTrainingPlan() {
             </p>
           </div>
 
-          <div className="grid gap-6">
-            {macrocycles.map((macrocycle) => (
-              <Card key={macrocycle.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleSelectMacrocycle(macrocycle.id)}>
-                <CardHeader>
-                  <div className="flex items-start justify-between">
-                    <div className="flex-1">
-                      <CardTitle className="flex items-center gap-2">
-                        <Calendar className="w-5 h-5 text-primary" />
-                        {macrocycle.name}
-                      </CardTitle>
-                      <CardDescription className="mt-2">
-                        {macrocycle.description}
-                      </CardDescription>
+          {isLoadingPlannings ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-primary" />
+              <span className="ml-2 text-muted-foreground">Cargando planificaciones...</span>
+            </div>
+          ) : macrocycles.length === 0 ? (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                No tienes planificaciones asignadas. Contacta a tu entrenador para que te asigne una planificación.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <div className="grid gap-6">
+              {macrocycles.map((macrocycle) => (
+                <Card key={macrocycle.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleSelectMacrocycle(macrocycle.id)}>
+                  <CardHeader>
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <CardTitle className="flex items-center gap-2">
+                          <Calendar className="w-5 h-5 text-primary" />
+                          {macrocycle.name}
+                        </CardTitle>
+                        <CardDescription className="mt-2">
+                          {macrocycle.description}
+                        </CardDescription>
+                      </div>
+                      <Badge variant="outline" className={macrocycle.status === 'active' ? 'bg-primary/10 text-primary border-primary/20' : ''}>
+                        {macrocycle.status === 'active' ? 'Activo' : macrocycle.status === 'completed' ? 'Completado' : 'Planificado'}
+                      </Badge>
                     </div>
-                    <Badge variant="outline" className={macrocycle.status === 'active' ? 'bg-primary/10 text-primary border-primary/20' : ''}>
-                      {macrocycle.status === 'active' ? 'Activo' : macrocycle.status === 'completed' ? 'Completado' : 'Planificado'}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                    <div>
-                      <div className="text-sm text-muted-foreground">Entrenador</div>
-                      <div className="font-medium">{macrocycle.coach}</div>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div>
+                        <div className="text-sm text-muted-foreground">Entrenador</div>
+                        <div className="font-medium">{macrocycle.coach}</div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Duración</div>
+                        <div className="font-medium">
+                          {macrocycle.totalWeeks > 0 
+                            ? `${macrocycle.totalWeeks} semanas` 
+                            : macrocycle._planningData?.hasEndDate === false 
+                              ? 'Sin fecha fin' 
+                              : 'Calculando...'}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Período</div>
+                        <div className="font-medium">
+                          {formatDateRange(
+                            macrocycle.startDate, 
+                            macrocycle.endDate, 
+                            macrocycle._planningData?.hasEndDate
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <div className="text-sm text-muted-foreground">Mesociclos</div>
+                        <div className="font-medium">
+                          {macrocycle.mesocycles.length > 0 
+                            ? `${macrocycle.mesocycles.length} fases`
+                            : macrocycle._planningData?.mesocyclesCount !== undefined
+                              ? `${macrocycle._planningData.mesocyclesCount} fases`
+                              : 'Cargando...'}
+                        </div>
+                      </div>
                     </div>
-                    <div>
-                      <div className="text-sm text-muted-foreground">Duración</div>
-                      <div className="font-medium">{macrocycle.totalWeeks} semanas</div>
+                    <div className="mt-4">
+                      <div className="text-sm text-muted-foreground mb-2">Objetivo Principal</div>
+                      <p className="text-sm">{macrocycle.objective}</p>
                     </div>
-                    <div>
-                      <div className="text-sm text-muted-foreground">Período</div>
-                      <div className="font-medium">{formatDateRange(macrocycle.startDate, macrocycle.endDate)}</div>
+                    <div className="flex items-center justify-end gap-2 mt-4">
+                      <Button variant="outline" size="sm">
+                        Ver Detalles
+                        <ChevronRight className="w-4 h-4 ml-2" />
+                      </Button>
                     </div>
-                    <div>
-                      <div className="text-sm text-muted-foreground">Mesociclos</div>
-                      <div className="font-medium">{macrocycle.mesocycles.length} fases</div>
-                    </div>
-                  </div>
-                  <div className="mt-4">
-                    <div className="text-sm text-muted-foreground mb-2">Objetivo Principal</div>
-                    <p className="text-sm">{macrocycle.objective}</p>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 mt-4">
-                    <Button variant="outline" size="sm">
-                      Ver Detalles
-                      <ChevronRight className="w-4 h-4 ml-2" />
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -808,7 +1450,11 @@ export function AthleteTrainingPlan() {
                   {currentMacrocycle.status === 'active' ? 'Activo' : 'Completado'}
                 </Badge>
                 <span className="text-sm text-muted-foreground">
-                  {formatDateRange(currentMacrocycle.startDate, currentMacrocycle.endDate)}
+                  {formatDateRange(
+                    currentMacrocycle.startDate, 
+                    currentMacrocycle.endDate,
+                    currentMacrocycle._planningData?.hasEndDate
+                  )}
                 </span>
               </div>
             </div>
@@ -823,22 +1469,48 @@ export function AthleteTrainingPlan() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="space-y-2">
                   <div className="text-sm text-muted-foreground">Duración Total</div>
-                  <div className="text-2xl font-bold text-primary">{currentMacrocycle.totalWeeks} semanas</div>
+                  <div className="text-2xl font-bold text-primary">
+                    {currentMacrocycle.totalWeeks > 0 
+                      ? `${currentMacrocycle.totalWeeks} semanas` 
+                      : currentMacrocycle._planningData?.hasEndDate === false 
+                        ? 'Sin fecha fin' 
+                        : 'Calculando...'}
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <div className="text-sm text-muted-foreground">Mesociclos Planificados</div>
-                  <div className="text-2xl font-bold text-primary">{currentMacrocycle.mesocycles.length}</div>
+                  <div className="text-2xl font-bold text-primary">
+                    {currentMacrocycle.mesocycles.length > 0 
+                      ? currentMacrocycle.mesocycles.length
+                      : currentMacrocycle._planningData?.mesocyclesCount !== undefined
+                        ? currentMacrocycle._planningData.mesocyclesCount
+                        : 0}
+                  </div>
                 </div>
                 <div className="space-y-2">
                   <div className="text-sm text-muted-foreground">Progreso</div>
-                  <div className="text-2xl font-bold text-primary">
-                    {Math.round((new Date().getTime() - new Date(currentMacrocycle.startDate).getTime()) / 
-                    (new Date(currentMacrocycle.endDate).getTime() - new Date(currentMacrocycle.startDate).getTime()) * 100)}%
-                  </div>
-                  <Progress value={Math.round((new Date().getTime() - new Date(currentMacrocycle.startDate).getTime()) / 
-                    (new Date(currentMacrocycle.endDate).getTime() - new Date(currentMacrocycle.startDate).getTime()) * 100)} 
-                    className="h-2" 
-                  />
+                  {currentMacrocycle._planningData?.hasEndDate === false ? (
+                    <>
+                      <div className="text-2xl font-bold text-primary">En curso</div>
+                      <Progress value={50} className="h-2" />
+                    </>
+                  ) : currentMacrocycle.endDate && currentMacrocycle.endDate !== currentMacrocycle.startDate ? (
+                    <>
+                      <div className="text-2xl font-bold text-primary">
+                        {Math.round((new Date().getTime() - new Date(currentMacrocycle.startDate).getTime()) / 
+                        (new Date(currentMacrocycle.endDate).getTime() - new Date(currentMacrocycle.startDate).getTime()) * 100)}%
+                      </div>
+                      <Progress value={Math.round((new Date().getTime() - new Date(currentMacrocycle.startDate).getTime()) / 
+                        (new Date(currentMacrocycle.endDate).getTime() - new Date(currentMacrocycle.startDate).getTime()) * 100)} 
+                        className="h-2" 
+                      />
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-2xl font-bold text-primary">N/A</div>
+                      <Progress value={0} className="h-2" />
+                    </>
+                  )}
                 </div>
               </div>
             </CardContent>
@@ -846,7 +1518,32 @@ export function AthleteTrainingPlan() {
 
           {/* Lista de Mesociclos */}
           <div className="space-y-4">
-            {currentMacrocycle.mesocycles.map((mesocycle, index) => (
+            {(() => {
+              const planningId = parseInt(currentMacrocycle.id.replace('planning-', ''));
+              const isLoading = loadingMesocycles.has(planningId);
+              const hasMesocycles = currentMacrocycle.mesocycles.length > 0;
+              
+              if (isLoading && !hasMesocycles) {
+                return (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                    <span className="ml-2 text-muted-foreground">Cargando mesociclos...</span>
+                  </div>
+                );
+              }
+              
+              if (!hasMesocycles) {
+                return (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Este macrociclo no tiene mesociclos asignados aún.
+                    </AlertDescription>
+                  </Alert>
+                );
+              }
+              
+              return currentMacrocycle.mesocycles.map((mesocycle, index) => (
               <Card key={mesocycle.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleSelectMesocycle(mesocycle.id)}>
                 <CardContent className="p-6">
                   <div className="flex items-center gap-4">
@@ -868,10 +1565,14 @@ export function AthleteTrainingPlan() {
                                mesocycle.phase === 'recovery' ? 'Recuperación' : 'Competencia'}
                             </Badge>
                             <span className="text-sm text-muted-foreground">
-                              {formatDateRange(mesocycle.startDate, mesocycle.endDate)}
+                              {formatStartDate(mesocycle.startDate)}
                             </span>
                             <span className="text-sm text-muted-foreground">
-                              {mesocycle.weekCount} semanas • {mesocycle.microcycles.length} microciclos
+                              {mesocycle.microcycles.length > 0 
+                                ? `${mesocycle.microcycles.length} microciclos`
+                                : mesocycle.weekCount > 0
+                                  ? `${mesocycle.weekCount} microciclos`
+                                  : 'Cargando...'}
                             </span>
                           </div>
                         </div>
@@ -881,7 +1582,8 @@ export function AthleteTrainingPlan() {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              ));
+            })()}
           </div>
         </div>
       )}
@@ -903,7 +1605,7 @@ export function AthleteTrainingPlan() {
                    currentMesocycle.phase === 'recovery' ? 'Recuperación' : 'Competencia'}
                 </Badge>
                 <span className="text-sm text-muted-foreground">
-                  {formatDateRange(currentMesocycle.startDate, currentMesocycle.endDate)}
+                  {formatStartDate(currentMesocycle.startDate)}
                 </span>
               </div>
             </div>
@@ -927,12 +1629,18 @@ export function AthleteTrainingPlan() {
                 </div>
                 <div className="grid grid-cols-2 gap-4 pt-4 border-t">
                   <div>
-                    <div className="text-sm text-muted-foreground">Duración</div>
-                    <div className="text-lg font-bold text-primary">{currentMesocycle.weekCount} semanas</div>
+                    <div className="text-sm text-muted-foreground">Fecha de Inicio</div>
+                    <div className="text-lg font-bold text-primary">{formatStartDate(currentMesocycle.startDate)}</div>
                   </div>
                   <div>
                     <div className="text-sm text-muted-foreground">Microciclos</div>
-                    <div className="text-lg font-bold text-primary">{currentMesocycle.microcycles.length}</div>
+                    <div className="text-lg font-bold text-primary">
+                      {currentMesocycle.microcycles.length > 0 
+                        ? currentMesocycle.microcycles.length
+                        : currentMesocycle.weekCount > 0
+                          ? currentMesocycle.weekCount
+                          : 0}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -941,7 +1649,32 @@ export function AthleteTrainingPlan() {
 
           {/* Lista de Microciclos */}
           <div className="grid gap-4">
-            {currentMesocycle.microcycles.map((microcycle) => (
+            {(() => {
+              const mesocycleId = parseInt(currentMesocycle.id.replace('mesocycle-', ''));
+              const isLoading = loadingMicrocycles.has(mesocycleId);
+              const hasMicrocycles = currentMesocycle.microcycles.length > 0;
+              
+              if (isLoading && !hasMicrocycles) {
+                return (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                    <span className="ml-2 text-muted-foreground">Cargando microciclos...</span>
+                  </div>
+                );
+              }
+              
+              if (!hasMicrocycles) {
+                return (
+                  <Alert>
+                    <Info className="h-4 w-4" />
+                    <AlertDescription>
+                      Este mesociclo no tiene microciclos asignados aún.
+                    </AlertDescription>
+                  </Alert>
+                );
+              }
+              
+              return currentMesocycle.microcycles.map((microcycle) => (
               <Card key={microcycle.id} className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => handleSelectMicrocycle(microcycle.id)}>
                 <CardContent className="p-6">
                   <div className="flex items-center justify-between">
@@ -956,7 +1689,7 @@ export function AthleteTrainingPlan() {
                       <div className="flex items-center gap-4 text-sm">
                         <span className="text-muted-foreground">
                           <Calendar className="w-4 h-4 inline mr-1" />
-                          {formatDateRange(microcycle.startDate, microcycle.endDate)}
+                          {formatMicrocycleDateRange(microcycle.startDate, microcycle.endDate)}
                         </span>
                         <span className="text-muted-foreground">
                           <Target className="w-4 h-4 inline mr-1" />
@@ -964,7 +1697,7 @@ export function AthleteTrainingPlan() {
                         </span>
                         <span className="text-muted-foreground">
                           <BookOpen className="w-4 h-4 inline mr-1" />
-                          {microcycle.sessions.length} sesiones
+                          {microcycle.sessionsCount} sesiones
                         </span>
                       </div>
                     </div>
@@ -972,7 +1705,8 @@ export function AthleteTrainingPlan() {
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              ));
+            })()}
           </div>
         </div>
       )}
@@ -1018,7 +1752,7 @@ export function AthleteTrainingPlan() {
                     <div>
                       <CardTitle>Calendario de Entrenamientos</CardTitle>
                       <CardDescription>
-                        Sesiones programadas para esta semana • {currentMicrocycle.sessions.length} sesiones totales
+                        Sesiones programadas para esta semana • {currentMicrocycle.sessionsCount} sesiones totales
                       </CardDescription>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1068,13 +1802,16 @@ export function AthleteTrainingPlan() {
                       const sessions = getSessionsForDay(date);
                       const isCurrentMonth = date.getMonth() === currentMonth.getMonth();
                       const isToday = date.toDateString() === new Date().toDateString();
+                      const isInMicrocycleWeek = isDateInMicrocycleRange(date);
                       
                       return (
                         <div
                           key={index}
                           className={`min-h-[120px] p-2 border rounded-lg ${
                             isCurrentMonth ? 'bg-card' : 'bg-muted/30'
-                          } ${isToday ? 'ring-2 ring-primary/50' : ''}`}
+                          } ${isToday ? 'ring-2 ring-primary/50' : ''} ${
+                            isInMicrocycleWeek && isCurrentMonth ? 'bg-primary/5 border-primary/30' : ''
+                          }`}
                         >
                           <div className={`text-sm mb-2 ${
                             isCurrentMonth ? 'text-foreground' : 'text-muted-foreground'
@@ -1086,19 +1823,15 @@ export function AthleteTrainingPlan() {
                             {sessions.slice(0, 3).map((session) => (
                               <div
                                 key={session.id}
-                                className="p-1 rounded text-xs cursor-pointer hover:opacity-80 transition-opacity"
+                                className="p-1 rounded text-xs"
                                 style={{ backgroundColor: getIntensityColor(session.intensity) + '20' }}
-                                onClick={() => handleSessionDetail(session)}
                               >
                                 <div className="flex items-center gap-1 mb-1">
                                   <div className={`w-2 h-2 rounded-full ${getIntensityColor(session.intensity)}`}></div>
-                                  <span className="font-medium truncate">{session.time}</span>
+                                  <span className="font-medium truncate flex-1">{session.name}</span>
                                   {completedSessions.has(session.id) && (
-                                    <CheckCircle className="w-3 h-3 text-green-600 ml-auto" />
+                                    <CheckCircle className="w-3 h-3 text-green-600 flex-shrink-0" />
                                   )}
-                                </div>
-                                <div className="truncate text-muted-foreground">
-                                  {session.name}
                                 </div>
                               </div>
                             ))}
@@ -1138,8 +1871,13 @@ export function AthleteTrainingPlan() {
 
             {/* Vista de Lista de Sesiones */}
             <TabsContent value="sessions" className="space-y-4">
-              {currentMicrocycle.sessions.length > 0 ? (
-                currentMicrocycle.sessions.map((session) => (
+              {(() => {
+                // Obtener sesiones del caché o del microciclo
+                const microcycleId = parseInt(selectedMicrocycle.replace('microcycle-', ''));
+                const sessionsToShow = sessionsCache.get(microcycleId) || currentMicrocycle.sessions || [];
+                
+                return sessionsToShow.length > 0 ? (
+                  sessionsToShow.map((session) => (
                   <Card key={session.id} className="hover:shadow-md transition-shadow">
                     <CardContent className="p-6">
                       <div className="flex items-start gap-4">
@@ -1155,8 +1893,6 @@ export function AthleteTrainingPlan() {
                               </h3>
                               <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
                                 <span><Clock className="w-4 h-4 inline mr-1" />{formatSessionDate(session.date)}</span>
-                                <span><Timer className="w-4 h-4 inline mr-1" />{session.time}</span>
-                                <span><MapPin className="w-4 h-4 inline mr-1" />{session.location}</span>
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
@@ -1186,22 +1922,23 @@ export function AthleteTrainingPlan() {
                       </div>
                     </CardContent>
                   </Card>
-                ))
-              ) : (
-                <Card>
-                  <CardContent className="text-center py-12">
-                    <div className="text-muted-foreground space-y-4">
-                      <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto">
-                        <Target className="w-8 h-8" />
+                  ))
+                ) : (
+                  <Card>
+                    <CardContent className="text-center py-12">
+                      <div className="text-muted-foreground space-y-4">
+                        <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto">
+                          <Target className="w-8 h-8" />
+                        </div>
+                        <div>
+                          <p className="font-medium">No hay sesiones programadas</p>
+                          <p className="text-sm">Las sesiones aparecerán aquí una vez que tu entrenador complete la planificación</p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="font-medium">No hay sesiones programadas</p>
-                        <p className="text-sm">Las sesiones aparecerán aquí una vez que tu entrenador complete la planificación</p>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
-              )}
+                    </CardContent>
+                  </Card>
+                );
+              })()}
             </TabsContent>
           </Tabs>
         </div>
@@ -1211,157 +1948,338 @@ export function AthleteTrainingPlan() {
       {selectedSession && (
         <Dialog open={isSessionDetailOpen} onOpenChange={setIsSessionDetailOpen}>
           <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <div className={`w-3 h-3 rounded-full ${getIntensityColor(selectedSession.intensity)}`}></div>
-                {selectedSession.name}
-              </DialogTitle>
-              <DialogDescription>
-                {formatSessionDate(selectedSession.date)} • {selectedSession.time} • {selectedSession.location}
-              </DialogDescription>
-            </DialogHeader>
-
-            <div className="space-y-6">
-              {/* Información básica */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <h4 className="font-medium mb-2">Duración</h4>
-                  <p className="text-sm text-muted-foreground">{formatTime(selectedSession.duration)}</p>
-                </div>
-                <div>
-                  <h4 className="font-medium mb-2">Intensidad</h4>
-                  <p className="text-sm text-muted-foreground capitalize">
-                    {selectedSession.intensity === 'low' ? 'Baja' :
-                     selectedSession.intensity === 'medium' ? 'Media' :
-                     selectedSession.intensity === 'high' ? 'Alta' : 'Recuperación'}
-                  </p>
-                </div>
+            {isLoadingSessionDetail ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-primary" />
+                <span className="ml-2 text-muted-foreground">Cargando detalles de la sesión...</span>
               </div>
+            ) : selectedSessionFull ? (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <div className={`w-3 h-3 rounded-full ${getIntensityColor(selectedSessionFull.intensity)}`}></div>
+                    {selectedSessionFull.name}
+                  </DialogTitle>
+                  <DialogDescription>
+                    {formatSessionDate(selectedSessionFull.date)}
+                  </DialogDescription>
+                </DialogHeader>
 
-              {/* Descripción */}
-              <div>
-                <h4 className="font-medium mb-2">Descripción</h4>
-                <p className="text-sm text-muted-foreground">{selectedSession.description}</p>
+                <div className="space-y-6">
+                  {/* Información básica */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-medium mb-2">Distancia estimada</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {formatDistanceKm(selectedSessionFull.totalDistanceKm ?? selectedSessionFull.volume)}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Intensidad</h4>
+                      <p className="text-sm text-muted-foreground capitalize">
+                        {selectedSessionFull.intensity === 'low' ? 'Baja' :
+                         selectedSessionFull.intensity === 'medium' ? 'Media' :
+                         selectedSessionFull.intensity === 'high' ? 'Alta' : 'Recuperación'}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Estructura</h4>
+                      <p className="text-sm text-muted-foreground capitalize">
+                        {selectedSessionFull.structureType === 'advanced' ? 'Series con intervalos' : 'Intervalos simples'}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Categoría</h4>
+                      <p className="text-sm text-muted-foreground capitalize">
+                        {getSessionTypeLabel(selectedSessionFull.type)}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Trabajo estimado</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {formatSecondsAsClock(selectedSessionFull.estimatedWorkSeconds)}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium mb-2">Recuperación estimada</h4>
+                      <p className="text-sm text-muted-foreground">
+                        {formatSecondsAsClock(selectedSessionFull.estimatedRecoverySeconds)}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Descripción */}
+                  <div>
+                    <h4 className="font-medium mb-2">Descripción</h4>
+                    <p className="text-sm text-muted-foreground">{selectedSessionFull.description || 'Sin descripción disponible.'}</p>
+                  </div>
+
+                  {/* Calentamiento */}
+                  {selectedSessionFull.warmup && (
+                    <div>
+                      <h4 className="font-medium mb-2">Calentamiento</h4>
+                      <p className="text-sm text-muted-foreground">{selectedSessionFull.warmup}</p>
+                    </div>
+                  )}
+
+                  {/* Series e intervalos */}
+                  {selectedSessionFull.structureType === 'advanced' && selectedSessionFull.series && selectedSessionFull.series.length > 0 ? (
+                    <div>
+                      <h4 className="font-medium mb-3">Series e intervalos</h4>
+                      <Accordion
+                        type="multiple"
+                        defaultValue={selectedSessionFull.series.map((series: any, index: number) => series.id || `series-${index}`)}
+                        className="space-y-2"
+                      >
+                        {selectedSessionFull.series.map((series: any, index: number) => (
+                          <AccordionItem key={series.id || `series-${index}`} value={series.id || `series-${index}`}>
+                            <AccordionTrigger className="w-full">
+                              <div className="w-full flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between text-left">
+                                <div>
+                                  <p className="font-medium">{series.name}</p>
+                                  <p className="text-sm text-muted-foreground">Serie {index + 1}</p>
+                                </div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="secondary">Reps: {series.repetitions}</Badge>
+                                  <Badge variant="secondary">Dist: {formatDistanceMeters(series.totalDistanceMeters)}</Badge>
+                                  {series.recoveryBetweenSets && (
+                                    <Badge variant="outline">
+                                      Recup. series: {formatDurationLabel(series.recoveryBetweenSets)}
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </AccordionTrigger>
+                            <AccordionContent>
+                              <div className="space-y-3 pt-2">
+                                {series.intervals.length === 0 && (
+                                  <p className="text-sm text-muted-foreground">
+                                    Esta serie no contiene intervalos configurados.
+                                  </p>
+                                )}
+                                {series.intervals.map((interval: any, intervalIndex: number) => (
+                                  <div key={interval.id || `interval-${intervalIndex}`} className="rounded-lg border p-4 space-y-2">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                                      <div>
+                                        <p className="font-medium">Intervalo {intervalIndex + 1}: {interval.workSummary}</p>
+                                        <p className="text-sm text-muted-foreground">
+                                          Repeticiones: {interval.repetitions}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-wrap gap-2">
+                                        {interval.targetPace && (
+                                          <Badge variant="outline">Ritmo: {interval.targetPace}</Badge>
+                                        )}
+                                        {interval.intensity && (
+                                          <Badge variant="outline">
+                                            Intensidad: {formatIntervalIntensityLabel(interval.intensity)}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                                      <div>
+                                        Distancia por rep.: {formatDistanceMeters(interval.distancePerRepMeters)}
+                                      </div>
+                                      <div>
+                                        Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
+                                      </div>
+                                      {interval.recoveryTime && (
+                                        <div>
+                                          Recuperación: {formatDurationLabel(interval.recoveryTime)}
+                                        </div>
+                                      )}
+                                    </div>
+                                    {interval.notes && (
+                                      <p className="text-sm text-muted-foreground">
+                                        Notas: {interval.notes}
+                                      </p>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </AccordionContent>
+                          </AccordionItem>
+                        ))}
+                      </Accordion>
+                    </div>
+                  ) : selectedSessionFull.structureType !== 'advanced' && selectedSessionFull.intervals && selectedSessionFull.intervals.length > 0 ? (
+                    <div>
+                      <h4 className="font-medium mb-3">Intervalos</h4>
+                      <div className="space-y-3">
+                        {selectedSessionFull.intervals.map((interval: any, index: number) => (
+                          <div key={interval.id || `simple-interval-${index}`} className="border rounded-lg p-4 space-y-2">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <p className="font-medium">Intervalo {index + 1}: {interval.work}</p>
+                                <p className="text-sm text-muted-foreground">
+                                  Repeticiones: {interval.repetitions}
+                                </p>
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                {interval.targetPace && (
+                                  <Badge variant="outline">Ritmo: {interval.targetPace}</Badge>
+                                )}
+                                {interval.intensity && (
+                                  <Badge variant="outline">
+                                    Intensidad: {formatIntervalIntensityLabel(interval.intensity)}
+                                  </Badge>
+                                )}
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-muted-foreground">
+                              <div>
+                                Distancia por rep.: {formatDistanceMeters(interval.distancePerRepMeters)}
+                              </div>
+                              <div>
+                                Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
+                              </div>
+                              {interval.recoveryTime && (
+                                <div>
+                                  Recuperación: {formatDurationLabel(interval.recoveryTime)}
+                                </div>
+                              )}
+                            </div>
+                            {interval.notes && (
+                              <p className="text-sm text-muted-foreground">Notas: {interval.notes}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ) : (
+                    selectedSessionFull.intervals && selectedSessionFull.intervals.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Intervalos</h4>
+                      <div className="space-y-2">
+                        {selectedSessionFull.intervals.map((interval: any, index: number) => (
+                          <div key={index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                            <div>
+                              <span className="font-medium">{interval.repetitions}x</span> {interval.work}
+                            </div>
+                            <div className="text-sm text-muted-foreground">
+                              Descanso: {interval.rest}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    )
+                  )}
+
+                  {/* Enfriamiento */}
+                  {selectedSessionFull.cooldown && (
+                    <div>
+                      <h4 className="font-medium mb-2">Enfriamiento</h4>
+                      <p className="text-sm text-muted-foreground">{selectedSessionFull.cooldown}</p>
+                    </div>
+                  )}
+
+                  {/* Objetivos */}
+                  {selectedSessionFull.objectives && selectedSessionFull.objectives.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Objetivos</h4>
+                      <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
+                        {selectedSessionFull.objectives.map((objective: string, index: number) => (
+                          <li key={index}>{objective}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+
+                  {/* Zonas objetivo */}
+                  {selectedSessionFull.targetZones && (
+                    <div>
+                      <h4 className="font-medium mb-2">Zonas Objetivo</h4>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        {selectedSessionFull.targetZones.heartRate && (
+                          <div>
+                            <span className="text-sm font-medium">Frecuencia Cardíaca:</span>
+                            <p className="text-sm text-muted-foreground">{selectedSessionFull.targetZones.heartRate}</p>
+                          </div>
+                        )}
+                        {selectedSessionFull.targetZones.pace && (
+                          <div>
+                            <span className="text-sm font-medium">Ritmo:</span>
+                            <p className="text-sm text-muted-foreground">{selectedSessionFull.targetZones.pace}</p>
+                          </div>
+                        )}
+                        {selectedSessionFull.targetZones.effort && (
+                          <div>
+                            <span className="text-sm font-medium">Esfuerzo:</span>
+                            <p className="text-sm text-muted-foreground">{selectedSessionFull.targetZones.effort}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Equipamiento */}
+                  {selectedSessionFull.equipment && selectedSessionFull.equipment.length > 0 && (
+                    <div>
+                      <h4 className="font-medium mb-2">Equipamiento Necesario</h4>
+                      <div className="flex flex-wrap gap-2">
+                        {selectedSessionFull.equipment.map((item: string, index: number) => (
+                          <Badge key={index} variant="outline">{item}</Badge>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Notas */}
+                  {selectedSessionFull.notes && (
+                    <div>
+                      <h4 className="font-medium mb-2">Notas Adicionales</h4>
+                      <p className="text-sm text-muted-foreground">{selectedSessionFull.notes}</p>
+                    </div>
+                  )}
+                </div>
+
+                <DialogFooter className="flex-col sm:flex-col gap-4">
+                  {(() => {
+                    // Verificar si la fecha es futura
+                    const [year, month, day] = selectedSessionFull.date.split('-').map(Number);
+                    const sessionDate = new Date(year, month - 1, day);
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    sessionDate.setHours(0, 0, 0, 0);
+                    const isFutureDate = sessionDate > today;
+                    
+                    return (
+                      <>
+                        {!hasCompletedWorkout && selectedSessionFull.trainingSessionAthleteId && !isFutureDate && (
+                          <Alert className="bg-accent/10 border-accent/20">
+                            <Info className="h-4 w-4 text-accent" />
+                            <AlertDescription className="text-sm">
+                              No se han cargado los resultados de este entrenamiento aún. Puedes cargarlos ahora.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                        
+                        {hasCompletedWorkout && (
+                          <Alert className="bg-green-50 border-green-200">
+                            <CheckCircle className="h-4 w-4 text-green-600" />
+                            <AlertDescription className="text-sm text-green-900">
+                              Los resultados de este entrenamiento ya han sido cargados.
+                            </AlertDescription>
+                          </Alert>
+                        )}
+                      </>
+                    );
+                  })()}
+
+                  <div className="flex w-full justify-end gap-2">
+                    <Button variant="outline" onClick={() => setIsSessionDetailOpen(false)}>
+                      Cerrar
+                    </Button>
+                  </div>
+                </DialogFooter>
+              </>
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">No se pudieron cargar los detalles de la sesión</p>
               </div>
-
-              {/* Calentamiento */}
-              {selectedSession.warmup && (
-                <div>
-                  <h4 className="font-medium mb-2">Calentamiento</h4>
-                  <p className="text-sm text-muted-foreground">{selectedSession.warmup}</p>
-                </div>
-              )}
-
-              {/* Intervalos */}
-              {selectedSession.intervals && selectedSession.intervals.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-2">Intervalos</h4>
-                  <div className="space-y-2">
-                    {selectedSession.intervals.map((interval, index) => (
-                      <div key={index} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                        <div>
-                          <span className="font-medium">{interval.repetitions}x</span> {interval.work}
-                        </div>
-                        <div className="text-sm text-muted-foreground">
-                          Descanso: {interval.rest}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Enfriamiento */}
-              {selectedSession.cooldown && (
-                <div>
-                  <h4 className="font-medium mb-2">Enfriamiento</h4>
-                  <p className="text-sm text-muted-foreground">{selectedSession.cooldown}</p>
-                </div>
-              )}
-
-              {/* Objetivos */}
-              {selectedSession.objectives && selectedSession.objectives.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-2">Objetivos</h4>
-                  <ul className="list-disc list-inside space-y-1 text-sm text-muted-foreground">
-                    {selectedSession.objectives.map((objective, index) => (
-                      <li key={index}>{objective}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {/* Zonas objetivo */}
-              {selectedSession.targetZones && (
-                <div>
-                  <h4 className="font-medium mb-2">Zonas Objetivo</h4>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {selectedSession.targetZones.heartRate && (
-                      <div>
-                        <span className="text-sm font-medium">Frecuencia Cardíaca:</span>
-                        <p className="text-sm text-muted-foreground">{selectedSession.targetZones.heartRate}</p>
-                      </div>
-                    )}
-                    {selectedSession.targetZones.pace && (
-                      <div>
-                        <span className="text-sm font-medium">Ritmo:</span>
-                        <p className="text-sm text-muted-foreground">{selectedSession.targetZones.pace}</p>
-                      </div>
-                    )}
-                    {selectedSession.targetZones.effort && (
-                      <div>
-                        <span className="text-sm font-medium">Esfuerzo:</span>
-                        <p className="text-sm text-muted-foreground">{selectedSession.targetZones.effort}</p>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Equipamiento */}
-              {selectedSession.equipment && selectedSession.equipment.length > 0 && (
-                <div>
-                  <h4 className="font-medium mb-2">Equipamiento Necesario</h4>
-                  <div className="flex flex-wrap gap-2">
-                    {selectedSession.equipment.map((item, index) => (
-                      <Badge key={index} variant="outline">{item}</Badge>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Notas */}
-              {selectedSession.notes && (
-                <div>
-                  <h4 className="font-medium mb-2">Notas Adicionales</h4>
-                  <p className="text-sm text-muted-foreground">{selectedSession.notes}</p>
-                </div>
-              )}
-            </div>
-
-            <DialogFooter className="flex-col sm:flex-col gap-4">
-              {selectedSession.status === 'pending' && (
-                <Alert className="bg-blue-50 border-blue-200">
-                  <Info className="h-4 w-4 text-blue-600" />
-                  <AlertDescription className="text-sm text-blue-900">
-                    <strong>Nota importante:</strong> Marcar una sesión como completada registrará que la realizaste, pero{' '}
-                    <strong>no subirá datos de rendimiento</strong>. Para registrar métricas y rendimiento, ve a{' '}
-                    <strong>"Subir Entrenamientos"</strong> y asocia la sesión al momento de subir los datos.
-                  </AlertDescription>
-                </Alert>
-              )}
-              
-              <div className="flex w-full justify-end gap-2">
-                <Button variant="outline" onClick={() => setIsSessionDetailOpen(false)}>
-                  Cerrar
-                </Button>
-                {selectedSession.status === 'pending' && (
-                  <Button onClick={() => handleToggleCompleted(selectedSession.id)}>
-                    {completedSessions.has(selectedSession.id) ? 'Desmarcar Completa' : 'Marcar Completa'}
-                  </Button>
-                )}
-              </div>
-            </DialogFooter>
+            )}
           </DialogContent>
         </Dialog>
       )}

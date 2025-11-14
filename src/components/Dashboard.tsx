@@ -10,6 +10,7 @@ import { AthleteCalendar } from './AthleteCalendar';
 import { AthleteTrainingPlan } from './AthleteTrainingPlan';
 import { AthleteTrainingHistory } from './AthleteTrainingHistory';
 import { AthletePerformanceView } from './AthletePerformanceView';
+import { PerformanceView } from './PerformanceView';
 import { AthleteStatusManagement } from './AthleteStatusManagement';
 import { InvitationsView } from './InvitationsView';
 import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
@@ -21,7 +22,6 @@ import { GroupConfigurationModal } from './GroupConfigurationModal';
 import { GroupAthleteManagementModal } from './GroupAthleteManagementModal';
 import { InviteAthleteToGroupModal } from './InviteAthleteToGroupModal';
 import { FeedbackManagement } from './FeedbackManagement';
-import { AthleteFeedbackView } from './AthleteFeedbackView';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { 
   Users, 
@@ -135,7 +135,7 @@ type CoachActiveView =
   | 'feedback'
   | 'templates';
 
-type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations' | 'feedback';
+type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations';
 
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
   const [coachActiveView, setCoachActiveView] = useState<CoachActiveView>('my-athletes');
@@ -284,10 +284,9 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     { id: 'calendar', label: 'Calendario', icon: Calendar },
     { id: 'training-plan', label: 'Planificación', icon: CalendarDays },
     { id: 'upload-training', label: 'Subir Entrenamientos', icon: Upload },
-    { id: 'training-history', label: 'Histórico de entrenamientos', icon: FileText },
+    { id: 'training-history', label: 'Histórico de sesiones', icon: FileText },
     { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
     { id: 'status', label: 'Estado y Lesiones', icon: Heart },
-    { id: 'feedback', label: 'Retroalimentaciones', icon: MessageSquare },
     { id: 'invitations', label: 'Invitaciones', icon: Mail, badgeCount: pendingInvitationsCount }
   ];
 
@@ -674,26 +673,26 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
           />
         );
       case 'performance':
-        // Para atletas, crear un objeto atleta basado en el usuario actual
-        const athleteForPerformance = {
-          id: user.id,
-          name: user.realName,
-          email: user.email,
-          age: user.dateOfBirth ? new Date().getFullYear() - new Date(user.dateOfBirth).getFullYear() : 25,
-          groupName: 'Mi Entrenamiento',
-          joinDate: '2024-01-01'
-        };
+        // Usar PerformanceView que carga datos reales del backend
         return (
-          <AthletePerformanceView 
-            athlete={athleteForPerformance}
+          <PerformanceView 
             units={user.preferences?.units || 'metric'}
-            onBack={() => setAthleteActiveView('training-plan')}
+            onUnitsChange={(units) => {
+              // Actualizar preferencias del usuario si es necesario
+              if (onUpdateUser) {
+                onUpdateUser({
+                  ...user,
+                  preferences: {
+                    ...user.preferences,
+                    units
+                  }
+                });
+              }
+            }}
           />
         );
       case 'status':
         return <AthleteStatusManagement />;
-      case 'feedback':
-        return <AthleteFeedbackView />;
       case 'invitations':
         return <InvitationsView onInvitationResponded={loadPendingInvitationsCount} />;
       default:

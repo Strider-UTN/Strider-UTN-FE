@@ -196,7 +196,12 @@ export class PlanningService {
  * Mapea la respuesta del backend al formato del frontend
  * Nota: El tipo Planning del servicio no incluye períodosCount, pero lo agregamos desde el DTO
  */
-function mapBackendToFrontend(backend: PlanningResponseDto): Planning & { periodsCount?: number; athletesCount?: number } {
+function mapBackendToFrontend(backend: PlanningResponseDto): Planning & { 
+  periodsCount?: number; 
+  athletesCount?: number;
+  coachName?: string;
+  mesocyclesCount?: number;
+} {
   return {
     id: backend.id,
     name: backend.name,
@@ -209,7 +214,9 @@ function mapBackendToFrontend(backend: PlanningResponseDto): Planning & { period
     updatedAt: backend.updatedAt,
     athleteIds: backend.athleteIds || [],
     periodsCount: backend.periodsCount, // Incluir períodosCount del DTO
-    athletesCount: backend.athletesCount // ✅ Incluir athletesCount del DTO
+    athletesCount: backend.athletesCount, // ✅ Incluir athletesCount del DTO
+    coachName: backend.coachName, // ✅ Incluir coachName del DTO
+    mesocyclesCount: backend.mesocyclesCount // ✅ Incluir mesocyclesCount del DTO
   };
 }
 
