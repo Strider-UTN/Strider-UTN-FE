@@ -2,20 +2,128 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { ChevronRight, ChevronLeft, ChevronDown, CheckCircle, Info, Loader2 } from 'lucide-react';
+import { ChevronRight, ChevronLeft, ChevronDown, CheckCircle, Info, Loader2, Eye, ShieldAlert, Upload } from 'lucide-react';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from './ui/accordion';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Calendar as CalendarComponent } from './ui/calendar';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { Alert, AlertDescription } from './ui/alert';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
 import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
 import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
+import { CompletedWorkoutService } from '../services/completedWorkoutService';
+import { format } from 'date-fns';
+import { es } from 'date-fns/locale';
+
+// Función para convertir InjuryLocation (enum en inglés) a español
+const mapInjuryLocationToSpanish = (location: string): string => {
+  // Normalizar el valor (puede venir con diferentes capitalizaciones)
+  const normalized = location.trim();
+  
+  const mapping: Record<string, string> = {
+    'Head': 'Cabeza',
+    'head': 'Cabeza',
+    'Neck': 'Cuello',
+    'neck': 'Cuello',
+    'RightShoulder': 'Hombro Derecho',
+    'rightShoulder': 'Hombro Derecho',
+    'rightshoulder': 'Hombro Derecho',
+    'LeftShoulder': 'Hombro Izquierdo',
+    'leftShoulder': 'Hombro Izquierdo',
+    'leftshoulder': 'Hombro Izquierdo',
+    'RightArm': 'Brazo Derecho',
+    'rightArm': 'Brazo Derecho',
+    'rightarm': 'Brazo Derecho',
+    'LeftArm': 'Brazo Izquierdo',
+    'leftArm': 'Brazo Izquierdo',
+    'leftarm': 'Brazo Izquierdo',
+    'RightElbow': 'Codo Derecho',
+    'rightElbow': 'Codo Derecho',
+    'rightelbow': 'Codo Derecho',
+    'LeftElbow': 'Codo Izquierdo',
+    'leftElbow': 'Codo Izquierdo',
+    'leftelbow': 'Codo Izquierdo',
+    'RightWrist': 'Muñeca Derecha',
+    'rightWrist': 'Muñeca Derecha',
+    'rightwrist': 'Muñeca Derecha',
+    'LeftWrist': 'Muñeca Izquierda',
+    'leftWrist': 'Muñeca Izquierda',
+    'leftwrist': 'Muñeca Izquierda',
+    'RightHand': 'Mano Derecha',
+    'rightHand': 'Mano Derecha',
+    'righthand': 'Mano Derecha',
+    'LeftHand': 'Mano Izquierda',
+    'leftHand': 'Mano Izquierda',
+    'lefthand': 'Mano Izquierda',
+    'Chest': 'Pecho',
+    'chest': 'Pecho',
+    'UpperBack': 'Espalda Alta',
+    'upperBack': 'Espalda Alta',
+    'upperback': 'Espalda Alta',
+    'LowerBack': 'Espalda Baja',
+    'lowerBack': 'Espalda Baja',
+    'lowerback': 'Espalda Baja',
+    'Abdomen': 'Abdomen',
+    'abdomen': 'Abdomen',
+    'Hip': 'Cadera',
+    'hip': 'Cadera',
+    'RightThigh': 'Muslo Derecho',
+    'rightThigh': 'Muslo Derecho',
+    'rightthigh': 'Muslo Derecho',
+    'LeftThigh': 'Muslo Izquierdo',
+    'leftThigh': 'Muslo Izquierdo',
+    'leftthigh': 'Muslo Izquierdo',
+    'RightKnee': 'Rodilla Derecha',
+    'rightKnee': 'Rodilla Derecha',
+    'rightknee': 'Rodilla Derecha',
+    'LeftKnee': 'Rodilla Izquierda',
+    'leftKnee': 'Rodilla Izquierda',
+    'leftknee': 'Rodilla Izquierda',
+    'RightCalf': 'Pantorrilla Derecha',
+    'rightCalf': 'Pantorrilla Derecha',
+    'rightcalf': 'Pantorrilla Derecha',
+    'LeftCalf': 'Pantorrilla Izquierda',
+    'leftCalf': 'Pantorrilla Izquierda',
+    'leftcalf': 'Pantorrilla Izquierda',
+    'RightAnkle': 'Tobillo Derecho',
+    'rightAnkle': 'Tobillo Derecho',
+    'rightankle': 'Tobillo Derecho',
+    'LeftAnkle': 'Tobillo Izquierdo',
+    'leftAnkle': 'Tobillo Izquierdo',
+    'leftankle': 'Tobillo Izquierdo',
+    'RightFoot': 'Pie Derecho',
+    'rightFoot': 'Pie Derecho',
+    'rightfoot': 'Pie Derecho',
+    'LeftFoot': 'Pie Izquierdo',
+    'leftFoot': 'Pie Izquierdo',
+    'leftfoot': 'Pie Izquierdo',
+    'RightAchilles': 'Aquiles Derecho',
+    'rightAchilles': 'Aquiles Derecho',
+    'rightachilles': 'Aquiles Derecho',
+    'LeftAchilles': 'Aquiles Izquierdo',
+    'leftAchilles': 'Aquiles Izquierdo',
+    'leftachilles': 'Aquiles Izquierdo'
+  };
+  return mapping[normalized] || location;
+};
+
+// Función para convertir InjuryType a español (ya viene en español pero por si acaso)
+const mapInjuryTypeToSpanish = (type: string): string => {
+  const mapping: Record<string, string> = {
+    'Molestia': 'Molestia',
+    'Dolor': 'Dolor',
+    'molestia': 'Molestia',
+    'dolor': 'Dolor'
+  };
+  return mapping[type] || type;
+};
 
 // Interfaces para las sesiones
 interface AthleteCalendarProps {
   athleteId: number;
   planningId?: number;
+  onNavigateToUpload?: (date: Date, sessionId: string) => void; // Callback para navegar a TrainingUpload
 }
 
 interface CalendarIntervalSummary {
@@ -61,6 +169,7 @@ interface TrainingSession {
   totalDistanceKm?: number;
   estimatedWorkSeconds?: number;
   estimatedRecoverySeconds?: number;
+  trainingSessionAthleteId?: number; // Para verificar si hay workout completado
 }
 
 interface CalendarSeriesInterval {
@@ -522,11 +631,13 @@ const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto): Train
     volume: session.volume ? Number(session.volume) : undefined,
     totalDistanceKm,
     estimatedWorkSeconds: workSeconds,
-    estimatedRecoverySeconds: recoverySeconds
+    estimatedRecoverySeconds: recoverySeconds,
+    trainingSessionAthleteId: session.trainingSessionAthleteId,
+    hasCompletedWorkout: session.hasCompletedWorkout ?? false
   };
 };
 
-export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps) {
+export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: AthleteCalendarProps) {
   const [currentMonth, setCurrentMonth] = useState<Date>(() => startOfMonth(new Date()));
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
   const [selectedSession, setSelectedSession] = useState<TrainingSession | null>(null);
@@ -534,6 +645,9 @@ export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps)
   const [trainingSessions, setTrainingSessions] = useState<TrainingSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [hasCompletedWorkout, setHasCompletedWorkout] = useState<boolean>(false);
+  const [completedWorkout, setCompletedWorkout] = useState<any>(null);
+  const [showWorkoutDetails, setShowWorkoutDetails] = useState(false);
 
   useEffect(() => {
     if (!athleteId) {
@@ -652,14 +766,51 @@ export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps)
     });
   };
 
-  const handleSessionDetail = (session: TrainingSession) => {
+  const handleSessionDetail = async (session: TrainingSession) => {
     setSelectedSession(session);
     setIsSessionDetailOpen(true);
+    // Usar el valor del backend directamente
+    const hasResults = session.hasCompletedWorkout ?? false;
+    setHasCompletedWorkout(hasResults);
+    
+    // Si hay resultados, cargar los detalles del workout
+    if (hasResults && session.trainingSessionAthleteId) {
+      try {
+        const workout = await CompletedWorkoutService.getCompletedWorkoutByTrainingSessionAthleteIdAndDate(
+          session.trainingSessionAthleteId,
+          session.date
+        );
+        setCompletedWorkout(workout);
+      } catch (error) {
+        console.error('Error al cargar detalles del workout:', error);
+        setCompletedWorkout(null);
+      }
+    } else {
+      setCompletedWorkout(null);
+    }
+  };
+
+  const handleViewWorkoutResults = () => {
+    setShowWorkoutDetails(true);
+  };
+
+  const handleNavigateToUpload = () => {
+    if (!selectedSession) return;
+    
+    // Parsear la fecha como fecha local (sin conversión UTC)
+    // selectedSession.date está en formato "YYYY-MM-DD"
+    const [year, month, day] = selectedSession.date.split('-').map(Number);
+    const sessionDate = new Date(year, month - 1, day); // month es 0-indexed
+    setIsSessionDetailOpen(false);
+    
+    if (onNavigateToUpload) {
+      onNavigateToUpload(sessionDate, selectedSession.id);
+    }
   };
 
   // Estadísticas rápidas
   const totalSessions = trainingSessions.length;
-  const completedCount = trainingSessions.filter(s => s.status === 'completed').length;
+  const completedCount = trainingSessions.filter(s => s.hasCompletedWorkout === true).length;
   const pendingCount = totalSessions - completedCount;
   const thisMonthSessions = trainingSessions.filter(s => {
     if (!s.date) return false;
@@ -802,25 +953,25 @@ export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps)
                   </div>
                   
                   <div className="space-y-1">
-                    {sessions.slice(0, 3).map((session) => (
-                      <div
-                        key={session.id}
-                        className="p-1 rounded text-xs cursor-pointer hover:opacity-80 transition-opacity"
-                        style={{ backgroundColor: getIntensityColor(session.intensity) + '20' }}
-                        onClick={() => handleSessionDetail(session)}
-                      >
-                        <div className="flex items-center gap-1 mb-1">
-                          <div className={`w-2 h-2 rounded-full ${getIntensityColor(session.intensity)}`}></div>
-                          <span className="font-medium truncate">{session.time}</span>
-                          {session.status === 'completed' && (
-                            <CheckCircle className="w-3 h-3 text-green-600 ml-auto" />
-                          )}
+                    {sessions.slice(0, 3).map((session) => {
+                      const hasResults = session.hasCompletedWorkout ?? false;
+                      return (
+                        <div
+                          key={session.id}
+                          className="p-1 rounded text-xs cursor-pointer hover:opacity-80 transition-opacity"
+                          style={{ backgroundColor: getIntensityColor(session.intensity) + '20' }}
+                          onClick={() => handleSessionDetail(session)}
+                        >
+                          <div className="flex items-center gap-1 mb-1">
+                            <div className={`w-2 h-2 rounded-full ${getIntensityColor(session.intensity)}`}></div>
+                            {hasResults && (
+                              <CheckCircle className="w-3 h-3 text-green-600 flex-shrink-0" title="Resultados cargados" />
+                            )}
+                            <span className="font-medium truncate flex-1">{session.name}</span>
+                          </div>
                         </div>
-                        <div className="truncate text-muted-foreground">
-                          {session.name}
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                     {sessions.length > 3 && (
                       <div className="text-xs text-muted-foreground">
                         +{sessions.length - 3} más
@@ -1146,18 +1297,297 @@ export function AthleteCalendar({ athleteId, planningId }: AthleteCalendarProps)
             </div>
 
             <DialogFooter className="flex-col sm:flex-col gap-4">
-              <Alert className="bg-blue-50 border-blue-200">
-                <Info className="h-4 w-4 text-blue-600" />
-                <AlertDescription className="text-sm text-blue-900">
-                  Esta vista es informativa. Para marcar la sesión como completada y cargar los resultados ve a <span className="font-semibold">"Subir Entrenamientos"</span> y asocia los datos al momento de subirlos.
-                </AlertDescription>
-              </Alert>
+              {(() => {
+                // Verificar si la fecha es futura
+                const [year, month, day] = selectedSession.date.split('-').map(Number);
+                const sessionDate = new Date(year, month - 1, day);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                sessionDate.setHours(0, 0, 0, 0);
+                const isFutureDate = sessionDate > today;
+                
+                return (
+                  <>
+                    {!hasCompletedWorkout && selectedSession.trainingSessionAthleteId && !isFutureDate && (
+                      <Alert className="bg-accent/10 border-accent/20">
+                        <Info className="h-4 w-4 text-accent" />
+                        <AlertDescription className="text-sm">
+                          No se han cargado los resultados de este entrenamiento aún. Puedes cargarlos ahora.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                    
+                    {hasCompletedWorkout && (
+                      <Alert className="bg-green-50 border-green-200">
+                        <CheckCircle className="h-4 w-4 text-green-600" />
+                        <AlertDescription className="text-sm text-green-900">
+                          Los resultados de este entrenamiento ya han sido cargados.
+                        </AlertDescription>
+                      </Alert>
+                    )}
+                  </>
+                );
+              })()}
 
               <div className="flex w-full justify-end gap-2">
+                {hasCompletedWorkout && (
+                  <Button 
+                    onClick={handleViewWorkoutResults}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    <Eye className="w-4 h-4" />
+                    Ver Resultados
+                  </Button>
+                )}
+                {!hasCompletedWorkout && selectedSession.trainingSessionAthleteId && onNavigateToUpload && (() => {
+                  // Verificar si la fecha es futura
+                  const [year, month, day] = selectedSession.date.split('-').map(Number);
+                  const sessionDate = new Date(year, month - 1, day);
+                  const today = new Date();
+                  today.setHours(0, 0, 0, 0);
+                  sessionDate.setHours(0, 0, 0, 0);
+                  const isFutureDate = sessionDate > today;
+                  
+                  if (isFutureDate) {
+                    return (
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="inline-block">
+                              <Button 
+                                onClick={handleNavigateToUpload}
+                                className="gap-2"
+                                disabled={true}
+                              >
+                                <Upload className="w-4 h-4" />
+                                Cargar Resultados
+                              </Button>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>No se pueden cargar resultados para entrenamientos futuros</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    );
+                  }
+                  
+                  return (
+                    <Button 
+                      onClick={handleNavigateToUpload}
+                      className="gap-2"
+                    >
+                      <Upload className="w-4 h-4" />
+                      Cargar Resultados
+                    </Button>
+                  );
+                })()}
                 <Button variant="outline" onClick={() => setIsSessionDetailOpen(false)}>
                   Cerrar
                 </Button>
               </div>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* Dialog para mostrar detalles del workout completado */}
+      {showWorkoutDetails && completedWorkout && (
+        <Dialog open={showWorkoutDetails} onOpenChange={setShowWorkoutDetails}>
+          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <CheckCircle className="w-5 h-5 text-green-600" />
+                Resultados del Entrenamiento
+              </DialogTitle>
+              <DialogDescription>
+                {completedWorkout.name} - {format(new Date(completedWorkout.date), "PPP", { locale: es })}
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4">
+              {/* Métricas principales */}
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Métricas Principales</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Distancia</p>
+                      <p className="text-lg font-semibold">{completedWorkout.distance} km</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Duración</p>
+                      <p className="text-lg font-semibold">
+                        {(() => {
+                          const minutes = Math.floor(completedWorkout.duration / 60);
+                          const seconds = completedWorkout.duration % 60;
+                          return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                        })()}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">FC Promedio</p>
+                      <p className="text-lg font-semibold">{completedWorkout.averageHR} bpm</p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Ritmo Promedio</p>
+                      <p className="text-lg font-semibold">
+                        {(() => {
+                          if (completedWorkout.distance > 0 && completedWorkout.duration > 0) {
+                            const paceSecondsPerKm = completedWorkout.duration / completedWorkout.distance;
+                            const mins = Math.floor(paceSecondsPerKm / 60);
+                            const secs = Math.round(paceSecondsPerKm % 60);
+                            return `${mins}:${secs.toString().padStart(2, '0')}/km`;
+                          }
+                          return 'N/A';
+                        })()}
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Sensaciones */}
+              {completedWorkout.sensations && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Sensaciones</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="grid grid-cols-5 gap-2">
+                      <div className="flex flex-col items-center justify-start text-center min-h-[60px]">
+                        <p className="text-xs text-muted-foreground mb-2 h-8 flex items-center justify-center">Esfuerzo</p>
+                        <p className="text-lg font-semibold">{completedWorkout.sensations.effort}/10</p>
+                      </div>
+                      <div className="flex flex-col items-center justify-start text-center min-h-[60px]">
+                        <p className="text-xs text-muted-foreground mb-2 h-8 flex items-center justify-center">Fatiga</p>
+                        <p className="text-lg font-semibold">{completedWorkout.sensations.fatigue}/10</p>
+                      </div>
+                      <div className="flex flex-col items-center justify-start text-center min-h-[60px]">
+                        <p className="text-xs text-muted-foreground mb-2 h-8 flex items-center justify-center">Motivación</p>
+                        <p className="text-lg font-semibold">{completedWorkout.sensations.motivation}/10</p>
+                      </div>
+                      <div className="flex flex-col items-center justify-start text-center min-h-[60px]">
+                        <p className="text-xs text-muted-foreground mb-2 h-8 flex items-center justify-center leading-tight">Carga<br />Muscular</p>
+                        <p className="text-lg font-semibold">{completedWorkout.sensations.muscularLoad}/10</p>
+                      </div>
+                      <div className="flex flex-col items-center justify-start text-center min-h-[60px]">
+                        <p className="text-xs text-muted-foreground mb-2 h-8 flex items-center justify-center leading-tight">Sensación<br />General</p>
+                        <p className="text-lg font-semibold">{completedWorkout.sensations.overallFeeling}/10</p>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Vueltas/Intervalos */}
+              {completedWorkout.laps && completedWorkout.laps.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Vueltas/Intervalos ({completedWorkout.laps.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {completedWorkout.laps.map((lap: any, index: number) => (
+                        <div key={index} className="p-3 border rounded-lg">
+                          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
+                            <div>
+                              <p className="text-muted-foreground">Vuelta #{lap.index}</p>
+                              <p className="font-medium">{lap.distance} km</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Duración</p>
+                              <p className="font-medium">
+                                {(() => {
+                                  const mins = Math.floor(lap.duration / 60);
+                                  const secs = Math.round(lap.duration % 60);
+                                  return `${mins}:${secs.toString().padStart(2, '0')}`;
+                                })()}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">FC Prom</p>
+                              <p className="font-medium">{lap.averageHR} bpm</p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Velocidad</p>
+                              <p className="font-medium">{lap.speed.toFixed(2)} m/s</p>
+                              <p className="text-xs text-muted-foreground">
+                                {(() => {
+                                  if (lap.speed > 0) {
+                                    const paceSecondsPerKm = 1000 / lap.speed;
+                                    const mins = Math.floor(paceSecondsPerKm / 60);
+                                    const secs = Math.round(paceSecondsPerKm % 60);
+                                    return `${mins}:${secs.toString().padStart(2, '0')}/km`;
+                                  }
+                                  return 'N/A';
+                                })()}
+                              </p>
+                            </div>
+                            <div>
+                              <p className="text-muted-foreground">Inicio</p>
+                              <p className="font-medium text-xs">
+                                {format(new Date(lap.startTime), 'HH:mm', { locale: es })}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Molestias/Lesiones */}
+              {completedWorkout.injuries && completedWorkout.injuries.length > 0 && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Molestias/Lesiones ({completedWorkout.injuries.length})</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {completedWorkout.injuries.map((injury: any, index: number) => (
+                        <Alert key={index} variant="destructive" className="bg-destructive/10">
+                          <ShieldAlert className="h-4 w-4" />
+                          <AlertDescription>
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <p className="font-medium">{mapInjuryLocationToSpanish(injury.bodyPart)}</p>
+                                <p className="text-sm">{injury.description}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  Severidad: {injury.severity}/10 - {mapInjuryTypeToSpanish(injury.type)}
+                                  {injury.affectedPerformance && ' - Afectó el rendimiento'}
+                                </p>
+                              </div>
+                            </div>
+                          </AlertDescription>
+                        </Alert>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Comentarios */}
+              {completedWorkout.comments && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Comentarios</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-sm">{completedWorkout.comments}</p>
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowWorkoutDetails(false)}>
+                Cerrar
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

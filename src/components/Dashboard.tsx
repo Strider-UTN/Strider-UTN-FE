@@ -10,6 +10,7 @@ import { AthleteCalendar } from './AthleteCalendar';
 import { AthleteTrainingPlan } from './AthleteTrainingPlan';
 import { AthleteTrainingHistory } from './AthleteTrainingHistory';
 import { AthletePerformanceView } from './AthletePerformanceView';
+import { PerformanceView } from './PerformanceView';
 import { AthleteStatusManagement } from './AthleteStatusManagement';
 import { InvitationsView } from './InvitationsView';
 import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
@@ -283,7 +284,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     { id: 'calendar', label: 'Calendario', icon: Calendar },
     { id: 'training-plan', label: 'Planificación', icon: CalendarDays },
     { id: 'upload-training', label: 'Subir Entrenamientos', icon: Upload },
-    { id: 'training-history', label: 'Histórico de entrenamientos', icon: FileText },
+    { id: 'training-history', label: 'Histórico de sesiones', icon: FileText },
     { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
     { id: 'status', label: 'Estado y Lesiones', icon: Heart },
     { id: 'invitations', label: 'Invitaciones', icon: Mail, badgeCount: pendingInvitationsCount }
@@ -637,7 +638,22 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
 
     switch (athleteActiveView) {
       case 'calendar':
-        return <AthleteCalendar athleteId={resolvedAthleteId} />;
+        return (
+          <AthleteCalendar 
+            athleteId={resolvedAthleteId} 
+            onNavigateToUpload={(date, sessionId) => {
+              setAthleteActiveView('upload-training');
+              // Guardar los parámetros para TrainingUpload
+              // Guardar como string YYYY-MM-DD para evitar problemas de zona horaria
+              const year = date.getFullYear();
+              const month = String(date.getMonth() + 1).padStart(2, '0');
+              const day = String(date.getDate()).padStart(2, '0');
+              const dateStr = `${year}-${month}-${day}`;
+              sessionStorage.setItem('trainingUpload_initialDate', dateStr);
+              sessionStorage.setItem('trainingUpload_initialSessionId', sessionId);
+            }}
+          />
+        );
       case 'training-plan':
         return <AthleteTrainingPlan />;
       case 'upload-training':
@@ -657,20 +673,22 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
           />
         );
       case 'performance':
-        // Para atletas, crear un objeto atleta basado en el usuario actual
-        const athleteForPerformance = {
-          id: user.id,
-          name: user.realName,
-          email: user.email,
-          age: user.dateOfBirth ? new Date().getFullYear() - new Date(user.dateOfBirth).getFullYear() : 25,
-          groupName: 'Mi Entrenamiento',
-          joinDate: '2024-01-01'
-        };
+        // Usar PerformanceView que carga datos reales del backend
         return (
-          <AthletePerformanceView 
-            athlete={athleteForPerformance}
+          <PerformanceView 
             units={user.preferences?.units || 'metric'}
-            onBack={() => setAthleteActiveView('training-plan')}
+            onUnitsChange={(units) => {
+              // Actualizar preferencias del usuario si es necesario
+              if (onUpdateUser) {
+                onUpdateUser({
+                  ...user,
+                  preferences: {
+                    ...user.preferences,
+                    units
+                  }
+                });
+              }
+            }}
           />
         );
       case 'status':
@@ -688,8 +706,12 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         <Sidebar>
           <SidebarHeader className="border-b p-4">
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center">
-                <span className="text-primary-foreground font-semibold">S</span>
+              <div className="w-12 h-12 rounded-lg flex items-center justify-center overflow-hidden">
+                <img 
+                  src="/LogoStriderSinTexto.png" 
+                  alt="Strider Logo" 
+                  className="w-full h-full object-contain"
+                />
               </div>
               <div>
                 <p className="font-semibold">Strider</p>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -11,13 +11,15 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Separator } from './ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { Upload, Calendar as CalendarIcon, Plus, ShieldAlert, Timer, Heart, Zap, Target, User, ArrowRight, ArrowLeft, CheckCircle, Watch, Download, Link2, AlertCircle, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
+import { Upload, Calendar as CalendarIcon, Plus, ShieldAlert, Timer, Heart, Zap, Target, User, ArrowRight, ArrowLeft, CheckCircle, Watch, Download, Link2, AlertCircle, Eye, EyeOff, Loader2, Info } from 'lucide-react';
 import { Alert, AlertDescription } from './ui/alert';
 import { format, addDays, parse, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { CompletedWorkoutService, CreateCompletedWorkoutDto } from '../services/completedWorkoutService';
 
 interface InjuryReport {
   bodyPart: string;
@@ -25,6 +27,16 @@ interface InjuryReport {
   description: string;
   affectedPerformance: boolean;
   type: 'Molestia' | 'Dolor';
+}
+
+// Interfaz para Lap basada en APILap del backend
+interface Lap {
+  index: number;
+  distance: number; // km
+  duration: number; // segundos
+  averageHR: number; // bpm
+  speed: number; // m/s (se puede calcular de distance/duration)
+  startTime: string; // ISO string
 }
 
 interface TrainingSession {
@@ -106,12 +118,27 @@ interface PlannedSession {
   targetHR: string;
   athleteId: string;
   planningName: string;
+  trainingSessionAthleteId?: number; // ID de la relación TrainingSessionAthlete
   intervals?: Array<{
     type: 'work' | 'rest';
     duration: number;
     pace: string;
     intensity: string;
     distance?: number;
+    repetitions?: number;
+  }>;
+  series?: Array<{
+    name: string;
+    repetitions: number;
+    recoveryBetweenSets: string;
+    intervals: Array<{
+      type: 'work' | 'rest';
+      duration: number;
+      pace: string;
+      intensity: string;
+      distance?: number;
+      repetitions?: number;
+    }>;
   }>;
 }
 
@@ -131,10 +158,46 @@ interface GarminActivity {
   trainingEffect?: number;
 }
 
-export function TrainingUpload() {
+interface TrainingUploadProps {
+  initialDate?: Date;
+  initialSessionId?: string;
+}
+
+export function TrainingUpload({ initialDate, initialSessionId }: TrainingUploadProps = {}) {
+  // Obtener parámetros de sessionStorage si existen (para navegación desde calendario)
+  const getInitialDate = () => {
+    if (initialDate) return initialDate;
+    const storedDate = sessionStorage.getItem('trainingUpload_initialDate');
+    if (storedDate) {
+      sessionStorage.removeItem('trainingUpload_initialDate');
+      // Si es formato YYYY-MM-DD, parsear como fecha local
+      if (/^\d{4}-\d{2}-\d{2}$/.test(storedDate)) {
+        const [year, month, day] = storedDate.split('-').map(Number);
+        return new Date(year, month - 1, day); // month es 0-indexed
+      }
+      // Si es ISO string, usar directamente
+      return new Date(storedDate);
+    }
+    return undefined;
+  };
+
+  const getInitialSessionId = () => {
+    if (initialSessionId) return initialSessionId;
+    const storedSessionId = sessionStorage.getItem('trainingUpload_initialSessionId');
+    if (storedSessionId) {
+      sessionStorage.removeItem('trainingUpload_initialSessionId');
+      return storedSessionId;
+    }
+    return '';
+  };
+
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
-  const [selectedDate, setSelectedDate] = useState<Date>();
+  const [selectedDate, setSelectedDate] = useState<Date | undefined>(getInitialDate());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [existingWorkout, setExistingWorkout] = useState<any>(null);
+  const [isCheckingExistingWorkout, setIsCheckingExistingWorkout] = useState(false);
+  const [hasAutoAdvanced, setHasAutoAdvanced] = useState(false);
+  const hasAutoAdvancedRef = useRef(false); // Ref para rastrear si ya se ejecutó el auto-avance inicial
   const [injuries, setInjuries] = useState<InjuryReport[]>([]);
   const [showInjuryForm, setShowInjuryForm] = useState(false);
   const [isDatePickerOpen, setIsDatePickerOpen] = useState(false);
@@ -148,10 +211,11 @@ export function TrainingUpload() {
     type: 'Molestia'
   });
 
-  const [sessionId, setSessionId] = useState('');
+  const [sessionId, setSessionId] = useState(getInitialSessionId());
   const [completedTraining, setCompletedTraining] = useState<TrainingSession | null>(null);
   const [plannedSessions, setPlannedSessions] = useState<PlannedSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+  const [sessionsWithWorkouts, setSessionsWithWorkouts] = useState<Set<string>>(new Set()); // IDs de sesiones que ya tienen workouts cargados
   
   // Garmin states
   const [isGarminConnected, setIsGarminConnected] = useState(false);
@@ -170,33 +234,95 @@ export function TrainingUpload() {
   const [showPassword, setShowPassword] = useState(false);
   const [garminFormErrors, setGarminFormErrors] = useState<{ email?: string; password?: string }>({});
 
+  // Estado para Laps (vueltas/intervalos)
+  const [laps, setLaps] = useState<Lap[]>([]);
+  const [showLapForm, setShowLapForm] = useState(false);
+  const [currentLap, setCurrentLap] = useState<Partial<Lap> & { durationString?: string }>({
+    index: 0,
+    distance: 0,
+    duration: 0,
+    durationString: '', // Formato mm:ss para el input
+    averageHR: 0,
+    speed: 0,
+    startTime: ''
+  });
+
   const [formData, setFormData] = useState({
     name: '',
-    type: '',
-    duration: '',
-    distance: '',
-    avgPace: '',
-    maxHR: '',
-    avgHR: '',
-    calories: '',
-    elevation: '',
-    comments: '',
+    distance: '', // km
+    duration: '', // formato mm:ss (se convertirá a segundos para el backend)
+    averageHR: '', // bpm
+    // Sensaciones (siempre se cargan manualmente)
     effort: 5,
     fatigue: 5,
     motivation: 5,
     muscularLoad: 5,
     overallFeeling: 5,
-    temperature: '',
-    weather: '',
-    surface: '',
-    humidity: '',
-    wind: '',
-    vo2MaxPercentage: '',
-    cadence: '',
-    strideLength: '',
-    verticalOscillation: '',
-    groundContactTime: ''
+    // Comentarios opcionales
+    comments: ''
   });
+
+  // Autocompletar nombre cuando se selecciona una sesión
+  useEffect(() => {
+    if (sessionId && plannedSessions.length > 0) {
+      const selectedSession = plannedSessions.find(s => s.id === sessionId);
+      if (selectedSession) {
+        setFormData(prev => ({
+          ...prev,
+          name: selectedSession.name
+        }));
+      }
+    }
+  }, [sessionId, plannedSessions]);
+
+  // Avanzar automáticamente al paso 2 solo cuando se inicializa con fecha y sesión
+  // Este efecto solo se ejecuta una vez al montar el componente si hay initialDate e initialSessionId
+  useEffect(() => {
+    // Solo avanzar si tenemos los valores iniciales, no hemos avanzado automáticamente antes,
+    // estamos en el paso 1, y ya tenemos las sesiones cargadas
+    // Usar ref para evitar que se ejecute cuando el usuario navega manualmente hacia atrás
+    if (initialDate && initialSessionId && !hasAutoAdvancedRef.current && currentStep === 1 && plannedSessions.length > 0) {
+      const selectedSession = plannedSessions.find(s => s.id === initialSessionId);
+      if (selectedSession) {
+        setCurrentStep(2);
+        setHasAutoAdvanced(true);
+        hasAutoAdvancedRef.current = true; // Marcar como ejecutado usando ref
+      }
+    }
+  }, [initialDate, initialSessionId, plannedSessions.length]); // No incluir currentStep ni hasAutoAdvanced para evitar re-ejecuciones
+
+  // Calcular automáticamente distancia, duración y FC promedio desde los laps
+  useEffect(() => {
+    if (laps.length > 0) {
+      // Calcular distancia total (suma de todas las distancias)
+      const totalDistance = laps.reduce((sum, lap) => sum + (lap.distance || 0), 0);
+      
+      // Calcular duración total (suma de todas las duraciones en segundos)
+      const totalDurationSeconds = laps.reduce((sum, lap) => sum + (lap.duration || 0), 0);
+      const totalDurationMMSS = formatSecondsToMMSS(totalDurationSeconds);
+      
+      // Calcular FC promedio ponderada por duración
+      let totalHRWeighted = 0;
+      let totalDuration = 0;
+      laps.forEach(lap => {
+        const lapDuration = lap.duration || 0;
+        const lapHR = lap.averageHR || 0;
+        if (lapDuration > 0 && lapHR > 0) {
+          totalHRWeighted += lapHR * lapDuration;
+          totalDuration += lapDuration;
+        }
+      });
+      const averageHR = totalDuration > 0 ? Math.round(totalHRWeighted / totalDuration) : 0;
+      
+      // Actualizar los campos del formulario
+      setFormData(prev => ({
+        ...prev,
+        distance: totalDistance > 0 ? totalDistance.toFixed(2) : prev.distance,
+        duration: totalDurationMMSS !== '00:00' ? totalDurationMMSS : prev.duration,
+        averageHR: averageHR > 0 ? averageHR.toString() : prev.averageHR
+      }));
+    }
+  }, [laps]);
 
   // Lista de partes del cuerpo para el selector
   const bodyParts = [
@@ -317,6 +443,20 @@ export function TrainingUpload() {
     const loadSessionsForDate = async () => {
       if (!selectedDate) {
         setPlannedSessions([]);
+        setExistingWorkout(null);
+        return;
+      }
+
+      // Validar que la fecha no sea futura
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDateOnly = new Date(selectedDate);
+      selectedDateOnly.setHours(0, 0, 0, 0);
+      
+      if (selectedDateOnly > today) {
+        toast.error('No se pueden cargar resultados para entrenamientos futuros');
+        setPlannedSessions([]);
+        setExistingWorkout(null);
         return;
       }
 
@@ -327,31 +467,66 @@ export function TrainingUpload() {
         
         // Mapear sesiones del backend al formato PlannedSession
         const mappedSessions: PlannedSession[] = backendSessions.map(session => {
-          // Calcular duración estimada desde los intervalos
-          let estimatedDuration = 0;
-          let estimatedDistance = 0;
+          // Usar el volumen calculado del backend si está disponible (ya está en km)
+          let estimatedDistance = session.volume || 0;
           
-          if (session.series && session.series.length > 0) {
+          // Si no hay volumen calculado, calcularlo desde los intervalos
+          if (estimatedDistance === 0 && session.series && session.series.length > 0) {
+            let totalDistanceMeters = 0;
             session.series.forEach(series => {
               if (series.intervals && series.intervals.length > 0) {
                 series.intervals.forEach(interval => {
-                  if (interval.duration) {
-                    // Parsear duración en formato HH:mm:ss o mm:ss
-                    const parts = interval.duration.split(':').map(Number);
-                    let seconds = 0;
-                    if (parts.length === 3) {
-                      seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
-                    } else if (parts.length === 2) {
-                      seconds = parts[0] * 60 + parts[1];
-                    }
-                    estimatedDuration += seconds * (interval.repetitions || 1);
-                  }
                   if (interval.distance) {
-                    estimatedDistance += interval.distance * (interval.repetitions || 1);
+                    // interval.distance está en metros, convertir a km
+                    totalDistanceMeters += interval.distance * (interval.repetitions || 1);
                   }
                 });
               }
             });
+            estimatedDistance = totalDistanceMeters / 1000; // Convertir metros a km
+          }
+
+          // Usar la duración estimada del backend si está disponible
+          let estimatedDuration = 0;
+          if (session.estimatedWorkSeconds && session.estimatedRecoverySeconds) {
+            // Sumar trabajo y recuperación (ya están en segundos)
+            estimatedDuration = session.estimatedWorkSeconds + session.estimatedRecoverySeconds;
+          } else if (session.estimatedWorkSeconds) {
+            // Solo trabajo si no hay recuperación calculada
+            estimatedDuration = session.estimatedWorkSeconds;
+          } else {
+            // Fallback: calcular manualmente desde los intervalos
+            if (session.series && session.series.length > 0) {
+              session.series.forEach(series => {
+                if (series.intervals && series.intervals.length > 0) {
+                  series.intervals.forEach(interval => {
+                    if (interval.duration) {
+                      // Parsear duración en formato HH:mm:ss o mm:ss
+                      const parts = interval.duration.split(':').map(Number);
+                      let seconds = 0;
+                      if (parts.length === 3) {
+                        seconds = parts[0] * 3600 + parts[1] * 60 + parts[2];
+                      } else if (parts.length === 2) {
+                        seconds = parts[0] * 60 + parts[1];
+                      }
+                      estimatedDuration += seconds * (interval.repetitions || 1);
+                    }
+                  });
+                }
+              });
+              
+              // También considerar el tiempo de recuperación entre series
+              session.series.forEach((series, index) => {
+                if (series.recoveryBetweenSets && index < session.series.length - 1) {
+                  // Parsear tiempo de recuperación (formato MM:SS)
+                  const recoveryParts = series.recoveryBetweenSets.split(':').map(Number);
+                  if (recoveryParts.length === 2) {
+                    const recoverySeconds = recoveryParts[0] * 60 + recoveryParts[1];
+                    estimatedDuration += recoverySeconds;
+                  }
+                }
+              });
+            }
           }
 
           // Formatear ritmo objetivo si existe
@@ -359,8 +534,10 @@ export function TrainingUpload() {
           if (session.series && session.series.length > 0) {
             const firstInterval = session.series[0]?.intervals?.[0];
             if (firstInterval?.targetSpeed) {
+              // targetSpeed ya viene en formato mm:ss/km
               plannedPace = firstInterval.targetSpeed;
             } else if (firstInterval?.pace) {
+              // pace viene como número decimal (min/km)
               const minutes = Math.floor(firstInterval.pace);
               const seconds = Math.round((firstInterval.pace - minutes) * 60);
               plannedPace = `${minutes}:${seconds.toString().padStart(2, '0')}`;
@@ -375,12 +552,13 @@ export function TrainingUpload() {
                   session.category === 'prep_competition' ? 'Prep. Competencia' : 
                   'Competencia',
             plannedDuration: Math.round(estimatedDuration / 60), // Convertir a minutos
-            plannedDistance: Math.round(estimatedDistance * 100) / 100, // Redondear a 2 decimales
+            plannedDistance: Math.round(estimatedDistance * 100) / 100, // Redondear a 2 decimales (ya en km)
             plannedPace: plannedPace,
             targetHR: 'N/A', // No viene del backend actualmente
             athleteId: 'current', // El atleta actual
             planningName: session.planningId ? `Planificación ${session.planningId}` : 'Sin planificación',
-            intervals: session.series?.flatMap(series => 
+            trainingSessionAthleteId: session.trainingSessionAthleteId, // ID de la relación TrainingSessionAthlete
+            intervals: session.structureType === 'simple' ? (session.series?.flatMap(series => 
               series.intervals?.map(interval => ({
                 type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
                 duration: interval.duration ? (() => {
@@ -391,27 +569,98 @@ export function TrainingUpload() {
                 })() : 0,
                 pace: interval.targetSpeed || (interval.pace ? `${Math.floor(interval.pace)}:${Math.round((interval.pace % 1) * 60).toString().padStart(2, '0')}` : 'N/A'),
                 intensity: interval.intensity || 'Moderada',
-                distance: interval.distance
+                distance: interval.distance / 1000, // Convertir metros a km
+                repetitions: interval.repetitions || 1
               })) || []
-            ) || []
+            ) || []) : undefined,
+            series: session.structureType === 'advanced' ? (session.series?.map(series => ({
+              name: series.name || 'Serie sin nombre',
+              repetitions: series.repetitions || 1,
+              recoveryBetweenSets: series.recoveryBetweenSets || '00:00',
+              intervals: series.intervals?.map(interval => ({
+                type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
+                duration: interval.duration ? (() => {
+                  const parts = interval.duration.split(':').map(Number);
+                  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+                  if (parts.length === 2) return parts[0] + parts[1] / 60;
+                  return 0;
+                })() : 0,
+                pace: interval.targetSpeed || (interval.pace ? `${Math.floor(interval.pace)}:${Math.round((interval.pace % 1) * 60).toString().padStart(2, '0')}` : 'N/A'),
+                intensity: interval.intensity || 'Moderada',
+                distance: interval.distance / 1000, // Convertir metros a km
+                repetitions: interval.repetitions || 1
+              })) || []
+            })) || []) : undefined
           };
         });
 
         setPlannedSessions(mappedSessions);
+
+        // Usar hasCompletedWorkout del backend para filtrar sesiones
+        const sessionsWithWorkoutsSet = new Set<string>();
+        mappedSessions.forEach(session => {
+          // Buscar la sesión original del backend para obtener hasCompletedWorkout
+          const backendSession = backendSessions.find(bs => bs.id.toString() === session.id);
+          if (backendSession?.hasCompletedWorkout) {
+            sessionsWithWorkoutsSet.add(session.id);
+          }
+        });
+
+        setSessionsWithWorkouts(sessionsWithWorkoutsSet);
+
+        // Si hay una sesión seleccionada y tiene workout, obtener los detalles para mostrar
+        if (sessionId) {
+          const selectedSession = mappedSessions.find(s => s.id === sessionId);
+          const backendSelectedSession = backendSessions.find(bs => bs.id.toString() === sessionId);
+          
+          if (selectedSession?.trainingSessionAthleteId && backendSelectedSession?.hasCompletedWorkout) {
+            setIsCheckingExistingWorkout(true);
+            try {
+              const workout = await CompletedWorkoutService.getCompletedWorkoutByTrainingSessionAthleteIdAndDate(
+                selectedSession.trainingSessionAthleteId,
+                dateStr
+              );
+              setExistingWorkout(workout);
+            } catch (error: any) {
+              // El servicio ya maneja el 404 y retorna null
+              if (error.response?.status !== 404) {
+                console.error('Error al obtener detalles del workout:', error);
+              }
+              setExistingWorkout(null);
+            } finally {
+              setIsCheckingExistingWorkout(false);
+            }
+          } else {
+            setExistingWorkout(null);
+          }
+        } else {
+          setExistingWorkout(null);
+        }
       } catch (error) {
         console.error('Error al cargar sesiones:', error);
         toast.error('Error al cargar las sesiones planificadas');
         setPlannedSessions([]);
+        setExistingWorkout(null);
       } finally {
         setIsLoadingSessions(false);
       }
     };
 
     loadSessionsForDate();
-  }, [selectedDate]);
+  }, [selectedDate, sessionId]);
 
   // Función para obtener las sesiones planificadas para la fecha seleccionada
+  // Filtra las sesiones que ya tienen workouts cargados
   const getSessionsByDate = (date: Date | undefined) => {
+    if (!date) return [];
+    const selectedDateStr = format(date, 'yyyy-MM-dd');
+    return plannedSessions.filter(session => 
+      session.date === selectedDateStr && !sessionsWithWorkouts.has(session.id)
+    );
+  };
+
+  // Función para obtener todas las sesiones para una fecha (incluyendo las que tienen workouts)
+  const getAllSessionsByDate = (date: Date | undefined) => {
     if (!date) return [];
     const selectedDateStr = format(date, 'yyyy-MM-dd');
     return plannedSessions.filter(session => session.date === selectedDateStr);
@@ -604,8 +853,79 @@ export function TrainingUpload() {
     return true;
   };
 
+  // Función para convertir mm:ss a minutos (double)
+  const parseDurationToMinutes = (durationStr: string): number => {
+    if (!durationStr || !durationStr.includes(':')) {
+      return 0;
+    }
+    const [minutes, seconds] = durationStr.split(':').map(Number);
+    if (isNaN(minutes) || isNaN(seconds)) {
+      return 0;
+    }
+    return minutes + (seconds / 60);
+  };
+
+  // Función para convertir mm:ss a segundos
+  const parseDurationToSeconds = (durationStr: string): number => {
+    if (!durationStr || !durationStr.includes(':')) {
+      return 0;
+    }
+    const [minutes, seconds] = durationStr.split(':').map(Number);
+    if (isNaN(minutes) || isNaN(seconds)) {
+      return 0;
+    }
+    return minutes * 60 + seconds;
+  };
+
+  // Función para convertir segundos a mm:ss
+  const formatSecondsToMMSS = (seconds: number): string => {
+    if (!seconds || seconds <= 0) return '00:00';
+    const totalSeconds = Math.round(seconds); // Redondear a entero
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Función para convertir velocidad en m/s a ritmo en mm:ss/km
+  const convertSpeedToPace = (speedMs: number): string => {
+    if (!speedMs || speedMs <= 0) return 'N/A';
+    // Ritmo en segundos por km = 1000 / velocidad_m_s
+    const paceSecondsPerKm = 1000 / speedMs;
+    return formatSecondsToMMSS(paceSecondsPerKm);
+  };
+
+  // Función para mapear bodyPart (string en español) a InjuryLocation (enum en inglés)
+  const mapBodyPartToInjuryLocation = (bodyPart: string): string => {
+    const mapping: Record<string, string> = {
+      'Rodilla izquierda': 'LeftKnee',
+      'Rodilla derecha': 'RightKnee',
+      'Tobillo izquierdo': 'LeftAnkle',
+      'Tobillo derecho': 'RightAnkle',
+      'Pantorrilla izquierda': 'LeftCalf',
+      'Pantorrilla derecha': 'RightCalf',
+      'Cuádriceps izquierdo': 'LeftThigh',
+      'Cuádriceps derecho': 'RightThigh',
+      'Isquiotibiales izquierdos': 'LeftThigh',
+      'Isquiotibiales derechos': 'RightThigh',
+      'Gemelo izquierdo': 'LeftCalf',
+      'Gemelo derecho': 'RightCalf',
+      'Pie izquierdo': 'LeftFoot',
+      'Pie derecho': 'RightFoot',
+      'Cadera izquierda': 'Hip',
+      'Cadera derecha': 'Hip',
+      'Espalda baja': 'LowerBack',
+      'Espalda media': 'UpperBack',
+      'Espalda alta': 'UpperBack',
+      'Hombro izquierdo': 'LeftShoulder',
+      'Hombro derecho': 'RightShoulder',
+      'Otra zona': 'Head'
+    };
+    return mapping[bodyPart] || 'Head';
+  };
+
   const validateForm = () => {
-    const required = ['name', 'type', 'duration', 'distance', 'avgPace'];
+    // Campos requeridos según APIWorkout
+    const required = ['name', 'distance', 'duration', 'averageHR'];
     const missing = required.filter(field => !formData[field as keyof typeof formData]);
     
     if (missing.length > 0) {
@@ -613,13 +933,161 @@ export function TrainingUpload() {
       return false;
     }
     
-    const pacePattern = /^\d{1,2}:\d{2}$/;
-    if (!pacePattern.test(formData.avgPace)) {
-      toast.error('El formato del ritmo debe ser MM:SS (ej: 5:30)');
+    // Validar formato de duración (mm:ss)
+    const durationPattern = /^\d{1,2}:\d{2}$/;
+    if (!durationPattern.test(formData.duration)) {
+      toast.error('La duración debe estar en formato mm:ss (ej: 45:30)');
+      return false;
+    }
+    
+    const durationMinutes = parseDurationToMinutes(formData.duration);
+    const distance = parseFloat(formData.distance);
+    const avgHR = parseFloat(formData.averageHR);
+    
+    if (durationMinutes <= 0) {
+      toast.error('La duración debe ser mayor a 0');
+      return false;
+    }
+    
+    if (isNaN(distance) || distance <= 0) {
+      toast.error('La distancia debe ser un número mayor a 0');
+      return false;
+    }
+    
+    if (isNaN(avgHR) || avgHR <= 0 || avgHR > 250) {
+      toast.error('La frecuencia cardíaca promedio debe ser un número válido entre 1 y 250');
       return false;
     }
     
     return true;
+  };
+
+  // Funciones para manejar Laps
+  const handleAddLap = () => {
+    // Usar la fecha del entrenamiento seleccionado y hora actual
+    const baseDate = selectedDate || new Date();
+    const now = new Date();
+    const startTime = new Date(baseDate);
+    startTime.setHours(now.getHours(), now.getMinutes(), 0, 0);
+    
+    setCurrentLap({
+      index: laps.length + 1,
+      distance: 0,
+      duration: 0,
+      durationString: '', // Formato mm:ss para el input
+      averageHR: 0,
+      speed: 0,
+      startTime: startTime.toISOString()
+    });
+    setShowLapForm(true);
+  };
+
+  const handleLapChange = (field: keyof Lap | 'durationString', value: string | number) => {
+    setCurrentLap(prev => {
+      const updated: any = { ...prev };
+      
+      if (field === 'durationString') {
+        // Manejar formato mm:ss
+        let formattedValue = value as string;
+        // Remover caracteres no numéricos excepto :
+        formattedValue = formattedValue.replace(/[^\d:]/g, '');
+        // Limitar a formato mm:ss
+        if (formattedValue.length > 5) {
+          formattedValue = formattedValue.substring(0, 5);
+        }
+        // Agregar : automáticamente después de 2 dígitos
+        if (formattedValue.length === 2 && !formattedValue.includes(':')) {
+          formattedValue = formattedValue + ':';
+        }
+        updated.durationString = formattedValue;
+        
+        // Convertir a segundos para calcular velocidad
+        const durationSeconds = parseDurationToSeconds(formattedValue);
+        updated.duration = durationSeconds;
+        
+        // Calcular velocidad si tenemos distancia y duración
+        const distance = prev.distance || 0;
+        if (distance > 0 && durationSeconds > 0) {
+          updated.speed = (distance * 1000) / durationSeconds;
+        }
+      } else {
+        updated[field] = value;
+        
+        // Calcular velocidad automáticamente si tenemos distancia y duración
+        if (field === 'distance' || field === 'duration') {
+          const distance = field === 'distance' ? Number(value) : (prev.distance || 0);
+          const duration = field === 'duration' ? Number(value) : (prev.duration || 0);
+          if (distance > 0 && duration > 0) {
+            // Velocidad en m/s = (distancia en km * 1000) / (duración en segundos)
+            updated.speed = (distance * 1000) / duration;
+          }
+        }
+      }
+      
+      return updated;
+    });
+  };
+
+  const handleSaveLap = () => {
+    // Validar campos requeridos
+    if (!currentLap.distance || !currentLap.durationString || !currentLap.averageHR) {
+      toast.error('Por favor completa todos los campos de la vuelta');
+      return;
+    }
+    
+    // Validar formato de duración
+    const durationPattern = /^\d{1,2}:\d{2}$/;
+    if (!durationPattern.test(currentLap.durationString || '')) {
+      toast.error('La duración debe estar en formato mm:ss (ej: 05:30)');
+      return;
+    }
+    
+    // Convertir duración de mm:ss a segundos
+    const durationSeconds = parseDurationToSeconds(currentLap.durationString || '');
+    if (durationSeconds <= 0) {
+      toast.error('La duración debe ser mayor a 0');
+      return;
+    }
+    
+    const newLap: Lap = {
+      index: currentLap.index || laps.length + 1,
+      distance: currentLap.distance || 0,
+      duration: durationSeconds,
+      averageHR: currentLap.averageHR || 0,
+      speed: currentLap.speed || 0,
+      startTime: currentLap.startTime || new Date().toISOString()
+    };
+    
+    setLaps([...laps, newLap]);
+    setShowLapForm(false);
+    setCurrentLap({
+      index: 0,
+      distance: 0,
+      duration: 0,
+      durationString: '',
+      averageHR: 0,
+      speed: 0,
+      startTime: ''
+    });
+    toast.success('Vuelta agregada correctamente');
+  };
+
+  const handleRemoveLap = (index: number) => {
+    setLaps(laps.filter((_, i) => i !== index));
+    toast.success('Vuelta eliminada');
+  };
+
+  const handleCancelLap = () => {
+    setShowLapForm(false);
+    setCurrentLap({
+      index: 0,
+      distance: 0,
+      duration: 0,
+      durationString: '',
+      averageHR: 0,
+      speed: 0,
+      startTime: ''
+    });
   };
 
   const handleContinueToStep2 = () => {
@@ -632,6 +1100,7 @@ export function TrainingUpload() {
   };
 
   const handleBackToStep1 = () => {
+    // No resetear hasAutoAdvancedRef porque queremos que el auto-avance solo ocurra una vez
     setCurrentStep(1);
   };
 
@@ -905,35 +1374,143 @@ export function TrainingUpload() {
   const handleManualSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
+    // Validar que no haya un workout existente
+    if (existingWorkout) {
+      toast.error('Ya existe un resultado cargado para esta sesión. No se puede cargar más de uno.');
+      return;
+    }
+
+    // Validar que la fecha no sea futura
+    if (selectedDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDateOnly = new Date(selectedDate);
+      selectedDateOnly.setHours(0, 0, 0, 0);
+      
+      if (selectedDateOnly > today) {
+        toast.error('No se pueden cargar resultados para entrenamientos futuros');
+        return;
+      }
+    }
+    
     if (!validateForm()) return;
     
-    setIsSubmitting(true);
+    // Validar que tenemos el TrainingSessionAthleteId
+    const selectedSession = plannedSessions.find(s => s.id === sessionId);
+    if (!selectedSession?.trainingSessionAthleteId) {
+      toast.error('No se pudo determinar la sesión de entrenamiento. Por favor selecciona una sesión válida.');
+      return;
+    }
     
+    // Convertir duración de mm:ss a formato mm:ss (el backend lo convertirá a segundos)
+    const distance = parseFloat(formData.distance);
+    const averageHR = parseFloat(formData.averageHR);
+    
+    // Crear objeto temporal para el frontend (compatibilidad con el paso 3)
+    // Este objeto se usa solo para mostrar en el paso 3, no se guarda aún
+    const tempTraining: TrainingSession = {
+      id: 'temp', // Temporal hasta que se confirme
+      date: format(selectedDate!, 'yyyy-MM-dd'),
+      name: formData.name,
+      type: 'Manual',
+      duration: parseDurationToMinutes(formData.duration), // Convertir mm:ss a minutos
+      distance,
+      avgPace: '',
+      maxHR: 0,
+      avgHR: averageHR,
+      calories: 0,
+      elevation: 0,
+      comments: formData.comments || '',
+      sensations: {
+        effort: formData.effort,
+        fatigue: formData.fatigue,
+        motivation: formData.motivation,
+        muscularLoad: formData.muscularLoad,
+        overallFeeling: formData.overallFeeling
+      },
+      conditions: {
+        temperature: 0,
+        weather: '',
+        surface: '',
+        humidity: 0,
+        wind: ''
+      },
+      splits: [],
+      hrZones: {
+        zone1: 0,
+        zone2: 0,
+        zone3: 0,
+        zone4: 0,
+        zone5: 0
+      },
+      advancedMetrics: {},
+      injuries: injuries.map(injury => ({
+        bodyPart: injury.bodyPart,
+        severity: injury.severity,
+        description: injury.description,
+        affectedPerformance: injury.affectedPerformance,
+        type: injury.type
+      })),
+      associatedSessionId: sessionId,
+      linkedSessionId: sessionId,
+      status: 'Pendiente', // Pendiente hasta confirmar
+      uploadSource: 'manual'
+    };
+    
+    // Guardar el entrenamiento temporal y pasar al Paso 3
+    setCompletedTraining(tempTraining);
+    setCurrentStep(3);
+  };
+
+  const handleConfirmLink = async () => {
+    // Validar que no haya un workout existente
+    if (existingWorkout) {
+      toast.error('Ya existe un resultado cargado para esta sesión. No se puede cargar más de uno.');
+      return;
+    }
+
+    // Validar que la fecha no sea futura
+    if (selectedDate) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const selectedDateOnly = new Date(selectedDate);
+      selectedDateOnly.setHours(0, 0, 0, 0);
+      
+      if (selectedDateOnly > today) {
+        toast.error('No se pueden cargar resultados para entrenamientos futuros');
+        return;
+      }
+    }
+
+    // Validar que tenemos el TrainingSessionAthleteId
+    const selectedSession = plannedSessions.find(s => s.id === sessionId);
+    if (!selectedSession?.trainingSessionAthleteId) {
+      toast.error('No se pudo determinar la sesión de entrenamiento. Por favor selecciona una sesión válida.');
+      return;
+    }
+
+    if (!completedTraining) {
+      toast.error('No hay datos de entrenamiento para confirmar.');
+      return;
+    }
+
+    setIsSubmitting(true);
+
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      const duration = parseInt(formData.duration);
+      // Convertir duración de mm:ss a formato mm:ss (el backend lo convertirá a segundos)
       const distance = parseFloat(formData.distance);
-      const maxHR = parseInt(formData.maxHR) || 180;
-      const avgHR = parseInt(formData.avgHR) || 155;
-      const elevation = parseInt(formData.elevation) || 0;
-      const calories = parseInt(formData.calories) || Math.round(duration * 12 * (avgHR / 160));
+      const averageHR = parseFloat(formData.averageHR);
       
-      const advancedMetrics = generateAdvancedMetrics(formData.avgPace, formData.type, duration, avgHR);
-      
-      const newTraining: TrainingSession = {
-        id: `training_${Date.now()}`,
-        date: format(selectedDate!, 'yyyy-MM-dd'),
+      // Construir el DTO para el backend con TODOS los datos (laps, injuries, etc.)
+      const createDto: CreateCompletedWorkoutDto = {
+        trainingSessionAthleteId: selectedSession.trainingSessionAthleteId,
         name: formData.name,
-        type: formData.type,
-        duration,
         distance,
-        avgPace: formData.avgPace,
-        maxHR,
-        avgHR,
-        calories,
-        elevation,
-        comments: formData.comments || 'Sin comentarios adicionales',
+        date: format(selectedDate!, 'yyyy-MM-dd'), // Formato YYYY-MM-DD para el backend
+        duration: formData.duration, // Formato mm:ss
+        averageHR,
+        comments: formData.comments || undefined,
+        source: 'Manual' as 'Manual' | 'Garmin',
         sensations: {
           effort: formData.effort,
           fatigue: formData.fatigue,
@@ -941,66 +1518,51 @@ export function TrainingUpload() {
           muscularLoad: formData.muscularLoad,
           overallFeeling: formData.overallFeeling
         },
-        conditions: {
-          temperature: parseInt(formData.temperature) || 20,
-          weather: formData.weather || 'Soleado',
-          surface: formData.surface || 'Asfalto',
-          humidity: parseInt(formData.humidity) || 50,
-          wind: formData.wind || 'Sin viento'
-        },
-        splits: generateSplits(distance, formData.avgPace, avgHR, maxHR, elevation, formData.type),
-        hrZones: generateHRZones(formData.type, avgHR, maxHR),
-        advancedMetrics: {
-          ...advancedMetrics,
-          cadence: parseInt(formData.cadence) || advancedMetrics.cadence,
-          strideLength: parseFloat(formData.strideLength) || advancedMetrics.strideLength,
-          verticalOscillation: parseFloat(formData.verticalOscillation) || advancedMetrics.verticalOscillation,
-          groundContactTime: parseInt(formData.groundContactTime) || advancedMetrics.groundContactTime
-        },
-        injuries: injuries.length > 0 ? injuries : undefined,
-        associatedSessionId: sessionId,
-        linkedSessionId: sessionId,
-        status: 'Completado',
-        uploadSource: 'manual'
+        laps: laps.length > 0 ? laps.map(lap => ({
+          index: lap.index,
+          distance: lap.distance,
+          duration: lap.duration, // Ya está en segundos
+          averageHR: lap.averageHR,
+          startTime: lap.startTime // ISO string
+        })) : undefined,
+        injuries: injuries.length > 0 ? injuries.map(injury => ({
+          bodyPart: mapBodyPartToInjuryLocation(injury.bodyPart) as any, // Mapear a enum
+          severity: injury.severity,
+          description: injury.description,
+          affectedPerformance: injury.affectedPerformance,
+          type: injury.type === 'Molestia' ? 'Molestia' : 'Dolor' as 'Molestia' | 'Dolor'
+        })) : undefined
       };
       
-      if (distance > 10) {
-        newTraining.route = {
-          startLocation: 'Punto de Inicio',
-          endLocation: distance > 15 ? 'Punto Final' : 'Punto de Inicio',
-          routeType: distance > 15 ? 'Punto a Punto' : 'Circuito'
-        };
+      // Llamar al backend para crear el workout completo
+      const createdWorkout = await CompletedWorkoutService.createCompletedWorkout(createDto);
+      
+      const associatedSession = plannedSessions.find(s => s.id === sessionId);
+      const selectedAthlete = associatedSession ? availableAthletes.find(a => a.id === associatedSession.athleteId) : null;
+      
+      let toastDescription = '';
+      if (associatedSession && selectedAthlete) {
+        toastDescription = `Atleta: ${selectedAthlete.name}\nVinculado a: ${associatedSession.name}`;
       }
-      
-      // Guardar el entrenamiento completado y pasar al Paso 3
-      setCompletedTraining(newTraining);
-      setCurrentStep(3);
-      
+      if (laps.length > 0) {
+        toastDescription += `\n${laps.length} vuelta${laps.length !== 1 ? 's' : ''} registrada${laps.length !== 1 ? 's' : ''}`;
+      }
+      if (injuries.length > 0) {
+        toastDescription += `\n${injuries.length} molestia${injuries.length > 1 ? 's' : ''}/dolor${injuries.length > 1 ? 'es' : ''} registrada${injuries.length > 1 ? 's' : ''}`;
+      }
+
+      toast.success('¡Entrenamiento vinculado exitosamente!', {
+        description: toastDescription
+      });
+
+      // Reiniciar el formulario
+      resetForm();
     } catch (error) {
-      toast.error('Error al procesar el entrenamiento. Inténtalo de nuevo.');
+      // El error ya se maneja en el servicio con toast
+      console.error('Error al crear el entrenamiento:', error);
     } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleConfirmLink = () => {
-    const associatedSession = plannedSessions.find(s => s.id === sessionId);
-    const selectedAthlete = associatedSession ? availableAthletes.find(a => a.id === associatedSession.athleteId) : null;
-    
-    let toastDescription = '';
-    if (associatedSession && selectedAthlete) {
-      toastDescription = `Atleta: ${selectedAthlete.name}\nVinculado a: ${associatedSession.name}`;
-    }
-    if (injuries.length > 0) {
-      toastDescription += `\n${injuries.length} molestia${injuries.length > 1 ? 's' : ''}/dolor${injuries.length > 1 ? 'es' : ''} registrada${injuries.length > 1 ? 's' : ''}`;
-    }
-
-    toast.success('¡Entrenamiento vinculado exitosamente!', {
-      description: toastDescription
-    });
-
-    // Reiniciar el formulario
-    resetForm();
   };
 
   return (
@@ -1022,10 +1584,12 @@ export function TrainingUpload() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => {
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
                   if (currentStep === 2) {
                     handleBackToStep1();
-                  } else {
+                  } else if (currentStep === 3) {
                     // Volver al paso 2 y limpiar entrenamiento completado
                     setCompletedTraining(null);
                     setCurrentStep(2);
@@ -1129,7 +1693,29 @@ export function TrainingUpload() {
                       <Loader2 className="w-5 h-5 animate-spin text-muted-foreground mr-2" />
                       <span className="text-sm text-muted-foreground">Cargando sesiones planificadas...</span>
                     </div>
-                  ) : getSessionsByDate(selectedDate).length > 0 ? (
+                  ) : (() => {
+                    const availableSessions = getSessionsByDate(selectedDate);
+                    const allSessions = getAllSessionsByDate(selectedDate);
+                    
+                    // Si hay sesiones pero todas tienen workouts cargados
+                    if (allSessions.length > 0 && availableSessions.length === 0) {
+                      return (
+                        <Alert className="bg-green-50 border-green-200">
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                          <AlertDescription className="text-green-900">
+                            <p className="font-medium">Ya has cargado los resultados para todas las sesiones de este día</p>
+                            <p className="text-sm mt-1">
+                              Todas las sesiones planificadas para {format(selectedDate, "d 'de' MMMM", { locale: es })} ya tienen resultados cargados.
+                              Puedes visualizarlos desde el calendario.
+                            </p>
+                          </AlertDescription>
+                        </Alert>
+                      );
+                    }
+                    
+                    // Si hay sesiones disponibles
+                    if (availableSessions.length > 0) {
+                      return (
                     <div className="space-y-2">
                       <Label htmlFor="session">Sesiones Planificadas para {format(selectedDate, "d 'de' MMMM", { locale: es })} *</Label>
                       <Select 
@@ -1197,19 +1783,19 @@ export function TrainingUpload() {
                         ) : null;
                       })()}
                     </div>
-                  ) : (
-                    <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                      <div className="flex items-start gap-2">
-                        <ShieldAlert className="w-5 h-5 text-yellow-600 flex-shrink-0 mt-0.5" />
-                        <div>
-                          <p className="font-medium text-yellow-900">No hay sesiones planificadas</p>
-                          <p className="text-sm text-yellow-700">
-                            No existen sesiones planificadas por el entrenador para esta fecha. Por favor selecciona otra fecha.
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                    );
+                    }
+                    
+                    // Si no hay sesiones para esta fecha
+                    return (
+                      <Alert>
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription>
+                          No se encontraron sesiones planificadas para {format(selectedDate, "d 'de' MMMM", { locale: es })}.
+                        </AlertDescription>
+                      </Alert>
+                    );
+                  })()}
                 </div>
               )}
 
@@ -1469,198 +2055,334 @@ export function TrainingUpload() {
                 {/* TAB: Registro Manual */}
                 <TabsContent value="manual" className="flex-1 mt-0">
                   <div className="h-full">
+                    {existingWorkout ? (
+                      <Card className="border-yellow-200 bg-yellow-50">
+                        <CardContent className="p-6">
+                          <Alert className="bg-yellow-50 border-yellow-200">
+                            <Info className="h-4 w-4 text-yellow-600" />
+                            <AlertDescription className="text-yellow-900">
+                              <p className="font-medium mb-2">Ya existe un resultado cargado para esta sesión</p>
+                              <p className="text-sm mb-4">
+                                No se puede cargar más de un resultado por sesión. Puedes visualizar el resultado existente desde el calendario.
+                              </p>
+                              <div className="mt-4 space-y-2">
+                                <p className="text-sm font-medium">Resultado existente:</p>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                  <div>
+                                    <p className="text-muted-foreground">Distancia</p>
+                                    <p className="font-medium">{existingWorkout.distance} km</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">Duración</p>
+                                    <p className="font-medium">
+                                      {(() => {
+                                        const minutes = Math.floor(existingWorkout.duration / 60);
+                                        const seconds = Math.round(existingWorkout.duration % 60);
+                                        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+                                      })()}
+                                    </p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">FC Promedio</p>
+                                    <p className="font-medium">{existingWorkout.averageHR} bpm</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-muted-foreground">Fecha</p>
+                                    <p className="font-medium">
+                                      {existingWorkout.date && !isNaN(new Date(existingWorkout.date).getTime()) 
+                                        ? format(new Date(existingWorkout.date), 'dd/MM/yyyy', { locale: es }) 
+                                        : 'N/A'}
+                                    </p>
+                                  </div>
+                                </div>
+                              </div>
+                            </AlertDescription>
+                          </Alert>
+                        </CardContent>
+                      </Card>
+                    ) : (
               <form onSubmit={handleManualSubmit} className="space-y-6 h-full flex flex-col">
                 <div className="flex-1 space-y-6 overflow-y-auto">
-                  {/* Datos Básicos */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Datos Básicos - Campos de APIWorkout */}
+                  <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="name">Nombre del Entrenamiento *</Label>
                       <Input
                         id="name"
                         value={formData.name}
-                        onChange={(e) => handleInputChange('name', e.target.value)}
-                        placeholder="Ej: Carrera continua matutina"
+                        readOnly
+                        className="bg-muted cursor-not-allowed"
+                        placeholder="Se seleccionará automáticamente de la sesión planificada"
                         required
                       />
+                      <p className="text-xs text-muted-foreground">
+                        El nombre se completa automáticamente desde la sesión seleccionada en el paso 1
+                      </p>
                     </div>
 
-                    <div className="space-y-2">
-                      <Label htmlFor="type">Tipo de Entrenamiento *</Label>
-                      <Select onValueChange={(value) => handleInputChange('type', value)} value={formData.type}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar tipo" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Continuo">Continuo</SelectItem>
-                          <SelectItem value="Intervalos">Intervalos</SelectItem>
-                          <SelectItem value="Tempo">Tempo</SelectItem>
-                          <SelectItem value="Fartlek">Fartlek</SelectItem>
-                          <SelectItem value="Recuperación">Recuperación</SelectItem>
-                          <SelectItem value="Técnica">Técnica</SelectItem>
-                          <SelectItem value="Competencia">Competencia</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  {/* Métricas Principales */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="duration" className="flex items-center gap-2">
-                        <Timer className="w-4 h-4" />
-                        Duración (min) *
-                      </Label>
-                      <Input
-                        id="duration"
-                        type="number"
-                        value={formData.duration}
-                        onChange={(e) => handleInputChange('duration', e.target.value)}
-                        placeholder="45"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="distance">Distancia (km) *</Label>
-                      <Input
-                        id="distance"
-                        type="number"
-                        step="0.1"
-                        value={formData.distance}
-                        onChange={(e) => handleInputChange('distance', e.target.value)}
-                        placeholder="8.5"
-                        required
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="avgPace">Ritmo Promedio (min/km) *</Label>
-                      <Input
-                        id="avgPace"
-                        value={formData.avgPace}
-                        onChange={(e) => handleInputChange('avgPace', e.target.value)}
-                        placeholder="5:30"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  {/* Frecuencia Cardíaca */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="maxHR" className="flex items-center gap-2">
-                        <Heart className="w-4 h-4" />
-                        FC Máxima (bpm)
-                      </Label>
-                      <Input
-                        id="maxHR"
-                        type="number"
-                        value={formData.maxHR}
-                        onChange={(e) => handleInputChange('maxHR', e.target.value)}
-                        placeholder="180"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="avgHR">
-                        FC Promedio (bpm)
-                      </Label>
-                      <Input
-                        id="avgHR"
-                        type="number"
-                        value={formData.avgHR}
-                        onChange={(e) => handleInputChange('avgHR', e.target.value)}
-                        placeholder="155"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Métricas Adicionales */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="calories">Calorías</Label>
-                      <Input
-                        id="calories"
-                        type="number"
-                        value={formData.calories}
-                        onChange={(e) => handleInputChange('calories', e.target.value)}
-                        placeholder="Auto-calculado"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="elevation">Elevación (m)</Label>
-                      <Input
-                        id="elevation"
-                        type="number"
-                        value={formData.elevation}
-                        onChange={(e) => handleInputChange('elevation', e.target.value)}
-                        placeholder="120"
-                      />
-                    </div>
-                  </div>
-
-                  {/* Métricas Avanzadas */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <Zap className="w-4 h-4 text-accent" />
-                      <Label className="font-medium">Métricas Avanzadas (Opcional)</Label>
-                    </div>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Métricas Principales según APIWorkout */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       <div className="space-y-2">
-                        <Label htmlFor="vo2MaxPercentage">% VO2 Max</Label>
+                        <Label htmlFor="distance" className="flex items-center gap-2">
+                          <Target className="w-4 h-4" />
+                          Distancia (km) *
+                          {laps.length > 0 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Calculado automáticamente desde las vueltas</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </Label>
                         <Input
-                          id="vo2MaxPercentage"
-                          type="number"
-                          min="50"
-                          max="100"
-                          value={formData.vo2MaxPercentage}
-                          onChange={(e) => handleInputChange('vo2MaxPercentage', e.target.value)}
-                          placeholder="Auto-calculado"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="cadence">Cadencia (pasos/min)</Label>
-                        <Input
-                          id="cadence"
-                          type="number"
-                          value={formData.cadence}
-                          onChange={(e) => handleInputChange('cadence', e.target.value)}
-                          placeholder="170-190"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="strideLength">Longitud de Zancada (m)</Label>
-                        <Input
-                          id="strideLength"
-                          type="number"
-                          step="0.01"
-                          value={formData.strideLength}
-                          onChange={(e) => handleInputChange('strideLength', e.target.value)}
-                          placeholder="1.25"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="verticalOscillation">Oscilación Vertical (cm)</Label>
-                        <Input
-                          id="verticalOscillation"
+                          id="distance"
                           type="number"
                           step="0.1"
-                          value={formData.verticalOscillation}
-                          onChange={(e) => handleInputChange('verticalOscillation', e.target.value)}
+                          value={formData.distance}
+                          onChange={(e) => handleInputChange('distance', e.target.value)}
                           placeholder="8.5"
+                          readOnly={laps.length > 0}
+                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
+                          required
                         />
+                        {laps.length > 0 && (
+                          <p className="text-xs text-muted-foreground">Calculado automáticamente desde las vueltas</p>
+                        )}
                       </div>
+
                       <div className="space-y-2">
-                        <Label htmlFor="groundContactTime">Tiempo de Contacto (ms)</Label>
+                        <Label htmlFor="duration" className="flex items-center gap-2">
+                          <Timer className="w-4 h-4" />
+                          Duración (mm:ss) *
+                          {laps.length > 0 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Calculado automáticamente desde las vueltas</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </Label>
                         <Input
-                          id="groundContactTime"
-                          type="number"
-                          value={formData.groundContactTime}
-                          onChange={(e) => handleInputChange('groundContactTime', e.target.value)}
-                          placeholder="245"
+                          id="duration"
+                          type="text"
+                          value={formData.duration}
+                          onChange={(e) => {
+                            if (laps.length > 0) return; // No permitir edición si hay laps
+                            // Formato mm:ss, solo permitir números y : 
+                            const value = e.target.value.replace(/[^\d:]/g, '');
+                            // Validar formato básico
+                            if (value === '' || /^\d{0,2}(:\d{0,2})?$/.test(value)) {
+                              handleInputChange('duration', value);
+                            }
+                          }}
+                          placeholder="45:00"
+                          maxLength={5}
+                          readOnly={laps.length > 0}
+                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
+                          required
                         />
+                        {laps.length > 0 ? (
+                          <p className="text-xs text-muted-foreground">Calculado automáticamente desde las vueltas</p>
+                        ) : (
+                          <p className="text-xs text-muted-foreground">Formato: mm:ss (ej: 45:30)</p>
+                        )}
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="averageHR" className="flex items-center gap-2">
+                          <Heart className="w-4 h-4" />
+                          FC Promedio (bpm) *
+                          {laps.length > 0 && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3 h-3 text-muted-foreground" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Calculado automáticamente (promedio ponderado por duración)</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </Label>
+                        <Input
+                          id="averageHR"
+                          type="number"
+                          value={formData.averageHR}
+                          onChange={(e) => handleInputChange('averageHR', e.target.value)}
+                          placeholder="155"
+                          readOnly={laps.length > 0}
+                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
+                          required
+                        />
+                        {laps.length > 0 && (
+                          <p className="text-xs text-muted-foreground">Promedio ponderado por duración desde las vueltas</p>
+                        )}
                       </div>
                     </div>
+                  </div>
+
+                  <Separator />
+
+                  {/* Laps (Vueltas/Intervalos) - Basado en APILap */}
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Target className="w-4 h-4 text-accent" />
+                        <Label className="font-medium">Vueltas/Intervalos (Opcional)</Label>
+                      </div>
+                      {!showLapForm && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleAddLap}
+                        >
+                          <Plus className="w-4 h-4 mr-2" />
+                          Agregar Vuelta
+                        </Button>
+                      )}
+                    </div>
+
+                    {laps.length > 0 && (
+                      <div className="space-y-2">
+                        {laps.map((lap, index) => (
+                          <Card key={index}>
+                            <CardContent className="pt-4">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-3">
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Vuelta #{lap.index}</p>
+                                    <p className="font-medium">{lap.distance} km</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Duración</p>
+                                    <p className="font-medium">{formatSecondsToMMSS(lap.duration)}</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">FC Prom</p>
+                                    <p className="font-medium">{lap.averageHR} bpm</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Velocidad</p>
+                                    <p className="font-medium">{lap.speed.toFixed(2)} m/s</p>
+                                    <p className="text-xs text-muted-foreground">{convertSpeedToPace(lap.speed)}/km</p>
+                                  </div>
+                                  <div>
+                                    <p className="text-xs text-muted-foreground">Inicio</p>
+                                    <p className="font-medium text-xs">{format(new Date(lap.startTime), 'HH:mm', { locale: es })}</p>
+                                  </div>
+                                </div>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleRemoveLap(index)}
+                                >
+                                  Eliminar
+                                </Button>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+
+                    {showLapForm && (
+                      <Card>
+                        <CardContent className="pt-6 space-y-4">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                              <Label htmlFor="lapDistance">Distancia (km) *</Label>
+                              <Input
+                                id="lapDistance"
+                                type="number"
+                                step="0.1"
+                                value={currentLap.distance || ''}
+                                onChange={(e) => handleLapChange('distance', parseFloat(e.target.value) || 0)}
+                                placeholder="1.0"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="lapDuration">Duración (mm:ss) *</Label>
+                              <Input
+                                id="lapDuration"
+                                type="text"
+                                value={currentLap.durationString || ''}
+                                onChange={(e) => handleLapChange('durationString', e.target.value)}
+                                placeholder="05:30"
+                                maxLength={5}
+                              />
+                              <p className="text-xs text-muted-foreground">Formato: mm:ss (ej: 05:30)</p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="lapHR">FC Promedio (bpm) *</Label>
+                              <Input
+                                id="lapHR"
+                                type="number"
+                                value={currentLap.averageHR || ''}
+                                onChange={(e) => handleLapChange('averageHR', parseInt(e.target.value) || 0)}
+                                placeholder="155"
+                              />
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="lapStartTime">Hora de Inicio (HH:mm)</Label>
+                              <Input
+                                id="lapStartTime"
+                                type="time"
+                                value={currentLap.startTime ? format(new Date(currentLap.startTime), "HH:mm") : ''}
+                                onChange={(e) => {
+                                  // Combinar la fecha del entrenamiento con la hora seleccionada
+                                  const baseDate = selectedDate || new Date();
+                                  const [hours, minutes] = e.target.value.split(':');
+                                  const newDateTime = new Date(baseDate);
+                                  newDateTime.setHours(parseInt(hours || '0'), parseInt(minutes || '0'), 0, 0);
+                                  handleLapChange('startTime', newDateTime.toISOString());
+                                }}
+                              />
+                              <p className="text-xs text-muted-foreground">
+                                La fecha será la misma del entrenamiento ({selectedDate ? format(selectedDate, 'dd/MM/yyyy', { locale: es }) : 'fecha seleccionada'})
+                              </p>
+                            </div>
+                          </div>
+                          {currentLap.speed && currentLap.speed > 0 && (
+                            <div className="p-2 bg-muted rounded-md">
+                              <p className="text-sm text-muted-foreground">
+                                Velocidad calculada: <span className="font-medium">{currentLap.speed.toFixed(2)} m/s</span>
+                                {' '}(<span className="font-medium">{convertSpeedToPace(currentLap.speed)}/km</span>)
+                              </p>
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              onClick={handleSaveLap}
+                              className="flex-1"
+                            >
+                              Guardar Vuelta
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={handleCancelLap}
+                              className="flex-1"
+                            >
+                              Cancelar
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    )}
                   </div>
 
                   <Separator />
@@ -1669,158 +2391,154 @@ export function TrainingUpload() {
                   <div className="space-y-4">
                     <Label className="font-medium">Sensaciones Durante el Entrenamiento</Label>
                     
-                    <div className="space-y-4">
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <Label htmlFor="effort">Esfuerzo Percibido</Label>
-                          <span className="text-sm text-muted-foreground">{formData.effort}/10</span>
+                    <TooltipProvider>
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor="effort">Esfuerzo Percibido</Label>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <span className="font-medium">1</span> = Muy fácil<br />
+                                    <span className="font-medium">10</span> = Máximo esfuerzo
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <span className="text-sm text-muted-foreground">{formData.effort}/10</span>
+                          </div>
+                          <Input
+                            id="effort"
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={formData.effort}
+                            onChange={(e) => handleInputChange('effort', parseInt(e.target.value))}
+                            className="w-full"
+                          />
                         </div>
-                        <Input
-                          id="effort"
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={formData.effort}
-                          onChange={(e) => handleInputChange('effort', parseInt(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
 
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <Label htmlFor="fatigue">Fatiga</Label>
-                          <span className="text-sm text-muted-foreground">{formData.fatigue}/10</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor="fatigue">Fatiga</Label>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <span className="font-medium">1</span> = Sin fatiga<br />
+                                    <span className="font-medium">10</span> = Fatiga extrema
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <span className="text-sm text-muted-foreground">{formData.fatigue}/10</span>
+                          </div>
+                          <Input
+                            id="fatigue"
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={formData.fatigue}
+                            onChange={(e) => handleInputChange('fatigue', parseInt(e.target.value))}
+                            className="w-full"
+                          />
                         </div>
-                        <Input
-                          id="fatigue"
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={formData.fatigue}
-                          onChange={(e) => handleInputChange('fatigue', parseInt(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
 
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <Label htmlFor="motivation">Motivación</Label>
-                          <span className="text-sm text-muted-foreground">{formData.motivation}/10</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor="motivation">Motivación</Label>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <span className="font-medium">1</span> = Sin motivación<br />
+                                    <span className="font-medium">10</span> = Muy motivado
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <span className="text-sm text-muted-foreground">{formData.motivation}/10</span>
+                          </div>
+                          <Input
+                            id="motivation"
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={formData.motivation}
+                            onChange={(e) => handleInputChange('motivation', parseInt(e.target.value))}
+                            className="w-full"
+                          />
                         </div>
-                        <Input
-                          id="motivation"
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={formData.motivation}
-                          onChange={(e) => handleInputChange('motivation', parseInt(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
 
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <Label htmlFor="muscularLoad">Carga Muscular</Label>
-                          <span className="text-sm text-muted-foreground">{formData.muscularLoad}/10</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor="muscularLoad">Carga Muscular</Label>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <span className="font-medium">1</span> = Sin carga<br />
+                                    <span className="font-medium">10</span> = Carga máxima
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <span className="text-sm text-muted-foreground">{formData.muscularLoad}/10</span>
+                          </div>
+                          <Input
+                            id="muscularLoad"
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={formData.muscularLoad}
+                            onChange={(e) => handleInputChange('muscularLoad', parseInt(e.target.value))}
+                            className="w-full"
+                          />
                         </div>
-                        <Input
-                          id="muscularLoad"
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={formData.muscularLoad}
-                          onChange={(e) => handleInputChange('muscularLoad', parseInt(e.target.value))}
-                          className="w-full"
-                        />
-                      </div>
 
-                      <div className="space-y-2">
-                        <div className="flex justify-between">
-                          <Label htmlFor="overallFeeling">Sensación General</Label>
-                          <span className="text-sm text-muted-foreground">{formData.overallFeeling}/10</span>
+                        <div className="space-y-2">
+                          <div className="flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                              <Label htmlFor="overallFeeling">Sensación General</Label>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Info className="w-3.5 h-3.5 text-muted-foreground cursor-help" />
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-xs">
+                                  <p className="text-xs">
+                                    <span className="font-medium">1</span> = Me sentí muy mal<br />
+                                    <span className="font-medium">10</span> = Me sentí excelente
+                                  </p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </div>
+                            <span className="text-sm text-muted-foreground">{formData.overallFeeling}/10</span>
+                          </div>
+                          <Input
+                            id="overallFeeling"
+                            type="range"
+                            min="1"
+                            max="10"
+                            value={formData.overallFeeling}
+                            onChange={(e) => handleInputChange('overallFeeling', parseInt(e.target.value))}
+                            className="w-full"
+                          />
                         </div>
-                        <Input
-                          id="overallFeeling"
-                          type="range"
-                          min="1"
-                          max="10"
-                          value={formData.overallFeeling}
-                          onChange={(e) => handleInputChange('overallFeeling', parseInt(e.target.value))}
-                          className="w-full"
-                        />
                       </div>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* Condiciones Ambientales */}
-                  <div className="space-y-4">
-                    <Label className="font-medium">Condiciones Ambientales</Label>
-                    
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="temperature">Temperatura (°C)</Label>
-                        <Input
-                          id="temperature"
-                          type="number"
-                          value={formData.temperature}
-                          onChange={(e) => handleInputChange('temperature', e.target.value)}
-                          placeholder="20"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="humidity">Humedad (%)</Label>
-                        <Input
-                          id="humidity"
-                          type="number"
-                          min="0"
-                          max="100"
-                          value={formData.humidity}
-                          onChange={(e) => handleInputChange('humidity', e.target.value)}
-                          placeholder="60"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="weather">Clima</Label>
-                        <Select onValueChange={(value) => handleInputChange('weather', value)} value={formData.weather}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar clima" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Soleado">Soleado</SelectItem>
-                            <SelectItem value="Parcialmente Nublado">Parcialmente Nublado</SelectItem>
-                            <SelectItem value="Nublado">Nublado</SelectItem>
-                            <SelectItem value="Lluvioso">Lluvioso</SelectItem>
-                            <SelectItem value="Ventoso">Ventoso</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="surface">Superficie</Label>
-                        <Select onValueChange={(value) => handleInputChange('surface', value)} value={formData.surface}>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Seleccionar superficie" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="Asfalto">Asfalto</SelectItem>
-                            <SelectItem value="Pista">Pista</SelectItem>
-                            <SelectItem value="Tierra">Tierra</SelectItem>
-                            <SelectItem value="Trail">Trail</SelectItem>
-                            <SelectItem value="Césped">Césped</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <div className="space-y-2 md:col-span-2">
-                        <Label htmlFor="wind">Viento</Label>
-                        <Input
-                          id="wind"
-                          value={formData.wind}
-                          onChange={(e) => handleInputChange('wind', e.target.value)}
-                          placeholder="Ej: Viento moderado del norte"
-                        />
-                      </div>
-                    </div>
+                    </TooltipProvider>
                   </div>
 
                   <Separator />
@@ -2006,6 +2724,7 @@ export function TrainingUpload() {
                       </Button>
                     </div>
                   </form>
+                    )}
                   </div>
                 </TabsContent>
               </Tabs>
@@ -2083,30 +2802,8 @@ export function TrainingUpload() {
                             <span className="text-sm text-muted-foreground">Ritmo objetivo</span>
                             <span className="font-medium">{plannedSession.plannedPace}/km</span>
                           </div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm text-muted-foreground">FC objetivo</span>
-                            <span className="font-medium">{plannedSession.targetHR}</span>
-                          </div>
                         </div>
 
-                        {plannedSession.intervals && plannedSession.intervals.length > 0 && (
-                          <>
-                            <Separator />
-                            <div>
-                              <p className="text-sm font-medium mb-2">Intervalos planeados</p>
-                              <div className="space-y-1 text-sm text-muted-foreground">
-                                {plannedSession.intervals.map((interval, idx) => (
-                                  <div key={idx} className="flex items-center gap-2">
-                                    <Badge variant={interval.type === 'work' ? 'default' : 'secondary'} className="text-xs">
-                                      {interval.type === 'work' ? 'Trabajo' : 'Descanso'}
-                                    </Badge>
-                                    <span>{interval.duration}min • {interval.pace}/km</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </>
-                        )}
                       </>
                     ) : null;
                   })()}
@@ -2152,28 +2849,21 @@ export function TrainingUpload() {
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Ritmo promedio</span>
-                      <span className="font-medium">{completedTraining.avgPace}/km</span>
+                      <span className="font-medium">
+                        {(() => {
+                          // Calcular ritmo promedio desde distancia y duración
+                          if (completedTraining.distance > 0 && completedTraining.duration > 0) {
+                            const durationSeconds = completedTraining.duration * 60; // convertir minutos a segundos
+                            const paceSecondsPerKm = durationSeconds / completedTraining.distance;
+                            return formatSecondsToMMSS(paceSecondsPerKm);
+                          }
+                          return completedTraining.avgPace || 'N/A';
+                        })()}/km
+                      </span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">FC promedio</span>
                       <span className="font-medium">{completedTraining.avgHR} bpm</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">FC máxima</span>
-                      <span className="font-medium">{completedTraining.maxHR} bpm</span>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Calorías</span>
-                      <span className="font-medium">{completedTraining.calories} kcal</span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Desnivel</span>
-                      <span className="font-medium">{completedTraining.elevation} m</span>
                     </div>
                   </div>
 
@@ -2239,27 +2929,124 @@ export function TrainingUpload() {
                           <span className="text-sm font-medium w-8 text-right">{completedTraining.sensations.motivation}/10</span>
                         </div>
                       </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Carga Muscular</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-accent" 
+                              style={{ width: `${(completedTraining.sensations.muscularLoad / 10) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-medium w-8 text-right">{completedTraining.sensations.muscularLoad}/10</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm text-muted-foreground">Sensación General</span>
+                        <div className="flex items-center gap-2">
+                          <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+                            <div 
+                              className="h-full bg-accent" 
+                              style={{ width: `${(completedTraining.sensations.overallFeeling / 10) * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-sm font-medium w-8 text-right">{completedTraining.sensations.overallFeeling}/10</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
-                  {/* Condiciones */}
-                  <div>
-                    <h4 className="font-medium mb-3">Condiciones</h4>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Temperatura</span>
-                        <span className="text-sm font-medium">{completedTraining.conditions.temperature}°C</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Clima</span>
-                        <span className="text-sm font-medium">{completedTraining.conditions.weather}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-sm text-muted-foreground">Superficie</span>
-                        <span className="text-sm font-medium">{completedTraining.conditions.surface}</span>
+                  {/* Comparación Planificado vs Realizado */}
+                  {plannedSessions.find(s => s.id === sessionId) && (
+                    <div>
+                      <h4 className="font-medium mb-3">Comparación Planificado vs Realizado</h4>
+                      <div className="space-y-3">
+                        {/* Mostrar series complejas si existen */}
+                        {plannedSessions.find(s => s.id === sessionId)?.series && plannedSessions.find(s => s.id === sessionId)!.series!.length > 0 && (
+                          <div className="space-y-3">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Series Planificadas:</p>
+                            {plannedSessions.find(s => s.id === sessionId)!.series!.slice(0, 3).map((series, seriesIdx) => (
+                              <div key={seriesIdx} className="text-xs p-2 bg-muted rounded space-y-1">
+                                <div className="font-medium text-sm mb-1">
+                                  {series.name} {series.repetitions > 1 ? `(${series.repetitions}x)` : ''}
+                                  {series.recoveryBetweenSets && series.recoveryBetweenSets !== '00:00' && (
+                                    <span className="text-muted-foreground ml-2">Rec: {series.recoveryBetweenSets}</span>
+                                  )}
+                                </div>
+                                {series.intervals.slice(0, 3).map((interval, intervalIdx) => (
+                                  <div key={intervalIdx} className="pl-3 text-xs">
+                                    <span className={interval.type === 'work' ? 'text-blue-600' : 'text-gray-500'}>
+                                      {interval.type === 'work' ? '●' : '○'} {interval.type === 'work' ? 'Trabajo' : 'Recuperación'}
+                                    </span>
+                                    {interval.repetitions && interval.repetitions > 1 ? ` (${interval.repetitions}x)` : ''}
+                                    {' - '}
+                                    {interval.distance ? `${interval.distance.toFixed(2)} km` : ''}
+                                    {interval.duration ? ` - ${formatSecondsToMMSS(interval.duration * 60)}` : ''}
+                                    {interval.pace && interval.pace !== 'N/A' ? ` - ${interval.pace}/km` : ''}
+                                  </div>
+                                ))}
+                                {series.intervals.length > 3 && (
+                                  <div className="pl-3 text-xs text-muted-foreground">
+                                    +{series.intervals.length - 3} intervalos más en esta serie
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                            {plannedSessions.find(s => s.id === sessionId)!.series!.length > 3 && (
+                              <p className="text-xs text-muted-foreground">
+                                +{plannedSessions.find(s => s.id === sessionId)!.series!.length - 3} series más
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        
+                        {/* Mostrar intervalos simples si existen y no hay series */}
+                        {!plannedSessions.find(s => s.id === sessionId)?.series && plannedSessions.find(s => s.id === sessionId)?.intervals && plannedSessions.find(s => s.id === sessionId)!.intervals!.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Intervalos Planificados:</p>
+                            {plannedSessions.find(s => s.id === sessionId)!.intervals!.slice(0, 5).map((interval, idx) => (
+                              <div key={idx} className="text-xs p-2 bg-muted rounded">
+                                <span className="font-medium">{interval.type === 'work' ? 'Trabajo' : 'Recuperación'}</span>
+                                {interval.repetitions && interval.repetitions > 1 ? ` (${interval.repetitions}x)` : ''}
+                                {' - '}
+                                {interval.distance ? `${interval.distance.toFixed(2)} km` : ''}
+                                {interval.duration ? ` - ${formatSecondsToMMSS(interval.duration * 60)}` : ''}
+                                {interval.pace && interval.pace !== 'N/A' ? ` - ${interval.pace}/km` : ''}
+                              </div>
+                            ))}
+                            {plannedSessions.find(s => s.id === sessionId)!.intervals!.length > 5 && (
+                              <p className="text-xs text-muted-foreground">
+                                +{plannedSessions.find(s => s.id === sessionId)!.intervals!.length - 5} intervalos más
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {laps.length > 0 && (
+                          <div className="space-y-2">
+                            <p className="text-xs font-medium text-muted-foreground mb-2">Vueltas Completadas:</p>
+                            {laps.slice(0, 5).map((lap, idx) => (
+                              <div key={idx} className="text-xs p-2 bg-accent/10 rounded">
+                                <span className="font-medium">Vuelta #{lap.index}</span>
+                                {' - '}
+                                {lap.distance.toFixed(2)} km
+                                {' - '}
+                                {formatSecondsToMMSS(lap.duration)}
+                                {' - '}
+                                {convertSpeedToPace(lap.speed)}/km
+                                {' - '}
+                                {lap.averageHR} bpm
+                              </div>
+                            ))}
+                            {laps.length > 5 && (
+                              <p className="text-xs text-muted-foreground">
+                                +{laps.length - 5} vueltas más
+                              </p>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {completedTraining.comments && (
@@ -2288,9 +3075,19 @@ export function TrainingUpload() {
                     onClick={handleConfirmLink}
                     size="lg"
                     className="gap-2"
+                    disabled={isSubmitting}
                   >
-                    <CheckCircle className="w-4 h-4" />
-                    Confirmar Vinculación
+                    {isSubmitting ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        Guardando...
+                      </>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-4 h-4" />
+                        Confirmar Vinculación
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardContent>

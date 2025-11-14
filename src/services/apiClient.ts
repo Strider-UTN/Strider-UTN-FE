@@ -229,8 +229,8 @@ class ApiClient {
         }
         
         // Extraer y mostrar el mensaje de error del backend automáticamente
-        // Solo si no es un 401 (ya manejado arriba)
-        if (error.response?.status !== 401) {
+        // Solo si no es un 401 (ya manejado arriba) ni un 404 (manejado por servicios específicos)
+        if (error.response?.status !== 401 && error.response?.status !== 404) {
           const errorMessage = extractErrorMessage(error);
           if (errorMessage) {
             toast.error(errorMessage);

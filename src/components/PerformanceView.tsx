@@ -1,11 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { LineChart, Line, AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { Activity, TrendingUp, Zap, Clock, MapPin, Target, Calendar, Settings, Heart } from 'lucide-react';
+import { Activity, TrendingUp, Zap, Clock, MapPin, Target, Calendar, Settings, Heart, Loader2 } from 'lucide-react';
+import { CompletedWorkoutService, CompletedWorkoutResponseDto } from '../services/completedWorkoutService';
+import { toast } from 'sonner';
 
 type TimePeriod = '7d' | '30d' | '3m' | '6m' | '1y';
 type Units = 'metric' | 'imperial';
@@ -16,55 +18,82 @@ interface PerformanceData {
   pace: number; // in minutes per km
   heartRate: number;
   maxHeartRate: number;
-  elevation: number;
+  elevation: number; // No se usa, siempre 0
   duration: number; // in minutes
   load: number;
 }
 
-// Datos simulados de Garmin
-const generateMockData = (period: TimePeriod): PerformanceData[] => {
-  const days = {
-    '7d': 7,
-    '30d': 30,
-    '3m': 90,
-    '6m': 180,
-    '1y': 365
-  }[period];
+// Función helper para extraer solo la parte de fecha (YYYY-MM-DD) de un string de fecha
+// Evita problemas de zona horaria extrayendo directamente la fecha sin convertir
+const extractDateOnly = (dateString: string): string => {
+  if (!dateString) return new Date().toISOString().split('T')[0];
+  // Si la fecha viene solo como "YYYY-MM-DD", retornarla directamente
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
+    return dateString;
+  }
+  // Si viene con hora (tiene T), extraer solo la parte de fecha
+  if (dateString.includes('T')) {
+    return dateString.split('T')[0];
+  }
+  // Si viene en otro formato, intentar parsear y extraer la fecha
+  try {
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  } catch {
+    return new Date().toISOString().split('T')[0];
+  }
+};
 
-  const data: PerformanceData[] = [];
-  const today = new Date();
+// Función helper para formatear fecha desde string YYYY-MM-DD sin conversión de zona horaria
+const formatDateFromString = (dateString: string, format: 'short' | 'long' = 'short'): string => {
+  if (!dateString) return '';
+  // Extraer la fecha si viene con hora
+  const dateOnly = extractDateOnly(dateString);
+  const [year, month, day] = dateOnly.split('-').map(Number);
   
-  for (let i = days - 1; i >= 0; i--) {
-    const date = new Date(today);
-    date.setDate(date.getDate() - i);
-    
-    // Simular datos realistas con variación
-    const baseDistance = period === '7d' || period === '30d' ? 
-      (Math.random() > 0.3 ? 5 + Math.random() * 15 : 0) : // Algunos días sin entrenar
-      (i % 7 === 0 ? 0 : 3 + Math.random() * 12); // Patrones semanales para períodos largos
-    
-    const basePace = 4.0 + Math.random() * 2.0; // 4:00 - 6:00 min/km
-    const duration = baseDistance > 0 ? baseDistance * basePace : 0;
-    const avgHR = baseDistance > 0 ? 140 + Math.random() * 40 : 0;
-    const maxHR = avgHR > 0 ? avgHR + 15 + Math.random() * 15 : 0;
-    
-    // Calcular carga: distancia × factor de intensidad (basado en FC)
-    const intensityFactor = avgHR > 0 ? (avgHR - 120) / 80 : 0;
-    const load = baseDistance > 0 ? baseDistance * (0.5 + intensityFactor) : 0;
-    
-    data.push({
-      date: date.toISOString().split('T')[0],
-      distance: Math.round(baseDistance * 100) / 100,
-      pace: Math.round(basePace * 100) / 100,
-      heartRate: Math.round(avgHR),
-      maxHeartRate: Math.round(maxHR),
-      elevation: Math.random() * 500, // 0-500m
-      duration: Math.round(duration),
-      load: Math.round(load * 10) / 10
-    });
+  if (format === 'short') {
+    // Formato corto: DD/MM
+    return `${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}`;
+  } else {
+    // Formato largo: DD/MM/YYYY
+    return `${day.toString().padStart(2, '0')}/${month.toString().padStart(2, '0')}/${year}`;
+  }
+};
+
+// Transformar CompletedWorkoutResponseDto a PerformanceData
+const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto): PerformanceData => {
+  // Calcular pace: duration (segundos) / distance (km) = segundos/km, luego convertir a min/km
+  const durationMinutes = workout.duration / 60;
+  const pace = workout.distance > 0 ? durationMinutes / workout.distance : 0;
+  
+  // Calcular maxHeartRate desde los laps o usar una estimación
+  let maxHeartRate = workout.averageHR;
+  if (workout.laps && workout.laps.length > 0) {
+    const maxHRFromLaps = Math.max(...workout.laps.map(lap => lap.averageHR));
+    maxHeartRate = Math.max(maxHeartRate, maxHRFromLaps);
+  } else {
+    // Estimación conservadora: averageHR + 15
+    maxHeartRate = workout.averageHR + 15;
   }
   
-  return data;
+  // Calcular carga: distancia × factor de intensidad (basado en FC promedio)
+  // Factor de intensidad va de 0.5 a 1.5 aproximadamente basado en FC
+  const intensityFactor = workout.averageHR > 0 ? (workout.averageHR - 120) / 80 : 0;
+  const load = workout.distance > 0 ? workout.distance * (0.5 + intensityFactor) : 0;
+  
+  return {
+    date: extractDateOnly(workout.date), // Usar solo la parte de fecha sin zona horaria
+    distance: workout.distance,
+    pace: Math.round(pace * 100) / 100,
+    heartRate: workout.averageHR,
+    maxHeartRate: Math.round(maxHeartRate),
+    elevation: 0, // No se usa
+    duration: Math.round(durationMinutes),
+    load: Math.round(load * 10) / 10
+  };
 };
 
 interface PerformanceViewProps {
@@ -74,9 +103,119 @@ interface PerformanceViewProps {
 
 export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('30d');
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('load');
+  const [workouts, setWorkouts] = useState<CompletedWorkoutResponseDto[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   
-  const data = generateMockData(timePeriod);
+  // Calcular fechas según el período seleccionado
+  const dateRange = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    const days = {
+      '7d': 7,
+      '30d': 30,
+      '3m': 90,
+      '6m': 180,
+      '1y': 365
+    }[timePeriod];
+    
+    const startDate = new Date(today);
+    startDate.setDate(startDate.getDate() - days);
+    startDate.setHours(0, 0, 0, 0);
+    
+    const range = {
+      start: startDate.toISOString().split('T')[0],
+      end: today.toISOString().split('T')[0]
+    };
+    
+    console.log('📅 Rango de fechas calculado:', range, 'para período:', timePeriod, 'días:', days);
+    
+    return range;
+  }, [timePeriod]);
+  
+  // Cargar workouts cuando cambie el período
+  useEffect(() => {
+    const loadWorkouts = async () => {
+      setIsLoading(true);
+      console.log('🔄 Cargando workouts del backend...', { startDate: dateRange.start, endDate: dateRange.end });
+      try {
+        const data = await CompletedWorkoutService.getMyCompletedWorkoutsByDateRange(
+          dateRange.start,
+          dateRange.end
+        );
+        console.log('✅ Workouts cargados del backend:', data.length, 'workouts');
+        console.log('📊 Datos recibidos:', data);
+        setWorkouts(data);
+      } catch (error: any) {
+        console.error('❌ Error al cargar workouts:', error);
+        console.error('Error details:', error?.response?.data || error?.message);
+        if (error?.response?.status !== 401) {
+          toast.error('Error al cargar los datos de rendimiento');
+        }
+        setWorkouts([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    
+    loadWorkouts();
+  }, [dateRange.start, dateRange.end]);
+  
+  // Transformar workouts a PerformanceData y crear un array con todos los días del período
+  const data = useMemo(() => {
+    console.log('🔄 Transformando workouts a PerformanceData. Workouts recibidos:', workouts.length);
+    
+    const days = {
+      '7d': 7,
+      '30d': 30,
+      '3m': 90,
+      '6m': 180,
+      '1y': 365
+    }[timePeriod];
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Crear un mapa de workouts por fecha
+    const workoutsByDate = new Map<string, PerformanceData>();
+    workouts.forEach(workout => {
+      // Extraer solo la parte de fecha (YYYY-MM-DD) sin conversión de zona horaria
+      const dateKey = extractDateOnly(workout.date);
+      workoutsByDate.set(dateKey, transformWorkoutToPerformanceData(workout));
+    });
+    
+    console.log('📅 Workouts mapeados por fecha:', workoutsByDate.size, 'días con entrenamientos');
+    
+    // Crear array con todos los días del período
+    const performanceData: PerformanceData[] = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date(today);
+      date.setDate(date.getDate() - i);
+      const dateKey = date.toISOString().split('T')[0];
+      
+      // Si hay workout para este día, usar esos datos, sino crear entrada vacía
+      if (workoutsByDate.has(dateKey)) {
+        performanceData.push(workoutsByDate.get(dateKey)!);
+      } else {
+        performanceData.push({
+          date: dateKey,
+          distance: 0,
+          pace: 0,
+          heartRate: 0,
+          maxHeartRate: 0,
+          elevation: 0,
+          duration: 0,
+          load: 0
+        });
+      }
+    }
+    
+    const validDays = performanceData.filter(d => d.distance > 0).length;
+    console.log('📊 PerformanceData generado:', performanceData.length, 'días totales,', validDays, 'días con entrenamientos');
+    
+    return performanceData;
+  }, [workouts, timePeriod]);
   
   // Calcular métricas agregadas
   const validData = data.filter(d => d.distance > 0);
@@ -170,6 +309,16 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
         </div>
       </div>
 
+      {/* Estado de carga */}
+      {isLoading && (
+        <Card>
+          <CardContent className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <span className="ml-2 text-muted-foreground">Cargando datos de rendimiento...</span>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Métricas principales */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <Card>
@@ -235,9 +384,10 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
 
       {/* Tabs para diferentes vistas */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-        <TabsList className="grid w-full grid-cols-3">
+        <TabsList className="grid w-full grid-cols-4">
           <TabsTrigger value="load">Carga</TabsTrigger>
           <TabsTrigger value="distance">Distancia</TabsTrigger>
+          <TabsTrigger value="pace">Ritmo Promedio</TabsTrigger>
           <TabsTrigger value="heartrate">Frecuencia Cardíaca</TabsTrigger>
         </TabsList>
 
@@ -255,12 +405,21 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
-                    tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
+                    tickFormatter={(value) => formatDateFromString(value, 'short')}
                   />
                   <YAxis />
                   <Tooltip 
-                    labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
+                    labelFormatter={(value) => formatDateFromString(value, 'long')}
                     formatter={(value: number) => [value.toFixed(1), 'Carga']}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--popover))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: 'calc(var(--radius) - 2px)',
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
+                    labelStyle={{
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
                   />
                   <Line 
                     type="monotone" 
@@ -290,12 +449,21 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
-                    tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
+                    tickFormatter={(value) => formatDateFromString(value, 'short')}
                   />
                   <YAxis tickFormatter={(value) => formatDistance(value).split(' ')[0]} />
                   <Tooltip 
-                    labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
+                    labelFormatter={(value) => formatDateFromString(value, 'long')}
                     formatter={(value: number) => [formatDistance(value), 'Distancia']}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--popover))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: 'calc(var(--radius) - 2px)',
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
+                    labelStyle={{
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
                   />
                   <Line 
                     type="monotone" 
@@ -306,6 +474,83 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
                     dot={{ fill: 'var(--primary)', strokeWidth: 2, r: 3 }}
                   />
                 </LineChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="pace" className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle>Análisis de Ritmo Promedio</CardTitle>
+              <CardDescription>
+                Análisis de ritmo promedio en los últimos {getDaysCount(timePeriod)} días
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ResponsiveContainer width="100%" height={400}>
+                {(() => {
+                  const paceData = data.filter(d => d.pace > 0);
+                  const paceValues = paceData.map(d => d.pace);
+                  
+                  let minPace = paceValues.length > 0 ? Math.min(...paceValues) : 0;
+                  let maxPace = paceValues.length > 0 ? Math.max(...paceValues) : 10;
+                  
+                  // Si hay muy pocos datos o todos tienen el mismo ritmo, usar un rango más amplio
+                  const range = maxPace - minPace;
+                  if (range < 0.5 || paceValues.length < 2) {
+                    // Si el rango es muy pequeño o hay menos de 2 puntos, usar un rango por defecto
+                    const avgPace = paceValues.length > 0 
+                      ? paceValues.reduce((sum, p) => sum + p, 0) / paceValues.length 
+                      : 5;
+                    minPace = Math.max(0, avgPace - 2); // 2 min/km por debajo del promedio
+                    maxPace = avgPace + 2; // 2 min/km por encima del promedio
+                  }
+                  
+                  // Agregar un margen del 15% arriba y abajo para dar más rango visual
+                  const margin = Math.max(range * 0.15, 0.5); // Mínimo 0.5 min/km de margen
+                  const domainMin = Math.max(0, minPace - margin);
+                  const domainMax = maxPace + margin;
+                  
+                  return (
+                    <LineChart 
+                      data={paceData}
+                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis 
+                        dataKey="date" 
+                        tickFormatter={(value) => formatDateFromString(value, 'short')}
+                      />
+                      <YAxis 
+                        tickFormatter={(value) => formatPace(value)}
+                        reversed={true}
+                        domain={[domainMin, domainMax]}
+                      />
+                      <Tooltip 
+                        labelFormatter={(value) => formatDateFromString(value, 'long')}
+                        formatter={(value: number) => [formatPace(value), 'Ritmo']}
+                        contentStyle={{
+                          backgroundColor: 'hsl(var(--popover))',
+                          border: '1px solid hsl(var(--border))',
+                          borderRadius: 'calc(var(--radius) - 2px)',
+                          color: 'hsl(var(--popover-foreground))'
+                        }}
+                        labelStyle={{
+                          color: 'hsl(var(--popover-foreground))'
+                        }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="pace" 
+                        stroke="var(--primary)" 
+                        strokeWidth={2}
+                        name="Ritmo"
+                        dot={{ fill: 'var(--primary)', strokeWidth: 2, r: 3 }}
+                      />
+                    </LineChart>
+                  );
+                })()}
               </ResponsiveContainer>
             </CardContent>
           </Card>
@@ -325,20 +570,29 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis 
                     dataKey="date" 
-                    tickFormatter={(value) => new Date(value).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit' })}
+                    tickFormatter={(value) => formatDateFromString(value, 'short')}
                   />
                   <YAxis tickFormatter={(value) => `${value} bpm`} />
                   <Tooltip 
-                    labelFormatter={(value) => new Date(value).toLocaleDateString('es-ES')}
+                    labelFormatter={(value) => formatDateFromString(value, 'long')}
                     formatter={(value: number) => [`${value.toFixed(0)} bpm`, 'FC Máxima']}
+                    contentStyle={{
+                      backgroundColor: 'hsl(var(--popover))',
+                      border: '1px solid hsl(var(--border))',
+                      borderRadius: 'calc(var(--radius) - 2px)',
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
+                    labelStyle={{
+                      color: 'hsl(var(--popover-foreground))'
+                    }}
                   />
                   <Line 
                     type="monotone" 
                     dataKey="maxHeartRate" 
-                    stroke="var(--accent)" 
+                    stroke="var(--primary)" 
                     strokeWidth={2}
                     name="FC Máxima"
-                    dot={{ fill: 'var(--accent)', strokeWidth: 2, r: 3 }}
+                    dot={{ fill: 'var(--primary)', strokeWidth: 2, r: 3 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
