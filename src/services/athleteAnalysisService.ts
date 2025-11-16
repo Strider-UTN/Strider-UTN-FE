@@ -5,7 +5,8 @@ import { apiClient } from './apiClient';
  */
 export enum AthleteHealthStatusMessageType {
   Warning = 'Warning',
-  Ok = 'Ok'
+  Ok = 'Ok',
+  NoData = 'NoData'
 }
 
 /**

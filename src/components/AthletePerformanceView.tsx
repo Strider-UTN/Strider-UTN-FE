@@ -5,7 +5,7 @@ import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Zap, User, Calendar, MapPin, Heart, CheckCircle, AlertTriangle } from 'lucide-react';
+import { Activity, Zap, User, Calendar, MapPin, Heart, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import { AthleteAnalysisService, AthleteHealthStatusResponseDto, AthleteHealthStatusMessageType } from '../services/athleteAnalysisService';
 
 type TimePeriod = '7d' | '30d' | '3m' | '6m' | '1y';
@@ -410,9 +410,9 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
       {/* Análisis de Salud */}
       <div className="space-y-4">
         <div>
-          <h3 className="text-xl font-bold text-primary mb-2">Análisis de Salud</h3>
+          <h3 className="text-xl font-bold text-primary mb-2">Análisis del Atleta</h3>
           <p className="text-sm text-muted-foreground">
-            Resultados del análisis de salud del atleta
+            Resultados del análisis del atleta
           </p>
         </div>
 
@@ -439,6 +439,7 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
             {analysisResults.map((analysis, index) => {
               const isWarning = analysis.type === AthleteHealthStatusMessageType.Warning;
               const isOk = analysis.type === AthleteHealthStatusMessageType.Ok;
+              const isNoData = analysis.type === AthleteHealthStatusMessageType.NoData;
               
               return (
                 <Card
@@ -448,6 +449,8 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
                       ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20'
                       : isOk
                       ? 'border-green-500 bg-green-50 dark:bg-green-950/20'
+                      : isNoData
+                      ? 'border-gray-400 bg-gray-50 dark:bg-gray-950/20'
                       : ''
                   }
                 >
@@ -458,6 +461,8 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
                           <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-500" />
                         ) : isOk ? (
                           <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500" />
+                        ) : isNoData ? (
+                          <Info className="h-5 w-5 text-gray-600 dark:text-gray-400" />
                         ) : null}
                         <CardTitle
                           className={
@@ -465,6 +470,8 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
                               ? 'text-yellow-900 dark:text-yellow-100'
                               : isOk
                               ? 'text-green-900 dark:text-green-100'
+                              : isNoData
+                              ? 'text-gray-900 dark:text-gray-100'
                               : ''
                           }
                         >
@@ -478,10 +485,12 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
                             ? 'border-yellow-600 text-yellow-700 dark:text-yellow-400'
                             : isOk
                             ? 'border-green-600 text-green-700 dark:text-green-400'
+                            : isNoData
+                            ? 'border-gray-600 text-gray-700 dark:text-gray-400'
                             : ''
                         }
                       >
-                        {isWarning ? 'Advertencia' : isOk ? 'OK' : analysis.type}
+                        {isWarning ? 'Advertencia' : isOk ? 'OK' : isNoData ? 'Sin Datos' : analysis.type}
                       </Badge>
                     </div>
                   </CardHeader>
@@ -492,6 +501,8 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
                           ? 'text-yellow-800 dark:text-yellow-200'
                           : isOk
                           ? 'text-green-800 dark:text-green-200'
+                          : isNoData
+                          ? 'text-gray-800 dark:text-gray-200'
                           : 'text-muted-foreground'
                       }
                     >
