@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Activity, Zap, User, Calendar, MapPin, Heart } from 'lucide-react';
+import { Activity, Zap, User, Calendar, MapPin, Heart, CheckCircle, AlertTriangle } from 'lucide-react';
+import { AthleteAnalysisService, AthleteHealthStatusResponseDto, AthleteHealthStatusMessageType } from '../services/athleteAnalysisService';
 
 type TimePeriod = '7d' | '30d' | '3m' | '6m' | '1y';
 type Units = 'metric' | 'imperial';
@@ -87,6 +88,31 @@ interface AthletePerformanceViewProps {
 
 export function AthletePerformanceView({ athlete, units, onBack }: AthletePerformanceViewProps) {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('30d');
+  const [analysisResults, setAnalysisResults] = useState<AthleteHealthStatusResponseDto[]>([]);
+  const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+
+  // Fetch analysis results when athlete changes
+  useEffect(() => {
+    const fetchAnalysis = async () => {
+      if (!athlete?.id) return;
+      
+      setIsLoadingAnalysis(true);
+      try {
+        const athleteId = parseInt(athlete.id, 10);
+        if (!isNaN(athleteId)) {
+          const results = await AthleteAnalysisService.getAthleteAnalysis(athleteId);
+          setAnalysisResults(results);
+        }
+      } catch (error) {
+        console.error('Error fetching athlete analysis:', error);
+        setAnalysisResults([]);
+      } finally {
+        setIsLoadingAnalysis(false);
+      }
+    };
+
+    fetchAnalysis();
+  }, [athlete?.id]);
 
   // Validación defensiva para evitar crashes si athlete es undefined
   if (!athlete || !athlete.id) {
@@ -380,6 +406,104 @@ export function AthletePerformanceView({ athlete, units, onBack }: AthletePerfor
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Análisis de Salud */}
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-xl font-bold text-primary mb-2">Análisis de Salud</h3>
+          <p className="text-sm text-muted-foreground">
+            Resultados del análisis de salud del atleta
+          </p>
+        </div>
+
+        {isLoadingAnalysis ? (
+          <Card>
+            <CardContent className="py-8">
+              <div className="text-center text-muted-foreground">
+                <Activity className="w-8 h-8 mx-auto mb-2 animate-pulse" />
+                <p>Cargando análisis...</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : analysisResults.length === 0 ? (
+          <Card>
+            <CardContent className="py-8">
+              <div className="text-center text-muted-foreground">
+                <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                <p>No hay análisis disponibles</p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {analysisResults.map((analysis, index) => {
+              const isWarning = analysis.type === AthleteHealthStatusMessageType.Warning;
+              const isOk = analysis.type === AthleteHealthStatusMessageType.Ok;
+              
+              return (
+                <Card
+                  key={index}
+                  className={
+                    isWarning
+                      ? 'border-yellow-500 bg-yellow-50 dark:bg-yellow-950/20'
+                      : isOk
+                      ? 'border-green-500 bg-green-50 dark:bg-green-950/20'
+                      : ''
+                  }
+                >
+                  <CardHeader className="pb-3">
+                    <div className="flex items-start justify-between">
+                      <div className="flex items-center space-x-2">
+                        {isWarning ? (
+                          <AlertTriangle className="h-5 w-5 text-yellow-600 dark:text-yellow-500" />
+                        ) : isOk ? (
+                          <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-500" />
+                        ) : null}
+                        <CardTitle
+                          className={
+                            isWarning
+                              ? 'text-yellow-900 dark:text-yellow-100'
+                              : isOk
+                              ? 'text-green-900 dark:text-green-100'
+                              : ''
+                          }
+                        >
+                          {analysis.title}
+                        </CardTitle>
+                      </div>
+                      <Badge
+                        variant="outline"
+                        className={
+                          isWarning
+                            ? 'border-yellow-600 text-yellow-700 dark:text-yellow-400'
+                            : isOk
+                            ? 'border-green-600 text-green-700 dark:text-green-400'
+                            : ''
+                        }
+                      >
+                        {isWarning ? 'Advertencia' : isOk ? 'OK' : analysis.type}
+                      </Badge>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p
+                      className={
+                        isWarning
+                          ? 'text-yellow-800 dark:text-yellow-200'
+                          : isOk
+                          ? 'text-green-800 dark:text-green-200'
+                          : 'text-muted-foreground'
+                      }
+                    >
+                      {analysis.description}
+                    </p>
+                  </CardContent>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
