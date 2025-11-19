@@ -20,6 +20,19 @@ import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
 import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
 import { CompletedWorkoutService, CreateCompletedWorkoutDto } from '../services/completedWorkoutService';
+import { GarminService, GarminWorkoutResponseDto, GarminAccountResponseDto } from '../services/garminService';
+import { AuthService } from '../services/authService';
+
+const formatDateInput = (value: string): string => {
+  value = value.replace(/-/g, '/');
+  value = value.slice(0, 10);
+  const digitsOnly = value.replace(/[^\d]/g, '').slice(0, 8);
+  if (digitsOnly.length <= 4) return digitsOnly;
+  if (digitsOnly.length <= 6) {
+    return `${digitsOnly.slice(0, 4)}/${digitsOnly.slice(4)}`;
+  }
+  return `${digitsOnly.slice(0, 4)}/${digitsOnly.slice(4, 6)}/${digitsOnly.slice(6)}`;
+};
 
 interface InjuryReport {
   bodyPart: string;
@@ -47,10 +60,7 @@ interface TrainingSession {
   duration: number;
   distance: number;
   avgPace: string;
-  maxHR: number;
   avgHR: number;
-  calories: number;
-  elevation: number;
   comments: string;
   sensations: {
     effort: number;
@@ -142,21 +152,6 @@ interface PlannedSession {
   }>;
 }
 
-interface GarminActivity {
-  id: string;
-  activityName: string;
-  activityType: string;
-  startTime: string;
-  duration: number; // in minutes
-  distance: number; // in km
-  averagePace: string; // min/km format
-  averageHR: number;
-  maxHR: number;
-  calories: number;
-  elevation: number;
-  cadence?: number;
-  trainingEffect?: number;
-}
 
 interface TrainingUploadProps {
   initialDate?: Date;
@@ -170,7 +165,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     const storedDate = sessionStorage.getItem('trainingUpload_initialDate');
     if (storedDate) {
       sessionStorage.removeItem('trainingUpload_initialDate');
-      // Si es formato YYYY-MM-DD, parsear como fecha local
+      // Si es formato yyyy-mm-dd, parsear como fecha local
       if (/^\d{4}-\d{2}-\d{2}$/.test(storedDate)) {
         const [year, month, day] = storedDate.split('-').map(Number);
         return new Date(year, month - 1, day); // month es 0-indexed
@@ -220,45 +215,58 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   // Garmin states
   const [isGarminConnected, setIsGarminConnected] = useState(false);
   const [isConnectingGarmin, setIsConnectingGarmin] = useState(false);
-  const [uploadMethod, setUploadMethod] = useState<'garmin' | 'manual'>('garmin');
+  const [isLoadingGarminStatus, setIsLoadingGarminStatus] = useState(true);
+  const [showGarminImport, setShowGarminImport] = useState(false);
   const [garminDateRange, setGarminDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [selectedGarminActivity, setSelectedGarminActivity] = useState<string>('');
   const [isLoadingActivities, setIsLoadingActivities] = useState(false);
+  const [garminWorkouts, setGarminWorkouts] = useState<GarminWorkoutResponseDto[]>([]);
   const [garminDateInputFrom, setGarminDateInputFrom] = useState('');
   const [garminDateInputTo, setGarminDateInputTo] = useState('');
   
   // Garmin login modal states
   const [showGarminModal, setShowGarminModal] = useState(false);
-  const [garminEmail, setGarminEmail] = useState('');
+  const [garminUsername, setGarminUsername] = useState('');
   const [garminPassword, setGarminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [garminFormErrors, setGarminFormErrors] = useState<{ email?: string; password?: string }>({});
+  const [garminFormErrors, setGarminFormErrors] = useState<{ username?: string; password?: string }>({});
 
   // Estado para Laps (vueltas/intervalos)
   const [laps, setLaps] = useState<Lap[]>([]);
   const [showLapForm, setShowLapForm] = useState(false);
-  const [currentLap, setCurrentLap] = useState<Partial<Lap> & { durationString?: string }>({
+  const [currentLap, setCurrentLap] = useState<Partial<Lap>>({
     index: 0,
     distance: 0,
     duration: 0,
-    durationString: '', // Formato mm:ss para el input
     averageHR: 0,
     speed: 0,
     startTime: ''
   });
 
-  const [formData, setFormData] = useState({
+  const [durationString, setDurationString] = useState('');
+  const [paceString, setPaceString] = useState('');
+
+  const [formData, setFormData] = useState<{
+    name: string;
+    distance: number; // Stored in meters
+    duration: number; // Stored in seconds
+    averageHR: number;
+    effort: number;
+    fatigue: number;
+    motivation: number;
+    muscularLoad: number;
+    overallFeeling: number;
+    comments: string;
+  }>({
     name: '',
-    distance: '', // km
-    duration: '', // formato mm:ss (se convertirá a segundos para el backend)
-    averageHR: '', // bpm
-    // Sensaciones (siempre se cargan manualmente)
+    distance: 0, // meters
+    duration: 0, // seconds
+    averageHR: 0, 
     effort: 5,
     fatigue: 5,
     motivation: 5,
     muscularLoad: 5,
     overallFeeling: 5,
-    // Comentarios opcionales
     comments: ''
   });
 
@@ -294,12 +302,11 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   // Calcular automáticamente distancia, duración y FC promedio desde los laps
   useEffect(() => {
     if (laps.length > 0) {
-      // Calcular distancia total (suma de todas las distancias)
-      const totalDistance = laps.reduce((sum, lap) => sum + (lap.distance || 0), 0);
+      // Calcular distancia total (laps.distance ya está en metros)
+      const totalDistanceMeters = laps.reduce((sum, lap) => sum + (lap.distance || 0), 0);
       
       // Calcular duración total (suma de todas las duraciones en segundos)
       const totalDurationSeconds = laps.reduce((sum, lap) => sum + (lap.duration || 0), 0);
-      const totalDurationMMSS = formatSecondsToMMSS(totalDurationSeconds);
       
       // Calcular FC promedio ponderada por duración
       let totalHRWeighted = 0;
@@ -314,12 +321,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       });
       const averageHR = totalDuration > 0 ? Math.round(totalHRWeighted / totalDuration) : 0;
       
-      // Actualizar los campos del formulario
+      // Actualizar los campos del formulario (en metros y segundos)
       setFormData(prev => ({
         ...prev,
-        distance: totalDistance > 0 ? totalDistance.toFixed(2) : prev.distance,
-        duration: totalDurationMMSS !== '00:00' ? totalDurationMMSS : prev.duration,
-        averageHR: averageHR > 0 ? averageHR.toString() : prev.averageHR
+        distance: totalDistanceMeters > 0 ? totalDistanceMeters : prev.distance,
+        duration: totalDurationSeconds > 0 ? totalDurationSeconds : prev.duration,
+        averageHR: averageHR > 0 ? averageHR : prev.averageHR
       }));
     }
   }, [laps]);
@@ -339,84 +346,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     'Otra zona'
   ];
 
-  // Mock data de actividades de Garmin (se mostrarían según el rango de fechas)
-  const mockGarminActivities: GarminActivity[] = [
-    {
-      id: 'garmin_001',
-      activityName: 'Carrera matutina',
-      activityType: 'Carrera',
-      startTime: '2025-01-02T07:30:00',
-      duration: 47,
-      distance: 8.2,
-      averagePace: '5:44',
-      averageHR: 142,
-      maxHR: 165,
-      calories: 612,
-      elevation: 85,
-      cadence: 172,
-      trainingEffect: 3.2
-    },
-    {
-      id: 'garmin_002',
-      activityName: 'Entrenamiento de técnica',
-      activityType: 'Carrera',
-      startTime: '2025-01-03T18:00:00',
-      duration: 58,
-      distance: 5.1,
-      averagePace: '6:02',
-      averageHR: 135,
-      maxHR: 152,
-      calories: 423,
-      elevation: 42,
-      cadence: 168,
-      trainingEffect: 2.5
-    },
-    {
-      id: 'garmin_003',
-      activityName: 'Carrera larga fin de semana',
-      activityType: 'Carrera',
-      startTime: '2025-01-04T08:00:00',
-      duration: 72,
-      distance: 12.4,
-      averagePace: '5:48',
-      averageHR: 148,
-      maxHR: 170,
-      calories: 894,
-      elevation: 156,
-      cadence: 170,
-      trainingEffect: 3.8
-    },
-    {
-      id: 'garmin_004',
-      activityName: 'Tempo run',
-      activityType: 'Carrera',
-      startTime: '2025-01-09T17:30:00',
-      duration: 52,
-      distance: 9.3,
-      averagePace: '5:35',
-      averageHR: 158,
-      maxHR: 175,
-      calories: 748,
-      elevation: 98,
-      cadence: 174,
-      trainingEffect: 3.5
-    },
-    {
-      id: 'garmin_005',
-      activityName: 'Intervalos en pista',
-      activityType: 'Carrera',
-      startTime: '2025-01-16T18:15:00',
-      duration: 63,
-      distance: 10.2,
-      averagePace: '6:10',
-      averageHR: 165,
-      maxHR: 184,
-      calories: 821,
-      elevation: 12,
-      cadence: 176,
-      trainingEffect: 4.2
-    }
-  ];
+  // Initialize Garmin status
+  useEffect(() => {
+    setIsLoadingGarminStatus(false);
+  }, []);
 
   // Mock data para atletas disponibles
   const availableAthletes: Athlete[] = [
@@ -666,42 +599,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     return plannedSessions.filter(session => session.date === selectedDateStr);
   };
 
-  // Función para formateo automático de fechas con "/" fijos
-  const formatDateInput = (value: string): string => {
-    // Remover todo excepto números
-    const numbers = value.replace(/\D/g, '');
-    
-    // Limitar a 8 dígitos (ddmmyyyy)
-    const limitedNumbers = numbers.slice(0, 8);
-    
-    // Formatear con "/" automáticamente
-    let formatted = '';
-    for (let i = 0; i < limitedNumbers.length; i++) {
-      if (i === 2 || i === 4) {
-        formatted += '/';
-      }
-      formatted += limitedNumbers[i];
-    }
-    
-    return formatted;
-  };
 
   // Funciones para manejar input manual de fechas
   const handleDateInput = (value: string) => {
-    const formatted = formatDateInput(value);
-    setDateInputValue(formatted);
-    
-    // Intentar parsear la fecha cuando tenga el formato completo
-    if (formatted.length === 10) {
-      const parsed = parse(formatted, 'dd/MM/yyyy', new Date());
-      if (isValid(parsed) && parsed <= new Date()) {
-        setSelectedDate(parsed);
-        setSessionId('');
-      }
-    } else {
-      // Si se borra o está incompleto, limpiar la fecha seleccionada
-      setSelectedDate(undefined);
-    }
+    setDateInputValue(value ? format(parse(value, 'yyyy-MM-dd', new Date()), 'yyyy-MM-dd') : '');
+    setSelectedDate(value ? parse(value, 'yyyy-MM-dd', new Date()) : undefined);
+    setSessionId('');
   };
 
   // Funciones para manejar molestias/lesiones
@@ -747,91 +650,15 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     return 'Severo';
   };
 
-  // Funciones auxiliares para generar datos automáticamente
-  const generateSplits = (distance: number, avgPace: string, avgHR: number, maxHR: number, elevation: number, type: string) => {
-    const splits = [];
-    const kmCount = Math.floor(distance);
-    const [avgMin, avgSec] = avgPace.split(':').map(Number);
-    const avgPaceSeconds = avgMin * 60 + avgSec;
-    
-    for (let km = 1; km <= kmCount; km++) {
-      let variation = 0;
-      if (type === 'Intervalos') {
-        variation = (km % 2 === 1) ? -15 : 10;
-      } else if (type === 'Fartlek') {
-        variation = Math.random() * 30 - 15;
-      } else {
-        variation = Math.random() * 10 - 5;
-      }
-      
-      const splitPaceSeconds = avgPaceSeconds + variation;
-      const splitMinutes = Math.floor(splitPaceSeconds / 60);
-      const splitSeconds = Math.round(splitPaceSeconds % 60);
-      const splitPace = `${splitMinutes}:${splitSeconds.toString().padStart(2, '0')}`;
-      
-      const hrVariation = variation > 0 ? -5 : 5;
-      const splitHR = Math.max(avgHR - 20, Math.min(maxHR, avgHR + hrVariation + Math.random() * 10 - 5));
-      
-      const splitElevation = Math.max(0, elevation / kmCount + Math.random() * 20 - 10);
-      const cadence = 170 + Math.random() * 20;
-      
-      splits.push({
-        km,
-        pace: splitPace,
-        hr: Math.round(splitHR),
-        elevation: Math.round(splitElevation),
-        cadence: Math.round(cadence)
-      });
-    }
-    
-    return splits;
+  // Mapea un numero de segundos a un formato tiempo MM:SS
+  const durationToTime = (duration: number) => {
+    if (!duration || duration <= 0) return '00:00';
+    const minutes = Math.floor(duration / 60);
+    const seconds = Math.floor(duration - minutes * 60);
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   };
 
-  const generateHRZones = (type: string, avgHR: number, maxHR: number) => {
-    switch (type) {
-      case 'Intervalos':
-        return { zone1: 5, zone2: 15, zone3: 25, zone4: 35, zone5: 20 };
-      case 'Tempo':
-        return { zone1: 10, zone2: 25, zone3: 45, zone4: 20, zone5: 0 };
-      case 'Recuperación':
-        return { zone1: 60, zone2: 35, zone3: 5, zone4: 0, zone5: 0 };
-      case 'Fartlek':
-        return { zone1: 15, zone2: 30, zone3: 30, zone4: 20, zone5: 5 };
-      default:
-        return { zone1: 20, zone2: 50, zone3: 25, zone4: 5, zone5: 0 };
-    }
-  };
-
-  const calculateVO2MaxPercentage = (pace: string, type: string) => {
-    const [min, sec] = pace.split(':').map(Number);
-    const paceSeconds = min * 60 + sec;
-    
-    let basePercentage = Math.max(50, Math.min(100, 400 - paceSeconds));
-    
-    if (type === 'Intervalos') basePercentage += 10;
-    else if (type === 'Tempo') basePercentage += 5;
-    else if (type === 'Recuperación') basePercentage -= 15;
-    
-    return Math.round(Math.max(50, Math.min(100, basePercentage)));
-  };
-
-  const calculateTrainingLoad = (duration: number, avgHR: number, type: string) => {
-    const baseLoad = duration * (avgHR / 10);
-    const typeMultiplier = type === 'Intervalos' ? 1.8 : type === 'Tempo' ? 1.4 : type === 'Fartlek' ? 1.6 : 1.0;
-    return Math.round(baseLoad * typeMultiplier);
-  };
-
-  const generateAdvancedMetrics = (pace: string, type: string, duration: number, avgHR: number) => {
-    return {
-      vo2MaxPercentage: calculateVO2MaxPercentage(pace, type),
-      trainingLoad: calculateTrainingLoad(duration, avgHR, type),
-      recoveryTime: type === 'Intervalos' ? 24 + Math.random() * 12 : type === 'Tempo' ? 18 + Math.random() * 8 : 12 + Math.random() * 6,
-      cadence: 170 + Math.random() * 20,
-      strideLength: 1.20 + Math.random() * 0.25,
-      verticalOscillation: 7.5 + Math.random() * 3,
-      groundContactTime: 240 + Math.random() * 20
-    };
-  };
+  // Funciones auxiliares eliminadas (se usaban para mock data)
 
   const validateStep1 = () => {
     if (!selectedDate) {
@@ -853,30 +680,6 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     return true;
   };
 
-  // Función para convertir mm:ss a minutos (double)
-  const parseDurationToMinutes = (durationStr: string): number => {
-    if (!durationStr || !durationStr.includes(':')) {
-      return 0;
-    }
-    const [minutes, seconds] = durationStr.split(':').map(Number);
-    if (isNaN(minutes) || isNaN(seconds)) {
-      return 0;
-    }
-    return minutes + (seconds / 60);
-  };
-
-  // Función para convertir mm:ss a segundos
-  const parseDurationToSeconds = (durationStr: string): number => {
-    if (!durationStr || !durationStr.includes(':')) {
-      return 0;
-    }
-    const [minutes, seconds] = durationStr.split(':').map(Number);
-    if (isNaN(minutes) || isNaN(seconds)) {
-      return 0;
-    }
-    return minutes * 60 + seconds;
-  };
-
   // Función para convertir segundos a mm:ss
   const formatSecondsToMMSS = (seconds: number): string => {
     if (!seconds || seconds <= 0) return '00:00';
@@ -886,12 +689,72 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
 
+  // Función para convertir fecha UTC-0 a fecha local
+  const convertUTCToLocal = (utcDate: string | Date): Date => {
+    // Si ya es un Date, asumir que está en UTC y convertir a local
+    if (utcDate instanceof Date) {
+      // Crear una nueva fecha interpretando los componentes UTC como UTC
+      return new Date(Date.UTC(
+        utcDate.getUTCFullYear(),
+        utcDate.getUTCMonth(),
+        utcDate.getUTCDate(),
+        utcDate.getUTCHours(),
+        utcDate.getUTCMinutes(),
+        utcDate.getUTCSeconds(),
+        utcDate.getUTCMilliseconds()
+      ));
+    }
+    
+    const utcDateString = utcDate as string;
+    // Si la fecha viene como string UTC (ISO format), parsearla explícitamente como UTC
+    if (utcDateString.includes('T')) {
+      // Si no termina en Z, agregarlo para indicar UTC
+      const isoString = utcDateString.endsWith('Z') ? utcDateString : utcDateString + 'Z';
+      // Crear fecha interpretando como UTC-0
+      return new Date(isoString);
+    }
+    // Si es solo fecha (yyyy-MM-dd), tratarla como UTC medianoche y convertir a local
+    if (/^\d{4}-\d{2}-\d{2}$/.test(utcDateString)) {
+      const [year, month, day] = utcDateString.split('-').map(Number);
+      // Crear fecha en UTC medianoche y JavaScript la convertirá a local
+      return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0));
+    }
+    // Para otros formatos, intentar parsear como UTC
+    const parsed = new Date(utcDateString);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+    return new Date(utcDateString);
+  };
+
+  // Función para formatear fecha UTC a string local (yyyy-MM-dd)
+  const formatUTCToLocalDate = (utcDate: string | Date): string => {
+    const localDate = convertUTCToLocal(utcDate);
+    return format(localDate, 'yyyy-MM-dd');
+  };
+
+  // Función para formatear hora UTC a hora local (HH:mm:ss)
+  const formatUTCToLocalTime = (utcDate: string | Date): string => {
+    const localDate = convertUTCToLocal(utcDate);
+    return format(localDate, 'HH:mm:ss');
+  };
+
   // Función para convertir velocidad en m/s a ritmo en mm:ss/km
   const convertSpeedToPace = (speedMs: number): string => {
     if (!speedMs || speedMs <= 0) return 'N/A';
     // Ritmo en segundos por km = 1000 / velocidad_m_s
     const paceSecondsPerKm = 1000 / speedMs;
     return formatSecondsToMMSS(paceSecondsPerKm);
+  };
+
+  // Función para convertir ritmo (mm:ss/km) a velocidad (m/s)
+  const convertPaceToSpeed = (paceString: string): number => {
+    if (!paceString || paceString === '') return 0;
+    // Parsear mm:ss a segundos
+    const paceSeconds = parseDurationToSeconds(paceString);
+    if (paceSeconds <= 0) return 0;
+    // Velocidad en m/s = 1000 metros / tiempo en segundos
+    return 1000 / paceSeconds;
   };
 
   // Función para mapear bodyPart (string en español) a InjuryLocation (enum en inglés)
@@ -933,28 +796,22 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       return false;
     }
     
-    // Validar formato de duración (mm:ss)
-    const durationPattern = /^\d{1,2}:\d{2}$/;
-    if (!durationPattern.test(formData.duration)) {
-      toast.error('La duración debe estar en formato mm:ss (ej: 45:30)');
-      return false;
-    }
+    // Validar duración y distancia (ya están en segundos y metros)
+    const duration = formData.duration; // Already in seconds
+    const distance = formData.distance; // Already in meters
+    const avgHR = formData.averageHR;
     
-    const durationMinutes = parseDurationToMinutes(formData.duration);
-    const distance = parseFloat(formData.distance);
-    const avgHR = parseFloat(formData.averageHR);
-    
-    if (durationMinutes <= 0) {
+    if (duration <= 0) {
       toast.error('La duración debe ser mayor a 0');
       return false;
     }
     
-    if (isNaN(distance) || distance <= 0) {
+    if (distance <= 0) {
       toast.error('La distancia debe ser un número mayor a 0');
       return false;
     }
     
-    if (isNaN(avgHR) || avgHR <= 0 || avgHR > 250) {
+    if (avgHR <= 0 || avgHR > 250) {
       toast.error('La frecuencia cardíaca promedio debe ser un número válido entre 1 y 250');
       return false;
     }
@@ -974,7 +831,6 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       index: laps.length + 1,
       distance: 0,
       duration: 0,
-      durationString: '', // Formato mm:ss para el input
       averageHR: 0,
       speed: 0,
       startTime: startTime.toISOString()
@@ -982,44 +838,89 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     setShowLapForm(true);
   };
 
-  const handleLapChange = (field: keyof Lap | 'durationString', value: string | number) => {
+  const parseDurationToSeconds = (duration: string | number): number => {
+    if (typeof duration === 'number') {
+      return duration; // Already in seconds
+    }
+    // Parse MM:SS format to seconds
+    const [minutes, seconds] = duration.split(':').map(Number);
+    return minutes * 60 + seconds;
+  };
+
+  const handleLapChange = (field: keyof Lap | 'durationString' | 'paceString', value: string | number) => {
     setCurrentLap(prev => {
       const updated: any = { ...prev };
       
       if (field === 'durationString') {
-        // Manejar formato mm:ss
-        let formattedValue = value as string;
-        // Remover caracteres no numéricos excepto :
-        formattedValue = formattedValue.replace(/[^\d:]/g, '');
-        // Limitar a formato mm:ss
-        if (formattedValue.length > 5) {
-          formattedValue = formattedValue.substring(0, 5);
-        }
-        // Agregar : automáticamente después de 2 dígitos
-        if (formattedValue.length === 2 && !formattedValue.includes(':')) {
-          formattedValue = formattedValue + ':';
-        }
-        updated.durationString = formattedValue;
-        
-        // Convertir a segundos para calcular velocidad
-        const durationSeconds = parseDurationToSeconds(formattedValue);
+        setDurationString(value as string);
+        const durationSeconds = parseDurationToSeconds(value as string);
         updated.duration = durationSeconds;
         
-        // Calcular velocidad si tenemos distancia y duración
+        // Si tenemos distancia y duración, calcular velocidad y ritmo
         const distance = prev.distance || 0;
         if (distance > 0 && durationSeconds > 0) {
-          updated.speed = (distance * 1000) / durationSeconds;
+          updated.speed = distance / durationSeconds; // Velocidad en m/s
+          // Actualizar el campo de ritmo con el valor calculado
+          const calculatedPace = convertSpeedToPace(updated.speed);
+          if (calculatedPace !== 'N/A') {
+            setPaceString(calculatedPace);
+          }
+        }
+        // Si tenemos ritmo y duración, calcular distancia
+        else if (paceString && durationSeconds > 0) {
+          const speed = convertPaceToSpeed(paceString);
+          if (speed > 0) {
+            updated.speed = speed;
+            updated.distance = speed * durationSeconds; // Distancia en metros
+          }
+        }
+      } else if (field === 'paceString') {
+        setPaceString(value as string);
+        const speed = convertPaceToSpeed(value as string);
+        updated.speed = speed;
+        
+        // Si tenemos ritmo y distancia, calcular duración
+        const distance = prev.distance || 0;
+        if (speed > 0 && distance > 0) {
+          updated.duration = distance / speed; // Duración en segundos
+          setDurationString(formatSecondsToMMSS(updated.duration));
+        }
+        // Si tenemos ritmo y duración, calcular distancia
+        else if (speed > 0 && prev.duration && prev.duration > 0) {
+          updated.distance = speed * prev.duration; // Distancia en metros
         }
       } else {
         updated[field] = value;
         
-        // Calcular velocidad automáticamente si tenemos distancia y duración
+        // Calcular velocidad y ritmo automáticamente si tenemos distancia y duración
         if (field === 'distance' || field === 'duration') {
           const distance = field === 'distance' ? Number(value) : (prev.distance || 0);
           const duration = field === 'duration' ? Number(value) : (prev.duration || 0);
           if (distance > 0 && duration > 0) {
-            // Velocidad en m/s = (distancia en km * 1000) / (duración en segundos)
-            updated.speed = (distance * 1000) / duration;
+            // Velocidad en m/s = distancia en metros / duración en segundos
+            updated.speed = distance / duration;
+            // Actualizar el campo de ritmo con el valor calculado
+            const calculatedPace = convertSpeedToPace(updated.speed);
+            if (calculatedPace !== 'N/A') {
+              setPaceString(calculatedPace);
+            }
+            // Si cambiamos distancia, actualizar también durationString si tenemos duración
+            if (field === 'distance' && duration > 0) {
+              setDurationString(formatSecondsToMMSS(duration));
+            }
+            // Si cambiamos duración, actualizar también durationString
+            if (field === 'duration') {
+              setDurationString(formatSecondsToMMSS(duration));
+            }
+          }
+        }
+        // Si cambiamos distancia y tenemos ritmo, recalcular duración
+        if (field === 'distance' && paceString) {
+          const speed = convertPaceToSpeed(paceString);
+          if (speed > 0 && Number(value) > 0) {
+            updated.speed = speed;
+            updated.duration = Number(value) / speed;
+            setDurationString(formatSecondsToMMSS(updated.duration));
           }
         }
       }
@@ -1029,32 +930,31 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   };
 
   const handleSaveLap = () => {
-    // Validar campos requeridos
-    if (!currentLap.distance || !currentLap.durationString || !currentLap.averageHR) {
-      toast.error('Por favor completa todos los campos de la vuelta');
+    // Validar que tengamos al menos distancia y duración (o que se puedan calcular)
+    const distance = currentLap.distance || 0;
+    const duration = currentLap.duration || 0;
+    const avgHR = currentLap.averageHR || 0;
+    
+    // Validar que tengamos distancia y duración (calculados o ingresados)
+    if (distance <= 0 || duration <= 0) {
+      toast.error('Por favor completa distancia y duración (o distancia y ritmo, o duración y ritmo)');
       return;
     }
     
-    // Validar formato de duración
-    const durationPattern = /^\d{1,2}:\d{2}$/;
-    if (!durationPattern.test(currentLap.durationString || '')) {
-      toast.error('La duración debe estar en formato mm:ss (ej: 05:30)');
+    if (avgHR <= 0) {
+      toast.error('Por favor completa la frecuencia cardíaca promedio');
       return;
     }
     
-    // Convertir duración de mm:ss a segundos
-    const durationSeconds = parseDurationToSeconds(currentLap.durationString || '');
-    if (durationSeconds <= 0) {
-      toast.error('La duración debe ser mayor a 0');
-      return;
-    }
+    // Asegurar que la velocidad esté calculada
+    const speed = (currentLap.speed && currentLap.speed > 0) ? currentLap.speed : (distance / duration);
     
     const newLap: Lap = {
       index: currentLap.index || laps.length + 1,
-      distance: currentLap.distance || 0,
-      duration: durationSeconds,
-      averageHR: currentLap.averageHR || 0,
-      speed: currentLap.speed || 0,
+      distance: distance,
+      duration: duration,
+      averageHR: avgHR,
+      speed: speed,
       startTime: currentLap.startTime || new Date().toISOString()
     };
     
@@ -1064,11 +964,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       index: 0,
       distance: 0,
       duration: 0,
-      durationString: '',
       averageHR: 0,
       speed: 0,
       startTime: ''
     });
+    setDurationString('');
+    setPaceString('');
     toast.success('Vuelta agregada correctamente');
   };
 
@@ -1083,11 +984,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       index: 0,
       distance: 0,
       duration: 0,
-      durationString: '',
       averageHR: 0,
       speed: 0,
       startTime: ''
     });
+    setDurationString('');
+    setPaceString('');
   };
 
   const handleContinueToStep2 = () => {
@@ -1111,10 +1013,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   };
 
   const validateGarminForm = () => {
-    const errors: { email?: string; password?: string } = {};
+    const errors: { username?: string; password?: string } = {};
     
-    if (!garminEmail.trim()) {
-      errors.email = 'El email o usuario es requerido';
+    if (!garminUsername.trim()) {
+      errors.username = 'El email o usuario es requerido';
     }
     
     if (!garminPassword) {
@@ -1134,19 +1036,25 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
 
     setIsConnectingGarmin(true);
     try {
-      // Simular autenticación con Garmin
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      const userId = AuthService.getCurrentUserId();
+      if (!userId) {
+        toast.error('No se pudo obtener el ID del usuario. Por favor, inicia sesión nuevamente.');
+        return;
+      }
+      await GarminService.connectAccount(userId.toString(), {
+        garminUsername,
+        garminPassword
+      });
       setIsGarminConnected(true);
       setShowGarminModal(false);
-      setGarminEmail('');
+      setGarminUsername('');
       setGarminPassword('');
-      toast.success('Cuenta de Garmin conectada exitosamente', {
-        description: 'Ahora puedes importar entrenamientos desde tu cuenta de Garmin Connect'
-      });
+      // Si estamos en el paso 2, mostrar la vista de importación
+      if (currentStep === 2) {
+        setShowGarminImport(true);
+      }
     } catch (error) {
-      toast.error('Error al conectar con Garmin', {
-        description: 'Por favor intenta nuevamente'
-      });
+      // Error is already handled by the service
     } finally {
       setIsConnectingGarmin(false);
     }
@@ -1154,7 +1062,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
 
   const handleCancelGarminLogin = () => {
     setShowGarminModal(false);
-    setGarminEmail('');
+    setGarminUsername('');
     setGarminPassword('');
     setGarminFormErrors({});
   };
@@ -1163,19 +1071,9 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     setIsGarminConnected(false);
     setGarminDateRange({});
     setSelectedGarminActivity('');
+    setGarminWorkouts([]);
+    setShowGarminModal(true);
     toast.info('Cuenta de Garmin desconectada');
-  };
-
-  const getFilteredGarminActivities = (): GarminActivity[] => {
-    if (!garminDateRange.from) return [];
-    
-    const fromDate = garminDateRange.from;
-    const toDate = garminDateRange.to || garminDateRange.from;
-    
-    return mockGarminActivities.filter(activity => {
-      const activityDate = new Date(activity.startTime);
-      return activityDate >= fromDate && activityDate <= toDate;
-    });
   };
 
   const handleSearchGarminActivities = async () => {
@@ -1186,14 +1084,28 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     
     setIsLoadingActivities(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 800));
-      const activities = getFilteredGarminActivities();
-      
-      if (activities.length === 0) {
-        toast.info('No se encontraron entrenamientos en el rango de fechas seleccionado');
-      } else {
-        toast.success(`Se encontraron ${activities.length} entrenamiento${activities.length > 1 ? 's' : ''}`);
+      const userId = AuthService.getCurrentUserId();
+      if (!userId) {
+        toast.error('No se pudo obtener el ID del usuario. Por favor, inicia sesión nuevamente.');
+        return;
       }
+      const toDate = garminDateRange.to || garminDateRange.from;
+      const workouts : GarminWorkoutResponseDto[] = await GarminService.syncWorkouts(userId.toString(), {
+        startDate: garminDateRange.from,
+        endDate: toDate
+      });
+      // Parse dates from API response
+
+      console.log(workouts);
+
+      setGarminWorkouts(workouts);
+      
+      if (workouts.length === 0) {
+        toast.info('No se encontraron entrenamientos en el rango de fechas seleccionado');
+      }
+
+    } catch (error) {
+      // Error is already handled by the service
     } finally {
       setIsLoadingActivities(false);
     }
@@ -1209,7 +1121,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     
     // Intentar parsear la fecha cuando tenga el formato completo
     if (formatted.length === 10) {
-      const parsedDate = parse(formatted, 'dd/MM/yyyy', new Date());
+      const parsedDate = parse(formatted, 'yyyy-MM-dd', new Date());
       if (isValid(parsedDate)) {
         setGarminDateRange({ ...garminDateRange, from: parsedDate });
       }
@@ -1225,7 +1137,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     
     // Intentar parsear la fecha cuando tenga el formato completo
     if (formatted.length === 10) {
-      const parsedDate = parse(formatted, 'dd/MM/yyyy', new Date());
+      const parsedDate = parse(formatted, 'yyyy-MM-dd', new Date());
       if (isValid(parsedDate)) {
         setGarminDateRange({ ...garminDateRange, to: parsedDate });
       }
@@ -1236,104 +1148,77 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   };
 
   const handleLinkGarminActivity = () => {
-    const activity = mockGarminActivities.find(a => a.id === selectedGarminActivity);
-    if (!activity) return;
+    const workout = garminWorkouts.find(w => w.id === selectedGarminActivity);
+    if (!workout) return;
 
     if (!selectedDate || !sessionId) {
       toast.error('Debe seleccionar una fecha y sesión planificada');
       return;
     }
 
-    // Crear el entrenamiento directamente con los datos de Garmin
-    const advancedMetrics = generateAdvancedMetrics(activity.averagePace, 'Continuo', activity.duration, activity.averageHR);
-    
-    const newTraining: TrainingSession = {
-      id: `training-${Date.now()}`,
-      date: format(selectedDate, 'yyyy-MM-dd'),
-      name: activity.activityName,
-      type: 'Continuo',
-      duration: activity.duration,
-      distance: activity.distance,
-      avgPace: activity.averagePace,
-      maxHR: activity.maxHR,
-      avgHR: activity.averageHR,
-      calories: activity.calories,
-      elevation: activity.elevation,
-      comments: 'Importado desde Garmin Connect',
-      sensations: {
-        effort: 5,
-        fatigue: 5,
-        motivation: 5,
-        muscularLoad: 5,
-        overallFeeling: 5
-      },
-      conditions: {
-        temperature: 20,
-        weather: 'No especificado',
-        surface: 'No especificado',
-        humidity: 50,
-        wind: 'No especificado'
-      },
-      splits: generateSplits(activity.distance, activity.averagePace, activity.averageHR, activity.maxHR, activity.elevation, 'Continuo'),
-      hrZones: generateHRZones('Continuo', activity.averageHR, activity.maxHR),
-      advancedMetrics: {
-        ...advancedMetrics,
-        cadence: activity.cadence || advancedMetrics.cadence,
-        strideLength: advancedMetrics.strideLength,
-        verticalOscillation: advancedMetrics.verticalOscillation,
-        groundContactTime: advancedMetrics.groundContactTime
-      },
-      injuries: injuries.length > 0 ? injuries : undefined,
-      associatedSessionId: sessionId,
-      linkedSessionId: sessionId,
-      status: 'Completado',
-      uploadSource: 'garmin'
-    };
-
-    if (activity.distance > 10) {
-      newTraining.route = {
-        startLocation: 'Punto de Inicio (Garmin)',
-        endLocation: activity.distance > 15 ? 'Punto Final (Garmin)' : 'Punto de Inicio (Garmin)',
-        routeType: activity.distance > 15 ? 'Punto a Punto' : 'Circuito'
+    // Convertir laps a formato Lap si existen
+    // Mantener startTime en UTC (solo se convierte para mostrar)
+    const workoutLaps: Lap[] = workout.laps.map(lap => {
+      // Si startTime es un Date, convertirlo a ISO string manteniendo UTC
+      // Si ya es string, mantenerlo tal cual
+      const startTimeString = lap.startTime instanceof Date 
+        ? lap.startTime.toISOString() 
+        : lap.startTime;
+      
+      return {
+        index: lap.index,
+        distance: lap.distance, // Already in meters
+        duration: lap.duration, // Already in seconds
+        averageHR: lap.averageHR, // Already a number
+        speed: lap.speed, // Already in m/s
+        startTime: startTimeString // Mantener en UTC (se convierte solo para visualización)
       };
+    });
+
+    if (workoutLaps.length > 0) {
+      setLaps(workoutLaps);
     }
 
-    // Guardar el entrenamiento completado y pasar al Paso 3
-    setCompletedTraining(newTraining);
-    setCurrentStep(3);
+    // workout.distance ya está en metros, duración ya está en segundos
+    const distanceInMeters = workout.distance; // Already in meters
+    const durationInSeconds = workout.duration; // Already in seconds
+
+    // Actualizar formData con los valores del workout
+    // Distancias se almacenan en metros, duraciones en segundos
+    // Solo se convierten a formato de visualización (metros y MM:SS) en la interfaz
+    setFormData(prev => ({
+      ...prev,
+      name: workout.name,
+      distance: distanceInMeters, // Número en metros
+      duration: durationInSeconds, // Número en segundos
+      averageHR: workout.averageHR, // Número
+      comments: 'Importado desde Garmin Connect'
+    }));
+
+    // Asegurar que la fecha esté en formato yyyy-MM-dd
+    const dateString = format(selectedDate, 'yyyy-MM-dd');
+    setDateInputValue(dateString);
+
+    // Volver al formulario manual con los datos cargados
+    setShowGarminImport(false);
     
-    toast.success('Entrenamiento importado desde Garmin', {
-      description: 'Los datos han sido vinculados con la sesión planificada.'
+    toast.success('Datos de Garmin importados', {
+      description: 'Los valores han sido prellenados en el formulario. Puedes revisarlos y completar la información adicional.'
     });
   };
 
   const resetForm = () => {
     setFormData({
       name: '',
-      type: '',
-      duration: '',
-      distance: '',
-      avgPace: '',
-      maxHR: '',
-      avgHR: '',
-      calories: '',
-      elevation: '',
-      comments: '',
+      distance: 0,
+      duration: 0,
+      averageHR: 0,
       effort: 5,
       fatigue: 5,
       motivation: 5,
       muscularLoad: 5,
       overallFeeling: 5,
-      temperature: '',
-      weather: '',
-      surface: '',
-      humidity: '',
-      wind: '',
-      vo2MaxPercentage: '',
-      cadence: '',
-      strideLength: '',
-      verticalOscillation: '',
-      groundContactTime: '',
+      comments: ''
     });
     setSelectedDate(undefined);
     setDateInputValue('');
@@ -1343,7 +1228,9 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     setGarminDateRange({});
     setGarminDateInputFrom('');
     setGarminDateInputTo('');
-    setUploadMethod('garmin');
+    setGarminWorkouts([]);
+    setLaps([]);
+    setShowGarminImport(false);
     setCompletedTraining(null);
     setCurrentStep(1);
     setCurrentInjury({
@@ -1402,9 +1289,11 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       return;
     }
     
-    // Convertir duración de mm:ss a formato mm:ss (el backend lo convertirá a segundos)
-    const distance = parseFloat(formData.distance);
-    const averageHR = parseFloat(formData.averageHR);
+    // formData ya tiene distancia en metros y duración en segundos
+    // Convertir a km para TrainingSession (que espera km)
+    const distanceInKm = formData.distance / 1000; // Convert meters to km
+    const durationInSeconds = formData.duration; // Already in seconds
+    const averageHR = formData.averageHR;
     
     // Crear objeto temporal para el frontend (compatibilidad con el paso 3)
     // Este objeto se usa solo para mostrar en el paso 3, no se guarda aún
@@ -1413,13 +1302,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
       date: format(selectedDate!, 'yyyy-MM-dd'),
       name: formData.name,
       type: 'Manual',
-      duration: parseDurationToMinutes(formData.duration), // Convertir mm:ss a minutos
-      distance,
+      duration: durationInSeconds, // En segundos (número)
+      distance: distanceInKm, // En km para TrainingSession
       avgPace: '',
-      maxHR: 0,
       avgHR: averageHR,
-      calories: 0,
-      elevation: 0,
       comments: formData.comments || '',
       sensations: {
         effort: formData.effort,
@@ -1497,20 +1383,16 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     setIsSubmitting(true);
 
     try {
-      // Convertir duración de mm:ss a formato mm:ss (el backend lo convertirá a segundos)
-      const distance = parseFloat(formData.distance);
-      const averageHR = parseFloat(formData.averageHR);
-      
       // Construir el DTO para el backend con TODOS los datos (laps, injuries, etc.)
+      // El backend espera distancias en metros, duraciones en segundos, y velocidades en m/s
       const createDto: CreateCompletedWorkoutDto = {
         trainingSessionAthleteId: selectedSession.trainingSessionAthleteId,
         name: formData.name,
-        distance,
-        date: format(selectedDate!, 'yyyy-MM-dd'), // Formato YYYY-MM-DD para el backend
-        duration: formData.duration, // Formato mm:ss
-        averageHR,
+        distance: formData.distance, // Already in meters
+        date: format(selectedDate!, 'yyyy-MM-dd'), // Formato yyyy-MM-dd para el backend
+        duration: formData.duration, // Already in seconds
+        averageHR: formData.averageHR,
         comments: formData.comments || undefined,
-        source: 'Manual' as 'Manual' | 'Garmin',
         sensations: {
           effort: formData.effort,
           fatigue: formData.fatigue,
@@ -1520,9 +1402,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
         },
         laps: laps.length > 0 ? laps.map(lap => ({
           index: lap.index,
-          distance: lap.distance,
-          duration: lap.duration, // Ya está en segundos
+          distance: lap.distance, // Already in meters
+          duration: lap.duration, // Already in seconds
           averageHR: lap.averageHR,
+          speed: lap.speed, // Already in m/s
           startTime: lap.startTime // ISO string
         })) : undefined,
         injuries: injuries.length > 0 ? injuries.map(injury => ({
@@ -1584,7 +1467,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
               <Button
                 type="button"
                 variant="outline"
-                onClick={(e) => {
+                onClick={(e: React.MouseEvent) => {
                   e.preventDefault();
                   e.stopPropagation();
                   if (currentStep === 2) {
@@ -1637,10 +1520,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                 <div className="flex items-center gap-1">
                   <Input
                     id="training-date"
-                    placeholder="dd/mm/yyyy"
+                    placeholder="yyyy-mm-dd"
                     value={dateInputValue}
                     onChange={(e) => handleDateInput(e.target.value)}
-                    maxLength={10}
+                    maxLength={19}
                     className="w-[160px]"
                   />
                   <Popover open={isDatePickerOpen} onOpenChange={setIsDatePickerOpen}>
@@ -1657,20 +1540,20 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                       <Calendar
                         mode="single"
                         selected={selectedDate}
-                        onSelect={(date) => {
+                        onSelect={(date: Date | undefined) => {
                           setSelectedDate(date);
-                          setDateInputValue(date ? format(date, 'dd/MM/yyyy') : '');
+                          setDateInputValue(date ? format(date, 'yyyy-MM-dd', { locale: es }) : '');
                           setSessionId('');
                           setIsDatePickerOpen(false);
                         }}
-                        disabled={(date) => date > new Date()}
+                        disabled={(date: Date) => date > new Date()}
                       />
                     </PopoverContent>
                   </Popover>
                 </div>
-                {selectedDate && (
+                    {selectedDate && (
                   <p className="text-xs text-muted-foreground">
-                    {format(selectedDate, "PPPP", { locale: es })}
+                    {selectedDate && format(selectedDate, "yyyy-MM-dd", { locale: es })}
                   </p>
                 )}
               </div>
@@ -1719,7 +1602,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                     <div className="space-y-2">
                       <Label htmlFor="session">Sesiones Planificadas para {format(selectedDate, "d 'de' MMMM", { locale: es })} *</Label>
                       <Select 
-                        onValueChange={(value) => setSessionId(value)} 
+                        onValueChange={(value: string) => setSessionId(value)} 
                         value={sessionId}
                       >
                         <SelectTrigger>
@@ -1762,15 +1645,15 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                             <div className="text-sm space-y-1">
                               <div>
                                 <span className="text-muted-foreground">Distancia planeada:</span>
-                                <span className="ml-1 font-medium">{selectedSession.plannedDistance}km</span>
+                                <span className="ml-1 font-medium">{selectedSession.plannedDistance} km</span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Duración planeada:</span>
-                                <span className="ml-1 font-medium">{selectedSession.plannedDuration}min</span>
+                                <span className="ml-1 font-medium">{selectedSession.plannedDuration} min</span>
                               </div>
                               <div>
                                 <span className="text-muted-foreground">Ritmo objetivo:</span>
-                                <span className="ml-1 font-medium">{selectedSession.plannedPace}/km</span>
+                                <span className="ml-1 font-medium">{selectedSession.plannedPace} min/km</span>
                               </div>
                               {selectedSession.targetHR !== 'N/A' && (
                                 <div>
@@ -1819,28 +1702,32 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
           </Card>
         )}
 
-        {/* PASO 2: Importar desde Garmin o Registro Manual */}
+        {/* PASO 2: Formulario de Entrenamiento */}
         {currentStep === 2 && (
           <Card className="flex-1 flex flex-col">
             <CardHeader>
               <CardTitle>Registro de Entrenamiento</CardTitle>
-              <CardDescription>Importa desde Garmin Connect o ingresa manualmente los datos</CardDescription>
+              <CardDescription>Ingresa los datos de tu entrenamiento o impórtalos desde Garmin Connect</CardDescription>
             </CardHeader>
-            <CardContent className="flex-1">
-              <Tabs value={uploadMethod} onValueChange={(v) => setUploadMethod(v as 'garmin' | 'manual')} className="h-full flex flex-col">
-                <TabsList className="grid w-full grid-cols-2 mb-4">
-                  <TabsTrigger value="garmin" className="gap-2">
-                    <Watch className="w-4 h-4" />
-                    Importar desde Garmin
-                  </TabsTrigger>
-                  <TabsTrigger value="manual" className="gap-2">
-                    <Upload className="w-4 h-4" />
-                    Registro Manual
-                  </TabsTrigger>
-                </TabsList>
-
-                {/* TAB: Importar desde Garmin */}
-                <TabsContent value="garmin" className="flex-1 space-y-4 mt-0">
+            <CardContent className="flex-1 relative">
+              {showGarminImport && (
+                <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-10 rounded-lg" />
+              )}
+              {showGarminImport ? (
+                /* Vista de Importación desde Garmin */
+                <div className="space-y-6 relative z-20">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">Importar desde Garmin</h3>
+                    <Button
+                      variant="outline"
+                      onClick={() => setShowGarminImport(false)}
+                      className="gap-2"
+                    >
+                      <ArrowLeft className="w-4 h-4" />
+                      Volver al formulario
+                    </Button>
+                  </div>
+                  <div className="space-y-4">
                   {!isGarminConnected ? (
                     <div className="flex flex-col items-center justify-center py-12 space-y-4">
                       <div className="rounded-full bg-accent/10 p-6">
@@ -1888,7 +1775,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                           <div className="space-y-2">
                             <Label className="text-sm text-muted-foreground">Desde</Label>
                             <Input
-                              placeholder="dd/mm/yyyy"
+                              placeholder="yyyy-mm-dd"
                               value={garminDateInputFrom}
                               onChange={(e) => handleGarminDateInputFrom(e.target.value)}
                               maxLength={10}
@@ -1898,7 +1785,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                           <div className="space-y-2">
                             <Label className="text-sm text-muted-foreground">Hasta</Label>
                             <Input
-                              placeholder="dd/mm/yyyy"
+                              placeholder="yyyy-mm-dd"
                               value={garminDateInputTo}
                               onChange={(e) => handleGarminDateInputTo(e.target.value)}
                               maxLength={10}
@@ -1917,10 +1804,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                               {garminDateRange.from ? (
                                 garminDateRange.to ? (
                                   <>
-                                    {format(garminDateRange.from, "PPP", { locale: es })} - {format(garminDateRange.to, "PPP", { locale: es })}
+                                    {format(garminDateRange.from, "yyyy-MM-dd", { locale: es })} - {format(garminDateRange.to, "yyyy-MM-dd", { locale: es })}
                                   </>
                                 ) : (
-                                  format(garminDateRange.from, "PPP", { locale: es })
+                                  format(garminDateRange.from, "yyyy-MM-dd", { locale: es })
                                 )
                               ) : (
                                 "O seleccionar desde el calendario"
@@ -1931,12 +1818,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                             <Calendar
                               mode="range"
                               selected={garminDateRange}
-                              onSelect={(range) => {
+                              onSelect={(range: { from?: Date; to?: Date } | undefined) => {
                                 setGarminDateRange(range || {});
-                                if (range?.from) setGarminDateInputFrom(format(range.from, 'dd/MM/yyyy'));
-                                if (range?.to) setGarminDateInputTo(format(range.to, 'dd/MM/yyyy'));
+                                if (range?.from) setGarminDateInputFrom(format(range.from, 'yyyy-MM-dd'));
+                                if (range?.to) setGarminDateInputTo(format(range.to, 'yyyy-MM-dd'));
                               }}
-                              disabled={(date) => date > new Date()}
+                              disabled={(date: Date) => date > new Date()}
                               numberOfMonths={2}
                             />
                           </PopoverContent>
@@ -1952,64 +1839,72 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                         </Button>
                       </div>
 
-                      {/* Lista de actividades de Garmin */}
-                      {garminDateRange.from && getFilteredGarminActivities().length > 0 && (
+                      {/* Lista de entrenamientos de Garmin */}
+                      {garminDateRange.from && garminWorkouts.length > 0 && (
                         <div className="space-y-3">
                           <Separator />
                           <div>
-                            <Label>Entrenamientos disponibles ({getFilteredGarminActivities().length})</Label>
+                            <Label>Entrenamientos disponibles ({garminWorkouts.length})</Label>
                             <p className="text-sm text-muted-foreground mt-1">
                               Selecciona el entrenamiento que quieres vincular con la sesión planificada
                             </p>
                           </div>
                           
                           <div className="space-y-2 max-h-[400px] overflow-y-auto">
-                            {getFilteredGarminActivities().map((activity) => (
-                              <Card 
-                                key={activity.id}
-                                className={`cursor-pointer transition-all hover:border-accent ${
-                                  selectedGarminActivity === activity.id ? 'border-accent bg-accent/5' : ''
-                                }`}
-                                onClick={() => handleSelectGarminActivity(activity.id)}
-                              >
-                                <CardContent className="p-4">
-                                  <div className="flex items-start justify-between gap-4">
-                                    <div className="flex-1">
-                                      <div className="flex items-center gap-2 mb-2">
-                                        <h4 className="font-medium">{activity.activityName}</h4>
-                                        <Badge variant="outline" className="text-xs">
-                                          {activity.activityType}
-                                        </Badge>
-                                        {selectedGarminActivity === activity.id && (
-                                          <CheckCircle className="w-4 h-4 text-accent" />
+                            {garminWorkouts.map((workout) => {
+                              console.log(workout);
+                              const paceSecondsPerKm = (workout.duration) / workout.distance;
+                              const avgPace = formatSecondsToMMSS(paceSecondsPerKm);
+
+                              return (
+                                <Card 
+                                  key={workout.id}
+                                  className={`cursor-pointer transition-all hover:border-accent ${
+                                    selectedGarminActivity === workout.id ? 'border-accent bg-accent/5' : ''
+                                  }`}
+                                  onClick={() => handleSelectGarminActivity(workout.id)}
+                                >
+                                  <CardContent className="p-4">
+                                    <div className="flex items-start justify-between gap-4">
+                                      <div className="flex-1">
+                                        <div className="flex items-center gap-2 mb-2">
+                                          <h4 className="font-medium">{workout.name}</h4>
+                                          {selectedGarminActivity === workout.id && (
+                                            <CheckCircle className="w-4 h-4 text-accent" />
+                                          )}
+                                        </div>
+                                        <p className="text-sm text-muted-foreground mb-3">
+                                          {formatUTCToLocalDate(workout.date)}
+                                        </p>
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                                          <div>
+                                            <span className="text-muted-foreground">Distancia:</span>
+                                            <p className="font-medium">{(workout.distance / 1000).toFixed(2)} km</p>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground">Duración:</span>
+                                            <p className="font-medium">{durationToTime(workout.duration / 60)} hs</p>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground">Ritmo:</span>
+                                            <p className="font-medium">{durationToTime(1000 / (workout.distance / workout.duration))} min/km</p>
+                                          </div>
+                                          <div>
+                                            <span className="text-muted-foreground">FC Prom:</span>
+                                            <p className="font-medium">{workout.averageHR} bpm</p>
+                                          </div>
+                                        </div>
+                                        {workout.laps && workout.laps.length > 0 && (
+                                          <p className="text-xs text-muted-foreground mt-2">
+                                            {workout.laps.length} vuelta{workout.laps.length > 1 ? 's' : ''}
+                                          </p>
                                         )}
                                       </div>
-                                      <p className="text-sm text-muted-foreground mb-3">
-                                        {format(new Date(activity.startTime), "PPP 'a las' HH:mm", { locale: es })}
-                                      </p>
-                                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                                        <div>
-                                          <span className="text-muted-foreground">Distancia:</span>
-                                          <p className="font-medium">{activity.distance} km</p>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">Duración:</span>
-                                          <p className="font-medium">{activity.duration} min</p>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">Ritmo:</span>
-                                          <p className="font-medium">{activity.averagePace}/km</p>
-                                        </div>
-                                        <div>
-                                          <span className="text-muted-foreground">FC Prom:</span>
-                                          <p className="font-medium">{activity.averageHR} bpm</p>
-                                        </div>
-                                      </div>
                                     </div>
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            ))}
+                                  </CardContent>
+                                </Card>
+                              );
+                            })}
                           </div>
 
                           {selectedGarminActivity && (
@@ -2023,7 +1918,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                                   <div>
                                     <p className="font-medium">Entrenamiento seleccionado</p>
                                     <p className="text-sm text-muted-foreground">
-                                      {mockGarminActivities.find(a => a.id === selectedGarminActivity)?.activityName}
+                                      {garminWorkouts.find(w => w.id === selectedGarminActivity)?.name}
                                     </p>
                                   </div>
                                 </div>
@@ -2032,7 +1927,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                                   className="gap-2"
                                 >
                                   <Link2 className="w-4 h-4" />
-                                  Vincular con la Planificación
+                                  Cargar en el Formulario
                                 </Button>
                               </div>
                             </>
@@ -2040,22 +1935,23 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                         </div>
                       )}
 
-                      {garminDateRange.from && getFilteredGarminActivities().length === 0 && !isLoadingActivities && (
+                      {garminDateRange.from && garminDateRange.to && !isLoadingActivities && garminWorkouts.length === 0  && (
                         <Alert>
                           <AlertCircle className="h-4 w-4" />
                           <AlertDescription>
+
                             No se encontraron entrenamientos en el rango de fechas seleccionado
                           </AlertDescription>
                         </Alert>
                       )}
                     </div>
                   )}
-                </TabsContent>
-
-                {/* TAB: Registro Manual */}
-                <TabsContent value="manual" className="flex-1 mt-0">
-                  <div className="h-full">
-                    {existingWorkout ? (
+                  </div>
+                </div>
+              ) : (
+                /* Formulario Manual Principal */
+                <div className="h-full">
+                  {existingWorkout ? (
                       <Card className="border-yellow-200 bg-yellow-50">
                         <CardContent className="p-6">
                           <Alert className="bg-yellow-50 border-yellow-200">
@@ -2075,11 +1971,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                                   <div>
                                     <p className="text-muted-foreground">Duración</p>
                                     <p className="font-medium">
-                                      {(() => {
-                                        const minutes = Math.floor(existingWorkout.duration / 60);
-                                        const seconds = Math.round(existingWorkout.duration % 60);
-                                        return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-                                      })()}
+                                      {durationToTime(existingWorkout.duration)}
                                     </p>
                                   </div>
                                   <div>
@@ -2102,6 +1994,25 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                       </Card>
                     ) : (
               <form onSubmit={handleManualSubmit} className="space-y-6 h-full flex flex-col">
+                {/* Botón para importar desde Garmin */}
+                <div className="flex justify-end">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      if (!isGarminConnected) {
+                        handleConnectGarmin();
+                      } else {
+                        setShowGarminImport(true);
+                      }
+                    }}
+                    className="gap-2"
+                  >
+                    <Watch className="w-4 h-4" />
+                    Importar desde Garmin
+                  </Button>
+                </div>
+                
                 <div className="flex-1 space-y-6 overflow-y-auto">
                   {/* Datos Básicos - Campos de APIWorkout */}
                   <div className="space-y-4">
@@ -2110,14 +2021,10 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                       <Input
                         id="name"
                         value={formData.name}
-                        readOnly
-                        className="bg-muted cursor-not-allowed"
-                        placeholder="Se seleccionará automáticamente de la sesión planificada"
+                        onChange={(e) => handleInputChange('name', e.target.value)}
+                        placeholder="Nombre del entrenamiento"
                         required
                       />
-                      <p className="text-xs text-muted-foreground">
-                        El nombre se completa automáticamente desde la sesión seleccionada en el paso 1
-                      </p>
                     </div>
 
                     {/* Métricas Principales según APIWorkout */}
@@ -2125,7 +2032,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                       <div className="space-y-2">
                         <Label htmlFor="distance" className="flex items-center gap-2">
                           <Target className="w-4 h-4" />
-                          Distancia (km) *
+                          Distancia (m) *
                           {laps.length > 0 && (
                             <TooltipProvider>
                               <Tooltip>
@@ -2139,20 +2046,27 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                             </TooltipProvider>
                           )}
                         </Label>
-                        <Input
-                          id="distance"
-                          type="number"
-                          step="0.1"
-                          value={formData.distance}
-                          onChange={(e) => handleInputChange('distance', e.target.value)}
-                          placeholder="8.5"
-                          readOnly={laps.length > 0}
-                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
-                          required
-                        />
-                        {laps.length > 0 && (
-                          <p className="text-xs text-muted-foreground">Calculado automáticamente desde las vueltas</p>
+                        {laps.length > 0 ? (
+                          <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm">
+                            {formData.distance.toLocaleString()} m
+                          </div>
+                        ) : (
+                          <Input
+                            id="distance"
+                            type="number"
+                            inputMode="numeric"
+                            min="0"
+                            step="1"
+                            value={formData.distance}
+                            onChange={(e) => {
+                              const value = parseFloat(e.target.value) || '';
+                              handleInputChange('distance', value);
+                            }}
+                            placeholder="8500"
+                            required
+                          />
                         )}
+                       
                       </div>
 
                       <div className="space-y-2">
@@ -2172,30 +2086,31 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                             </TooltipProvider>
                           )}
                         </Label>
-                        <Input
-                          id="duration"
-                          type="text"
-                          value={formData.duration}
-                          onChange={(e) => {
-                            if (laps.length > 0) return; // No permitir edición si hay laps
-                            // Formato mm:ss, solo permitir números y : 
-                            const value = e.target.value.replace(/[^\d:]/g, '');
-                            // Validar formato básico
-                            if (value === '' || /^\d{0,2}(:\d{0,2})?$/.test(value)) {
-                              handleInputChange('duration', value);
-                            }
-                          }}
-                          placeholder="45:00"
-                          maxLength={5}
-                          readOnly={laps.length > 0}
-                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
-                          required
-                        />
                         {laps.length > 0 ? (
-                          <p className="text-xs text-muted-foreground">Calculado automáticamente desde las vueltas</p>
+                          <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm">
+                            {formatSecondsToMMSS(formData.duration)} min
+                          </div>
                         ) : (
-                          <p className="text-xs text-muted-foreground">Formato: mm:ss (ej: 45:30)</p>
+                          <Input
+                            id="duration"
+                            type="text"
+                            value={formatSecondsToMMSS(formData.duration)}
+                            onChange={(e) => {
+                              // Formato mm:ss, solo permitir números y : 
+                              const value = e.target.value.replace(/[^\d:]/g, '');
+                              // Validar formato básico
+                              if (value === '' || /^\d{0,2}(:\d{0,2})?$/.test(value)) {
+                                // Convertir MM:SS a segundos y actualizar formData
+                                const seconds = parseDurationToSeconds(value);
+                                handleInputChange('duration', seconds);
+                              }
+                            }}
+                            placeholder="45:00"
+                            maxLength={5}
+                            required
+                          />
                         )}
+                        
                       </div>
 
                       <div className="space-y-2">
@@ -2215,19 +2130,21 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                             </TooltipProvider>
                           )}
                         </Label>
-                        <Input
-                          id="averageHR"
-                          type="number"
-                          value={formData.averageHR}
-                          onChange={(e) => handleInputChange('averageHR', e.target.value)}
-                          placeholder="155"
-                          readOnly={laps.length > 0}
-                          className={laps.length > 0 ? "bg-muted cursor-not-allowed" : ""}
-                          required
-                        />
-                        {laps.length > 0 && (
-                          <p className="text-xs text-muted-foreground">Promedio ponderado por duración desde las vueltas</p>
+                        {laps.length > 0 ? (
+                          <div className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm">
+                            {formData.averageHR} bpm
+                          </div>
+                        ) : (
+                          <Input
+                            id="averageHR"
+                            type="number"
+                            value={formData.averageHR}
+                            onChange={(e) => handleInputChange('averageHR', e.target.value)}
+                            placeholder="155"
+                            required
+                          />
                         )}
+                        
                       </div>
                     </div>
                   </div>
@@ -2263,24 +2180,25 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                                 <div className="flex-1 grid grid-cols-2 md:grid-cols-5 gap-3">
                                   <div>
                                     <p className="text-xs text-muted-foreground">Vuelta #{lap.index}</p>
-                                    <p className="font-medium">{lap.distance} km</p>
+                                    <p className="font-medium">{(lap.distance / 1000).toFixed(2)} km</p>
                                   </div>
                                   <div>
                                     <p className="text-xs text-muted-foreground">Duración</p>
-                                    <p className="font-medium">{formatSecondsToMMSS(lap.duration)}</p>
+                                    <p className="font-medium">{formatSecondsToMMSS(lap.duration)} min</p>
                                   </div>
                                   <div>
                                     <p className="text-xs text-muted-foreground">FC Prom</p>
                                     <p className="font-medium">{lap.averageHR} bpm</p>
                                   </div>
                                   <div>
-                                    <p className="text-xs text-muted-foreground">Velocidad</p>
-                                    <p className="font-medium">{lap.speed.toFixed(2)} m/s</p>
-                                    <p className="text-xs text-muted-foreground">{convertSpeedToPace(lap.speed)}/km</p>
+                                    <p className="text-xs text-muted-foreground">Ritmo</p>
+                                    <p className="font-medium">{convertSpeedToPace(lap.speed)} min/km</p>
                                   </div>
                                   <div>
                                     <p className="text-xs text-muted-foreground">Inicio</p>
-                                    <p className="font-medium text-xs">{format(new Date(lap.startTime), 'HH:mm', { locale: es })}</p>
+                                    <p className="font-medium text-xs">
+                                      {formatUTCToLocalTime(lap.startTime)}
+                                    </p>
                                   </div>
                                 </div>
                                 <Button
@@ -2303,27 +2221,58 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                         <CardContent className="pt-6 space-y-4">
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
-                              <Label htmlFor="lapDistance">Distancia (km) *</Label>
+                              <Label htmlFor="lapDistance">Distancia (metros)</Label>
                               <Input
                                 id="lapDistance"
                                 type="number"
-                                step="0.1"
+                                step="1"
                                 value={currentLap.distance || ''}
                                 onChange={(e) => handleLapChange('distance', parseFloat(e.target.value) || 0)}
-                                placeholder="1.0"
+                                placeholder="1000"
                               />
+                              <p className="text-xs text-muted-foreground">
+                                Distancia en metros (ej: 1000 para 1 km). Requerido si no se ingresa ritmo.
+                              </p>
                             </div>
                             <div className="space-y-2">
-                              <Label htmlFor="lapDuration">Duración (mm:ss) *</Label>
+                              <Label htmlFor="lapDuration">Duración (mm:ss)</Label>
                               <Input
                                 id="lapDuration"
                                 type="text"
-                                value={currentLap.durationString || ''}
-                                onChange={(e) => handleLapChange('durationString', e.target.value)}
+                                inputMode="numeric"
+                                pattern="^\d{1,2}:\d{2}$"
+                                value={durationString}
+                                onChange={(e) => {
+                                  const value = e.target.value.replace(/[^\d:]/g, '');
+                                  if (value === '' || /^\d{0,2}(:\d{0,2})?$/.test(value)) {
+                                    handleLapChange('durationString', value);
+                                  }
+                                }}
                                 placeholder="05:30"
                                 maxLength={5}
+                                aria-label="Duración en formato mm:ss"
                               />
-                              <p className="text-xs text-muted-foreground">Formato: mm:ss (ej: 05:30)</p>
+                              <p className="text-xs text-muted-foreground">Formato: mm:ss (ej: 05:30). Requerido si no se ingresa ritmo.</p>
+                            </div>
+                            <div className="space-y-2">
+                              <Label htmlFor="lapPace">Ritmo (mm:ss/km)</Label>
+                              <Input
+                                id="lapPace"
+                                type="text"
+                                inputMode="numeric"
+                                pattern="^\d{1,2}:\d{2}$"
+                                value={paceString}
+                                onChange={(e) => {
+                                  const value = e.target.value.replace(/[^\d:]/g, '');
+                                  if (value === '' || /^\d{0,2}(:\d{0,2})?$/.test(value)) {
+                                    handleLapChange('paceString', value);
+                                  }
+                                }}
+                                placeholder="04:30"
+                                maxLength={5}
+                                aria-label="Ritmo en formato mm:ss/km"
+                              />
+                              <p className="text-xs text-muted-foreground">Formato: mm:ss/km (ej: 04:30). Se calculará distancia o duración automáticamente.</p>
                             </div>
                             <div className="space-y-2">
                               <Label htmlFor="lapHR">FC Promedio (bpm) *</Label>
@@ -2336,33 +2285,34 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label htmlFor="lapStartTime">Hora de Inicio (HH:mm)</Label>
+                              <Label htmlFor="lapStartTime">Hora de Inicio (HH:mm:ss)</Label>
                               <Input
                                 id="lapStartTime"
-                                type="time"
-                                value={currentLap.startTime ? format(new Date(currentLap.startTime), "HH:mm") : ''}
+                                type="text"
+                                placeholder="HH:mm:ss"
+                                value={currentLap.startTime 
+                                  ? formatUTCToLocalTime(currentLap.startTime)
+                                  : ''}
                                 onChange={(e) => {
                                   // Combinar la fecha del entrenamiento con la hora seleccionada
                                   const baseDate = selectedDate || new Date();
-                                  const [hours, minutes] = e.target.value.split(':');
-                                  const newDateTime = new Date(baseDate);
-                                  newDateTime.setHours(parseInt(hours || '0'), parseInt(minutes || '0'), 0, 0);
-                                  handleLapChange('startTime', newDateTime.toISOString());
+                                  const timeParts = e.target.value.split(':');
+                                  if (timeParts.length >= 2) {
+                                    const hours = parseInt(timeParts[0] || '0');
+                                    const minutes = parseInt(timeParts[1] || '0');
+                                    const seconds = parseInt(timeParts[2] || '0');
+                                    const newDateTime = new Date(baseDate);
+                                    newDateTime.setHours(hours, minutes, seconds, 0);
+                                    handleLapChange('startTime', newDateTime.toISOString());
+                                  }
                                 }}
                               />
                               <p className="text-xs text-muted-foreground">
-                                La fecha será la misma del entrenamiento ({selectedDate ? format(selectedDate, 'dd/MM/yyyy', { locale: es }) : 'fecha seleccionada'})
+                                Formato: HH:mm:ss (ej: 14:30:00). La fecha será la misma del entrenamiento ({selectedDate ? format(selectedDate, 'dd/MM/yyyy', { locale: es }) : 'fecha seleccionada'})
                               </p>
                             </div>
                           </div>
-                          {currentLap.speed && currentLap.speed > 0 && (
-                            <div className="p-2 bg-muted rounded-md">
-                              <p className="text-sm text-muted-foreground">
-                                Velocidad calculada: <span className="font-medium">{currentLap.speed.toFixed(2)} m/s</span>
-                                {' '}(<span className="font-medium">{convertSpeedToPace(currentLap.speed)}/km</span>)
-                              </p>
-                            </div>
-                          )}
+                          
                           <div className="flex gap-2">
                             <Button
                               type="button"
@@ -2595,7 +2545,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                           <div className="space-y-2">
                             <Label htmlFor="injuryType">Tipo</Label>
                             <Select 
-                              onValueChange={(value) => handleInjuryChange('type', value)} 
+                              onValueChange={(value: string) => handleInjuryChange('type', value)} 
                               value={currentInjury.type}
                             >
                               <SelectTrigger>
@@ -2611,7 +2561,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                           <div className="space-y-2">
                             <Label htmlFor="bodyPart">Zona Corporal</Label>
                             <Select 
-                              onValueChange={(value) => handleInjuryChange('bodyPart', value)} 
+                              onValueChange={(value: string) => handleInjuryChange('bodyPart', value)} 
                               value={currentInjury.bodyPart}
                             >
                               <SelectTrigger>
@@ -2726,8 +2676,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                   </form>
                     )}
                   </div>
-                </TabsContent>
-              </Tabs>
+                )}
             </CardContent>
           </Card>
         )}
@@ -2817,18 +2766,13 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                     <CheckCircle className="w-5 h-5 text-accent" />
                     <CardTitle>Entrenamiento Realizado</CardTitle>
                   </div>
-                  <CardDescription>
-                    {completedTraining.uploadSource === 'garmin' 
-                      ? 'Importado desde Garmin Connect'
-                      : 'Registrado manualmente'
-                    }
-                  </CardDescription>
+                  
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="space-y-2">
                     <h4 className="font-medium">{completedTraining.name}</h4>
                     <p className="text-sm text-muted-foreground">
-                      {format(new Date(completedTraining.date), "PPP", { locale: es })}
+                      {format(new Date(completedTraining.date), "yyyy-MM-dd", { locale: es })}
                     </p>
                   </div>
 
@@ -2836,16 +2780,12 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
 
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm text-muted-foreground">Tipo</span>
-                      <Badge variant="outline">{completedTraining.type}</Badge>
-                    </div>
-                    <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Distancia</span>
-                      <span className="font-medium">{completedTraining.distance} km</span>
+                      <span className="font-medium">{completedTraining.distance.toLocaleString()} km</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Duración</span>
-                      <span className="font-medium">{completedTraining.duration} min</span>
+                      <span className="font-medium">{durationToTime(completedTraining.duration)} min</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Ritmo promedio</span>
@@ -2853,7 +2793,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                         {(() => {
                           // Calcular ritmo promedio desde distancia y duración
                           if (completedTraining.distance > 0 && completedTraining.duration > 0) {
-                            const durationSeconds = completedTraining.duration * 60; // convertir minutos a segundos
+                            const durationSeconds = completedTraining.duration; // convertir minutos a segundos
                             const paceSecondsPerKm = durationSeconds / completedTraining.distance;
                             return formatSecondsToMMSS(paceSecondsPerKm);
                           }
@@ -3028,9 +2968,9 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                               <div key={idx} className="text-xs p-2 bg-accent/10 rounded">
                                 <span className="font-medium">Vuelta #{lap.index}</span>
                                 {' - '}
-                                {lap.distance.toFixed(2)} km
+                                {(lap.distance / 1000).toFixed(2)} km
                                 {' - '}
-                                {formatSecondsToMMSS(lap.duration)}
+                                {formatSecondsToMMSS(lap.duration)} min
                                 {' - '}
                                 {convertSpeedToPace(lap.speed)}/km
                                 {' - '}
@@ -3129,32 +3069,32 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
               animate={isConnectingGarmin ? { opacity: 0.5 } : { opacity: 1 }}
               transition={{ duration: 0.3 }}
             >
-              <Label htmlFor="garmin-email">
+              <Label htmlFor="garmin-username">
                 Email o nombre de usuario
               </Label>
               <Input
-                id="garmin-email"
+                id="garmin-username"
                 type="text"
                 placeholder="tu-email@ejemplo.com"
-                value={garminEmail}
+                value={garminUsername}
                 onChange={(e) => {
-                  setGarminEmail(e.target.value);
-                  if (garminFormErrors.email) {
-                    setGarminFormErrors({ ...garminFormErrors, email: undefined });
+                  setGarminUsername(e.target.value);
+                  if (garminFormErrors.username) {
+                    setGarminFormErrors({ ...garminFormErrors, username: undefined });
                   }
                 }}
-                className={garminFormErrors.email ? 'border-red-500' : ''}
+                className={garminFormErrors.username ? 'border-red-500' : ''}
                 disabled={isConnectingGarmin}
               />
               <AnimatePresence>
-                {garminFormErrors.email && (
+                {garminFormErrors.username && (
                   <motion.p 
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, y: -10 }}
                     className="text-sm text-red-600"
                   >
-                    {garminFormErrors.email}
+                    {garminFormErrors.username}
                   </motion.p>
                 )}
               </AnimatePresence>

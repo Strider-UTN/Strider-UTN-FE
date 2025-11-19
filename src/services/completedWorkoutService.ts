@@ -4,12 +4,11 @@ import { toast } from 'sonner';
 export interface CreateCompletedWorkoutDto {
   trainingSessionAthleteId: number;
   name: string;
-  distance: number; // km
+  distance: number; // meters
   date: string; // Formato YYYY-MM-DD
-  duration: string; // formato mm:ss
+  duration: number; // seconds
   averageHR: number; // bpm
   comments?: string;
-  source: 'Manual' | 'Garmin';
   sensations?: CreateWorkoutSensationsDto;
   laps?: CreateWorkoutLapDto[];
   injuries?: CreateWorkoutInjuryDto[];
@@ -25,9 +24,10 @@ export interface CreateWorkoutSensationsDto {
 
 export interface CreateWorkoutLapDto {
   index: number;
-  distance: number; // km
-  duration: number; // segundos
+  distance: number; // meters
+  duration: number; // seconds
   averageHR: number; // bpm
+  speed: number; // m/s
   startTime: string; // ISO string
 }
 

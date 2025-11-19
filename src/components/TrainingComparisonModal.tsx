@@ -240,7 +240,7 @@ export function TrainingComparisonModal({
                 {renderCompletionCircle(
                   getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance),
                   'Distancia',
-                  `${completedTraining.distance} km`,
+                  `${completedTraining.distance / 1000} km`,
                   `${plannedSession.plannedDistance} km`
                 )}
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
@@ -13,9 +13,7 @@ import {
   CheckCircle, 
   AlertCircle, 
   RefreshCw, 
-  Download, 
   Calendar,
-  Settings,
   LogOut,
   Clock,
   Activity,
@@ -26,72 +24,28 @@ import {
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
-
-interface GarminSession {
-  id: string;
-  date: Date;
-  activityType: string;
-  distance: number;
-  duration: string;
-  avgPace: string;
-  heartRate?: number;
-  calories?: number;
-  synced: boolean;
-}
+import { GarminService, GarminWorkoutResponseDto, GarminAccountResponseDto } from '../services/garminService';
+import { AuthService } from '../services/authService';
 
 export function GarminIntegration() {
   const [isConnected, setIsConnected] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [autoSync, setAutoSync] = useState(true);
   const [lastSyncDate, setLastSyncDate] = useState<Date | null>(null);
-  const [connectedAccount, setConnectedAccount] = useState<{
-    email: string;
-    name: string;
-    connectedSince: Date;
-  } | null>(null);
+  const [connectedAccount, setConnectedAccount] = useState<GarminAccountResponseDto | null>(null);
   const [showLoginForm, setShowLoginForm] = useState(false);
-  const [garminEmail, setGarminEmail] = useState('');
+  const [garminUsername, setGarminUsername] = useState('');
   const [garminPassword, setGarminPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [formErrors, setFormErrors] = useState<{ email?: string; password?: string }>({});
+  const [formErrors, setFormErrors] = useState<{ username?: string; password?: string }>({});
+  const [importedWorkouts, setImportedWorkouts] = useState<GarminWorkoutResponseDto[]>([]);
 
-  // Datos mock de sesiones importadas desde Garmin
-  const [importedSessions, setImportedSessions] = useState<GarminSession[]>([
-    {
-      id: 'g1',
-      date: new Date(2025, 9, 25),
-      activityType: 'Carrera',
-      distance: 12.5,
-      duration: '1:02:30',
-      avgPace: '5:00',
-      heartRate: 152,
-      calories: 850,
-      synced: true
-    },
-    {
-      id: 'g2',
-      date: new Date(2025, 9, 23),
-      activityType: 'Carrera',
-      distance: 8.0,
-      duration: '0:36:00',
-      avgPace: '4:30',
-      heartRate: 165,
-      calories: 520,
-      synced: true
-    },
-    {
-      id: 'g3',
-      date: new Date(2025, 9, 21),
-      activityType: 'Carrera',
-      distance: 15.0,
-      duration: '1:15:00',
-      avgPace: '5:00',
-      heartRate: 148,
-      calories: 980,
-      synced: true
-    }
-  ]);
+  // Initialize loading state
+  useEffect(() => {
+    setIsLoading(false);
+  }, []);
 
   const handleShowLoginForm = () => {
     setShowLoginForm(true);
@@ -100,16 +54,16 @@ export function GarminIntegration() {
 
   const handleCancelLogin = () => {
     setShowLoginForm(false);
-    setGarminEmail('');
+    setGarminUsername('');
     setGarminPassword('');
     setFormErrors({});
   };
 
   const validateForm = () => {
-    const errors: { email?: string; password?: string } = {};
+    const errors: { username?: string; password?: string } = {};
     
-    if (!garminEmail.trim()) {
-      errors.email = 'El email o usuario es requerido';
+    if (!garminUsername.trim()) {
+      errors.username = 'El email o usuario es requerido';
     }
     
     if (!garminPassword) {
@@ -120,7 +74,7 @@ export function GarminIntegration() {
     return Object.keys(errors).length === 0;
   };
 
-  const handleConnect = (e: React.FormEvent) => {
+  const handleConnect = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateForm()) {
@@ -128,23 +82,32 @@ export function GarminIntegration() {
     }
 
     setIsConnecting(true);
-    toast.info('Autenticando con Garmin Connect...');
     
-    setTimeout(() => {
-      // Simular autenticación exitosa
-      setConnectedAccount({
-        email: garminEmail,
-        name: 'Usuario Garmin',
-        connectedSince: new Date()
+    try {
+      const userId = AuthService.getCurrentUserId();
+      if (!userId) {
+        toast.error('No se pudo obtener el ID del usuario. Por favor, inicia sesión nuevamente.');
+        return;
+      }
+      const account = await GarminService.connectAccount(userId.toString(), {
+        garminUsername,
+        garminPassword
       });
+      
       setIsConnected(true);
-      setLastSyncDate(new Date());
-      setIsConnecting(false);
+      setConnectedAccount(account);
+      // Last login date is returned from connectAccount
+      if (account.connectedSince) {
+        setLastSyncDate(new Date(account.connectedSince));
+      }
       setShowLoginForm(false);
-      setGarminEmail('');
+      setGarminUsername('');
       setGarminPassword('');
-      toast.success('¡Conectado exitosamente con Garmin Connect!');
-    }, 2000);
+    } catch (error) {
+      // Error is already handled by the service
+    } finally {
+      setIsConnecting(false);
+    }
   };
 
   const handleDisconnect = () => {
@@ -152,35 +115,62 @@ export function GarminIntegration() {
       setIsConnected(false);
       setConnectedAccount(null);
       setLastSyncDate(null);
+      setImportedWorkouts([]);
+      setShowLoginForm(true);
       toast.success('Cuenta de Garmin desconectada');
     }
   };
 
-  const handleSync = () => {
+  const handleSync = async () => {
     setIsSyncing(true);
-    toast.info('Sincronizando con Garmin Connect...');
 
-    setTimeout(() => {
-      setLastSyncDate(new Date());
+    try {
+      const userId = AuthService.getCurrentUserId();
+      if (!userId) {
+        toast.error('No se pudo obtener el ID del usuario. Por favor, inicia sesión nuevamente.');
+        return;
+      }
+      const workouts = await GarminService.syncWorkouts(userId.toString());
+      // Parse dates from API response (they come as strings)
+      const parsedWorkouts = workouts.map(workout => ({
+        ...workout,
+        date: new Date(workout.date),
+        laps: workout.laps.map(lap  => ({
+          ...lap,
+          startTime: new Date(lap.startTime.toISOString())
+        }))
+      }));
+      setImportedWorkouts(workouts);
+    } catch (error) {
+      // Error is already handled by the service
+    } finally {
       setIsSyncing(false);
-      
-      // Simular nuevas sesiones importadas
-      const newSession: GarminSession = {
-        id: 'g' + (importedSessions.length + 1),
-        date: new Date(),
-        activityType: 'Carrera',
-        distance: 10.0,
-        duration: '0:50:00',
-        avgPace: '5:00',
-        heartRate: 155,
-        calories: 650,
-        synced: true
-      };
-      
-      setImportedSessions([newSession, ...importedSessions]);
-      toast.success('Sincronización completada. 1 nueva sesión importada.');
-    }, 2000);
+    }
   };
+
+  function durationToTime(duration: number): React.ReactNode {
+    const minutes = Math.floor(duration / 60);
+    const seconds = duration % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-slate-900">Integración con Garmin</h2>
+          <p className="text-slate-600 mt-1">
+            Conecta tu cuenta de Garmin Connect para importar automáticamente tus entrenamientos
+          </p>
+        </div>
+        <Card>
+          <CardContent className="flex items-center justify-center py-8">
+            <RefreshCw className="h-6 w-6 animate-spin text-slate-400" />
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -282,25 +272,25 @@ export function GarminIntegration() {
 
                       <form onSubmit={handleConnect} className="space-y-4">
                         <div className="space-y-2">
-                          <Label htmlFor="garmin-email">
+                          <Label htmlFor="garmin-username">
                             Email o nombre de usuario
                           </Label>
                           <Input
-                            id="garmin-email"
+                            id="garmin-username"
                             type="text"
                             placeholder="tu-email@ejemplo.com"
-                            value={garminEmail}
+                            value={garminUsername}
                             onChange={(e) => {
-                              setGarminEmail(e.target.value);
-                              if (formErrors.email) {
-                                setFormErrors({ ...formErrors, email: undefined });
+                              setGarminUsername(e.target.value);
+                              if (formErrors.username) {
+                                setFormErrors({ ...formErrors, username: undefined });
                               }
                             }}
-                            className={formErrors.email ? 'border-red-500' : ''}
+                            className={formErrors.username ? 'border-red-500' : ''}
                             disabled={isConnecting}
                           />
-                          {formErrors.email && (
-                            <p className="text-sm text-red-600">{formErrors.email}</p>
+                          {formErrors.username && (
+                            <p className="text-sm text-red-600">{formErrors.username}</p>
                           )}
                         </div>
 
@@ -388,10 +378,9 @@ export function GarminIntegration() {
               <div className="space-y-4">
                 <div className="flex items-start justify-between">
                   <div className="space-y-1">
-                    <p className="text-slate-900">{connectedAccount?.name}</p>
-                    <p className="text-slate-500">{connectedAccount?.email}</p>
+                    <p className="text-slate-900">Cuenta de Garmin conectada</p>
                     <p className="text-xs text-slate-400">
-                      Conectado desde {connectedAccount?.connectedSince && format(connectedAccount.connectedSince, "d 'de' MMMM, yyyy", { locale: es })}
+                      Conectado desde {connectedAccount?.connectedSince && format(new Date(connectedAccount.connectedSince), "d 'de' MMMM, yyyy", { locale: es })}
                     </p>
                   </div>
                   <Button 
@@ -461,84 +450,79 @@ export function GarminIntegration() {
         </CardContent>
       </Card>
 
-      {/* Imported Sessions */}
-      {isConnected && importedSessions.length > 0 && (
+      {/* Imported Workouts */}
+      {isConnected && importedWorkouts.length > 0 && (
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
               <div>
-                <CardTitle>Sesiones Importadas</CardTitle>
+                <CardTitle>Entrenamientos Importados</CardTitle>
                 <CardDescription>
                   Entrenamientos sincronizados desde Garmin Connect
                 </CardDescription>
               </div>
               <Badge variant="secondary">
-                {importedSessions.length} {importedSessions.length === 1 ? 'sesión' : 'sesiones'}
+                {importedWorkouts.length} {importedWorkouts.length === 1 ? 'entrenamiento' : 'entrenamientos'}
               </Badge>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
-              {importedSessions.map((session) => (
-                <div 
-                  key={session.id}
-                  className="border border-slate-200 rounded-lg p-4 hover:bg-slate-50 transition-colors"
-                >
-                  <div className="flex items-start justify-between mb-3">
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-cyan-50 rounded-lg">
-                        <Activity className="h-5 w-5 text-cyan-600" />
+              {importedWorkouts.map((workout) => {
+                // Calcular ritmo promedio en minutos por kilómetro
+                const durationInMinutes = workout.duration / 60;
+                const avgPace = durationInMinutes / workout.distance;
+
+                return (
+                  <div 
+                    key={workout.id}
+                    className="border border-slate-200 rounded-lg p-4 hover:bg-slate-50 transition-colors"
+                  >
+                    <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 bg-cyan-50 rounded-lg">
+                          <Activity className="h-5 w-5 text-cyan-600" />
+                        </div>
+                        <div>
+                          <p className="text-slate-900">{workout.name}</p>
+                          <p className="text-sm text-slate-500">
+                            {workout.date}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-slate-900">{session.activityType}</p>
-                        <p className="text-sm text-slate-500">
-                          {format(session.date, "EEEE d 'de' MMMM, yyyy", { locale: es })}
-                        </p>
-                      </div>
-                    </div>
-                    {session.synced && (
                       <Badge variant="secondary" className="bg-emerald-50 text-emerald-700 border-emerald-200">
                         <CheckCircle className="h-3 w-3 mr-1" />
                         Sincronizado
                       </Badge>
-                    )}
-                  </div>
+                    </div>
 
-                  <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Distancia</p>
-                      <p className="text-slate-900">{session.distance} km</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Duración</p>
-                      <p className="text-slate-900">{session.duration}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500 mb-1">Ritmo promedio</p>
-                      <p className="text-slate-900">{session.avgPace}/km</p>
-                    </div>
-                    {session.heartRate && (
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1">Distancia</p>
+                        <p className="text-slate-900">{workout.distance} km</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1">Duración</p>
+                        <p className="text-slate-900">{durationToTime(workout.duration)}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-500 mb-1">Ritmo promedio</p>
+                        <p className="text-slate-900">{avgPace}/km</p>
+                      </div>
                       <div>
                         <p className="text-xs text-slate-500 mb-1">FC promedio</p>
-                        <p className="text-slate-900">{session.heartRate} bpm</p>
+                        <p className="text-slate-900">{workout.averageHR} bpm</p>
                       </div>
-                    )}
-                    {session.calories && (
-                      <div>
-                        <p className="text-xs text-slate-500 mb-1">Calorías</p>
-                        <p className="text-slate-900">{session.calories} kcal</p>
-                      </div>
-                    )}
-                  </div>
+                    </div>
 
-                  <div className="mt-4 pt-3 border-t border-slate-100">
-                    <Button variant="ghost" size="sm" className="text-cyan-600 hover:text-cyan-700 hover:bg-cyan-50">
-                      <Download className="h-4 w-4 mr-2" />
-                      Importar a Strider
-                    </Button>
+                    {workout.laps && workout.laps.length > 0 && (
+                      <div className="mt-4 pt-3 border-t border-slate-100">
+                        <p className="text-xs text-slate-500 mb-2">Vueltas: {workout.laps.length}</p>
+                      </div>
+                    )}
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </CardContent>
         </Card>
@@ -557,8 +541,8 @@ export function GarminIntegration() {
                   <TrendingUp className="h-4 w-4" />
                   <span className="text-sm">Total sincronizado</span>
                 </div>
-                <p className="text-2xl text-slate-900">{importedSessions.length}</p>
-                <p className="text-xs text-slate-500">Sesiones importadas</p>
+                <p className="text-2xl text-slate-900">{importedWorkouts.length}</p>
+                <p className="text-xs text-slate-500">Entrenamientos importados</p>
               </div>
               <div className="space-y-2">
                 <div className="flex items-center gap-2 text-slate-600">
@@ -566,7 +550,7 @@ export function GarminIntegration() {
                   <span className="text-sm">Volumen total</span>
                 </div>
                 <p className="text-2xl text-slate-900">
-                  {importedSessions.reduce((sum, s) => sum + s.distance, 0).toFixed(1)} km
+                  {importedWorkouts.reduce((sum, w) => sum + w.distance, 0).toFixed(1)} km
                 </p>
                 <p className="text-xs text-slate-500">Desde la conexión</p>
               </div>
