@@ -65,9 +65,11 @@ const formatDateFromString = (dateString: string, format: 'short' | 'long' = 'sh
 
 // Transformar CompletedWorkoutResponseDto a PerformanceData
 const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto): PerformanceData => {
+  // El backend entrega la distancia en metros → convertir a kilómetros
+  const distanceKm = workout.distance / 1000;
   // Calcular pace: duration (segundos) / distance (km) = segundos/km, luego convertir a min/km
   const durationMinutes = workout.duration / 60;
-  const pace = workout.distance > 0 ? durationMinutes / workout.distance : 0;
+  const pace = distanceKm > 0 ? durationMinutes / distanceKm : 0;
   
   // Calcular maxHeartRate desde los laps o usar una estimación
   let maxHeartRate = workout.averageHR;
@@ -82,11 +84,11 @@ const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto)
   // Calcular carga: distancia × factor de intensidad (basado en FC promedio)
   // Factor de intensidad va de 0.5 a 1.5 aproximadamente basado en FC
   const intensityFactor = workout.averageHR > 0 ? (workout.averageHR - 120) / 80 : 0;
-  const load = workout.distance > 0 ? workout.distance * (0.5 + intensityFactor) : 0;
+  const load = distanceKm > 0 ? distanceKm * (0.5 + intensityFactor) : 0;
   
   return {
     date: extractDateOnly(workout.date), // Usar solo la parte de fecha sin zona horaria
-    distance: workout.distance,
+    distance: distanceKm,
     pace: Math.round(pace * 100) / 100,
     heartRate: workout.averageHR,
     maxHeartRate: Math.round(maxHeartRate),
