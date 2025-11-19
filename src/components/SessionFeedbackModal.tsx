@@ -222,7 +222,7 @@ export function SessionRetroalimentacionModal({
   // Función helper para formatear duración de segundos a mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.round(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -1068,7 +1068,7 @@ export function SessionRetroalimentacionModal({
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Distancia:</span>
-                            <p className="font-medium">{lap.distance.toFixed(2)} km</p>
+                            <p className="font-medium">{(lap.distance / 1000).toFixed(2)} km</p>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Duración:</span>
