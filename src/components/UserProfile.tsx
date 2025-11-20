@@ -357,7 +357,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
         physicalProfile: mappedUserType === 'athlete' ? {
           height: profileData.height,
           weight: profileData.weight,
-          vo2Max: (profileData as any).vO2Max || profileData.vo2Max, // Backend retorna vO2Max (camelCase)
+          vo2Max: (profileData as any).vO2Max || (profileData as any).vo2Max, // Backend retorna vO2Max (camelCase)
           yearsOfExperience: profileData.yearsOfExperience,
           trainingStartDate: profileData.trainingStartDate || '',
           trainingVolume: mappedTrainingVolume,
@@ -865,7 +865,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           <div className="flex items-center gap-2 mb-2">
                             <Select
                               value={(dobVisibleMonth ? (dobVisibleMonth.getMonth()+1).toString() : (new Date().getMonth()+1).toString())}
-                              onValueChange={(val) => {
+                              onValueChange={(val: string) => {
                                 setDobVisibleMonth(prev => {
                                   const base = prev ?? new Date();
                                   const y = base.getFullYear();
@@ -885,7 +885,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                             </Select>
                             <Select
                               value={(dobVisibleMonth ? dobVisibleMonth.getFullYear() : new Date().getFullYear()).toString()}
-                              onValueChange={(val) => {
+                              onValueChange={(val: string) => {
                                 setDobVisibleMonth(prev => {
                                   const base = prev ?? new Date();
                                   const y = parseInt(val);
@@ -909,7 +909,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                             month={dobVisibleMonth}
                             onMonthChange={setDobVisibleMonth}
                             selected={parseYmdToLocalDate(formData.dateOfBirth)}
-                            onSelect={(date) => {
+                            onSelect={(date: Date | undefined) => {
                               if (date) {
                                 setFormData(prev => ({ 
                                   ...prev, 
@@ -917,7 +917,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                                 }));
                               }
                             }}
-                            disabled={(date) => {
+                            disabled={(date: Date) => {
                               // Deshabilitar fechas futuras y fechas muy antiguas (más de 120 años)
                               const today = new Date();
                               const maxDate = new Date();
@@ -961,7 +961,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           id="height"
                           type="number"
                           min="0"
-                          value={formData.physicalProfile?.height || ''}
+                          value={formData.physicalProfile?.height !== undefined && formData.physicalProfile?.height !== null && formData.physicalProfile?.height > 0 ? formData.physicalProfile.height : ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
@@ -981,7 +981,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           type="number"
                           min="0"
                           step="0.1"
-                          value={formData.physicalProfile?.weight || ''}
+                          value={formData.physicalProfile?.weight !== undefined && formData.physicalProfile?.weight !== null && formData.physicalProfile?.weight > 0 ? formData.physicalProfile.weight : ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
@@ -1052,7 +1052,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                               <div className="flex items-center gap-2">
                                 <Select
                                   value={(trainingVisibleMonth ? (trainingVisibleMonth.getMonth()+1).toString() : (new Date().getMonth()+1).toString())}
-                                  onValueChange={(val) => {
+                                  onValueChange={(val: string) => {
                                     setTrainingVisibleMonth(prev => {
                                       const base = prev ?? new Date();
                                       const y = base.getFullYear();
@@ -1093,7 +1093,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                                 </Select>
                                 <Select
                                   value={(trainingVisibleMonth ? trainingVisibleMonth.getFullYear() : new Date().getFullYear()).toString()}
-                                  onValueChange={(val) => {
+                                  onValueChange={(val: string) => {
                                     setTrainingVisibleMonth(prev => {
                                       const base = prev ?? new Date();
                                       const y = parseInt(val);
@@ -1329,7 +1329,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                         <Label htmlFor="emergencyContactRelationship">Relación</Label>
                         <Select
                           value={formData.physicalProfile?.emergencyContact.relationship || ''}
-                          onValueChange={(value) => setFormData(prev => ({
+                          onValueChange={(value: string) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
                               ...prev.physicalProfile!,
@@ -1382,8 +1382,8 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                                 medicalInfo: {
                                   ...prev.physicalProfile!.medicalInfo,
                                   healthInsurance: {
-                                    ...prev.physicalProfile!.medicalInfo.healthInsurance,
-                                    provider: e.target.value
+                                    provider: e.target.value || '',
+                                    memberNumber: prev.physicalProfile!.medicalInfo.healthInsurance?.memberNumber || ''
                                   }
                                 }
                               }
@@ -1405,8 +1405,8 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                                 medicalInfo: {
                                   ...prev.physicalProfile!.medicalInfo,
                                   healthInsurance: {
-                                    ...prev.physicalProfile!.medicalInfo.healthInsurance,
-                                    memberNumber: e.target.value
+                                    provider: prev.physicalProfile!.medicalInfo.healthInsurance?.provider || '',
+                                    memberNumber: e.target.value || ''
                                   }
                                 }
                               }
@@ -1795,7 +1795,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                     </div>
                     <Switch
                       checked={formData.preferences?.notifications?.email || false}
-                      onCheckedChange={(checked) => setFormData(prev => ({
+                      onCheckedChange={(checked: boolean) => setFormData(prev => ({
                         ...prev,
                         preferences: {
                           ...prev.preferences!,
