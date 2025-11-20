@@ -56,7 +56,9 @@ interface IntervalInSeries {
   repetitions: number;
   distance?: number;
   duration?: string;
-  targetSpeed: string;
+  paceType: 'fixed' | 'vo2max_percentage'; // Tipo de velocidad
+  targetSpeed?: string; // ritmo en min/km - solo para fixed
+  vo2maxPercentage?: number; // Porcentaje de VO2Max - solo para vo2max_percentage
   description?: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
 }
@@ -111,18 +113,25 @@ function convertBackendToFrontend(backendTemplate: TrainingTemplateResponseDto):
     repetitions: series.repetitions,
     recoveryBetweenSets: series.recoveryBetweenSets,
     notes: series.notes || undefined,
-    intervals: (series.intervals || []).map((interval, intervalIndex) => ({
-      id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
-      trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
-      repetitions: interval.repetitions,
-      distance: interval.distance || undefined,
-      duration: interval.duration || interval.targetTime || undefined,
-      targetTime: interval.targetTime || undefined,
-      targetSpeed: interval.targetSpeed || '',
-      description: interval.description || '',
-      intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
-      recoveryTime: interval.recoveryTime || '00:00'
-    }))
+    intervals: (series.intervals || []).map((interval, intervalIndex) => {
+      const intervalAny = interval as any; // Para acceder a vo2MaxPercentage del backend
+      const paceTypeStr = String(interval.paceType || '');
+      const isVo2MaxPercentage = paceTypeStr.toLowerCase() === 'vo2maxpercentage' || paceTypeStr === 'vo2MaxPercentage';
+      return {
+        id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+        trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+        repetitions: interval.repetitions,
+        distance: interval.distance || undefined,
+        duration: interval.duration || interval.targetTime || undefined,
+        targetTime: interval.targetTime || undefined,
+        paceType: (isVo2MaxPercentage ? 'vo2max_percentage' : 'fixed') as 'fixed' | 'vo2max_percentage',
+        targetSpeed: isVo2MaxPercentage ? undefined : (interval.targetSpeed || ''),
+        vo2maxPercentage: isVo2MaxPercentage ? (intervalAny.vo2MaxPercentage ?? intervalAny.vo2maxPercentage) : undefined,
+        description: interval.description || '',
+        intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+        recoveryTime: interval.recoveryTime || '00:00'
+      };
+    })
   }));
 
   return {

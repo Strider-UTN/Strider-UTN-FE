@@ -29,7 +29,7 @@ interface AthleteFormData {
   location: string;
   
   // Paso 3: Ficha Atlética
-  yearsOfExperience: string;
+  trainingStartDate: string; // Formato: YYYY-MM (mes y año de inicio)
   volumeType: 'weekly' | 'monthly';
   weeklyVolume: string;
   monthlyVolume: string;
@@ -140,6 +140,7 @@ interface User {
   // Ficha física para atletas
   physicalProfile?: {
     yearsOfExperience: number;
+    trainingStartDate?: string; // Formato: YYYY-MM
     trainingVolume: {
       weekly?: number;
       monthly?: number;
@@ -188,7 +189,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     height: '',
     weight: '',
     location: '',
-    yearsOfExperience: '',
+    trainingStartDate: '',
     volumeType: 'weekly',
     weeklyVolume: '',
     monthlyVolume: '',
@@ -295,9 +296,29 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     if (userType === 'athlete') {
       console.log('Registro de atleta enviado:', athleteFormData);
       
+      // Calcular años de experiencia desde trainingStartDate
+      let yearsOfExperience = 0;
+      if (athleteFormData.trainingStartDate) {
+        try {
+          const [year, month] = athleteFormData.trainingStartDate.split('-').map(Number);
+          const startDate = new Date(year, month - 1, 1);
+          const today = new Date();
+          yearsOfExperience = today.getFullYear() - startDate.getFullYear();
+          const monthDiff = today.getMonth() - startDate.getMonth();
+          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < startDate.getDate())) {
+            yearsOfExperience--;
+          }
+          yearsOfExperience = Math.max(0, yearsOfExperience);
+        } catch (error) {
+          console.error('Error al calcular años de experiencia:', error);
+          yearsOfExperience = 0;
+        }
+      }
+      
       // Crear perfil físico completo para atletas
       const physicalProfile = {
-        yearsOfExperience: parseInt(athleteFormData.yearsOfExperience) || 0,
+        yearsOfExperience: yearsOfExperience,
+        trainingStartDate: athleteFormData.trainingStartDate,
         trainingVolume: {
           weekly: athleteFormData.volumeType === 'weekly' ? parseInt(athleteFormData.weeklyVolume) || 0 : undefined,
           monthly: athleteFormData.volumeType === 'monthly' ? parseInt(athleteFormData.monthlyVolume) || 0 : undefined,
@@ -780,19 +801,39 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="yearsOfExperience">Años de Experiencia Corriendo</Label>
+                <Label htmlFor="trainingStartDate">Fecha de Inicio de Entrenamiento</Label>
                 <Input
-                  id="yearsOfExperience"
-                  type="number"
-                  placeholder="5"
-                  min="0"
-                  max="50"
-                  value={athleteFormData.yearsOfExperience}
-                  onChange={(e) => updateAthleteFormData('yearsOfExperience', e.target.value)}
+                  id="trainingStartDate"
+                  type="month"
+                  value={athleteFormData.trainingStartDate}
+                  onChange={(e) => {
+                    const startDate = e.target.value;
+                    updateAthleteFormData('trainingStartDate', startDate);
+                  }}
                   required
                 />
+                {athleteFormData.trainingStartDate && (() => {
+                  try {
+                    const [year, month] = athleteFormData.trainingStartDate.split('-').map(Number);
+                    const startDate = new Date(year, month - 1, 1);
+                    const today = new Date();
+                    let years = today.getFullYear() - startDate.getFullYear();
+                    const monthDiff = today.getMonth() - startDate.getMonth();
+                    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < startDate.getDate())) {
+                      years--;
+                    }
+                    const yearsDisplay = Math.max(0, years);
+                    return (
+                      <p className="text-xs text-muted-foreground">
+                        Experiencia aproximada: {yearsDisplay} {yearsDisplay === 1 ? 'año' : 'años'}
+                      </p>
+                    );
+                  } catch {
+                    return null;
+                  }
+                })()}
                 <p className="text-xs text-muted-foreground">
-                  Incluye tanto entrenamiento amateur como competitivo
+                  Selecciona el mes y año aproximado en que comenzaste a entrenar
                 </p>
               </div>
 

@@ -15,7 +15,9 @@ interface IntervalInSeries {
   repetitions: number;
   distance?: number; // en metros
   duration?: string; // formato MM:SS
-  targetSpeed: string; // ritmo en min/km
+  paceType: 'fixed' | 'vo2max_percentage'; // Tipo de velocidad
+  targetSpeed?: string; // ritmo en min/km - solo para fixed
+  vo2maxPercentage?: number; // Porcentaje de VO2Max - solo para vo2max_percentage
   description?: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
 }
@@ -57,6 +59,7 @@ export function SeriesBuilder({
     trainingMode: 'distance',
     repetitions: 4,
     distance: 200,
+    paceType: 'fixed',
     targetSpeed: '4:00',
     intensity: 'hard'
   });
@@ -86,9 +89,20 @@ export function SeriesBuilder({
       return;
     }
 
-    if (!newInterval.targetSpeed) {
-      toast.error('Debes especificar la velocidad objetivo');
-      return;
+    if (newInterval.trainingMode === 'distance') {
+      if (newInterval.paceType === 'fixed' && !newInterval.targetSpeed) {
+        toast.error('Debes especificar la velocidad objetivo');
+        return;
+      }
+      if (newInterval.paceType === 'vo2max_percentage' && (!newInterval.vo2maxPercentage || newInterval.vo2maxPercentage <= 0 || newInterval.vo2maxPercentage > 100)) {
+        toast.error('Debes especificar un porcentaje de VO2Max válido (1-100)');
+        return;
+      }
+    } else {
+      if (!newInterval.targetSpeed) {
+        toast.error('Debes especificar la velocidad objetivo');
+        return;
+      }
     }
 
     const intervalToAdd: IntervalInSeries = {
@@ -106,6 +120,7 @@ export function SeriesBuilder({
       trainingMode: 'distance',
       repetitions: 4,
       distance: 200,
+      paceType: 'fixed',
       targetSpeed: '4:00',
       intensity: 'hard'
     });
@@ -167,10 +182,24 @@ export function SeriesBuilder({
 
   const formatIntervalDisplay = (interval: IntervalInSeries): string => {
     if (interval.trainingMode === 'distance') {
-      const distanceKm = (interval.distance || 0) / 1000;
-      return `${interval.repetitions}x${interval.distance}m @ ${interval.targetSpeed}/km`;
+      let speedText: string;
+      const intervalAny = interval as any; // Para acceder a propiedades que pueden venir del backend
+      const paceTypeStr = String(interval.paceType || '');
+      const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                                 paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                                 paceTypeStr === 'vo2MaxPercentage';
+      const vo2MaxValue = interval.vo2maxPercentage ?? intervalAny.vo2MaxPercentage;
+      
+      if (isVo2MaxPercentage && vo2MaxValue) {
+        speedText = `${vo2MaxValue}% VO₂ Max`;
+      } else if (interval.targetSpeed) {
+        speedText = `${interval.targetSpeed}/km`;
+      } else {
+        speedText = 'N/A';
+      }
+      return `${interval.repetitions}x${interval.distance}m @ ${speedText}`;
     } else {
-      return `${interval.repetitions}x${interval.duration} @ ${interval.targetSpeed}/km`;
+      return `${interval.repetitions}x${interval.duration} @ ${interval.targetSpeed || 'N/A'}/km`;
     }
   };
 
@@ -366,18 +395,86 @@ export function SeriesBuilder({
                       </div>
                     )}
 
-                    <div className="space-y-2">
-                      <Label className="text-xs">Velocidad (min/km)</Label>
-                      <Input
-                        placeholder="4:00"
-                        value={newInterval.targetSpeed}
-                        onChange={(e) => setNewInterval(prev => ({ 
-                          ...prev, 
-                          targetSpeed: e.target.value 
-                        }))}
-                      />
-                    </div>
+                    {newInterval.trainingMode === 'distance' ? (
+                      <div className="space-y-2">
+                        <Label className="text-xs">Tipo de Velocidad</Label>
+                        <Select
+                          value={newInterval.paceType}
+                          onValueChange={(value: 'fixed' | 'vo2max_percentage') => {
+                            setNewInterval(prev => {
+                              const updated = { ...prev, paceType: value };
+                              // Resetear campos cuando cambia el tipo
+                              if (value === 'fixed') {
+                                updated.vo2maxPercentage = undefined;
+                              } else {
+                                updated.targetSpeed = undefined;
+                              }
+                              return updated;
+                            });
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="fixed">Velocidad Fija</SelectItem>
+                            <SelectItem value="vo2max_percentage">% VO₂ Max</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Label className="text-xs">Velocidad (min/km)</Label>
+                        <Input
+                          placeholder="4:00"
+                          value={newInterval.targetSpeed || ''}
+                          onChange={(e) => setNewInterval(prev => ({ 
+                            ...prev, 
+                            targetSpeed: e.target.value 
+                          }))}
+                        />
+                      </div>
+                    )}
                   </div>
+
+                  {newInterval.trainingMode === 'distance' && (
+                    <div className="space-y-2">
+                      {newInterval.paceType === 'fixed' ? (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Velocidad (min/km)</Label>
+                          <Input
+                            placeholder="4:00"
+                            value={newInterval.targetSpeed || ''}
+                            onChange={(e) => setNewInterval(prev => ({ 
+                              ...prev, 
+                              targetSpeed: e.target.value 
+                            }))}
+                          />
+                        </div>
+                      ) : (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Porcentaje de VO₂ Max</Label>
+                          <Input
+                            type="number"
+                            min="1"
+                            max="100"
+                            placeholder="85"
+                            value={newInterval.vo2maxPercentage || ''}
+                            onChange={(e) => {
+                              const value = e.target.value === '' ? undefined : parseInt(e.target.value);
+                              setNewInterval(prev => ({ 
+                                ...prev, 
+                                vo2maxPercentage: value 
+                              }));
+                            }}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Porcentaje de la velocidad máxima del atleta (1-100%)
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div className="space-y-2">
                     <Label className="text-xs">Intensidad</Label>

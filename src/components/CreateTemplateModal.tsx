@@ -73,7 +73,9 @@ interface IntervalInSeries {
   distance?: number;
   duration?: string;
   targetTime?: string;
-  targetSpeed: string;
+  paceType: 'fixed' | 'vo2max_percentage'; // Tipo de velocidad
+  targetSpeed?: string; // ritmo en min/km - solo para fixed
+  vo2maxPercentage?: number; // Porcentaje de VO2Max - solo para vo2max_percentage
   description?: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
   recoveryTime?: string;
@@ -105,10 +107,10 @@ export function CreateTemplateModal({
     difficulty: (template?.difficulty || 3) as 1 | 2 | 3 | 4 | 5
   });
   
-  const [tags, setTags] = useState<string[]>(template?.tags || []);
+  const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
-  const [intervals, setIntervals] = useState<TrainingInterval[]>(template?.intervals || []);
-  const [series, setSeries] = useState<SeriesSet[]>(template?.series || []);
+  const [intervals, setIntervals] = useState<TrainingInterval[]>([]);
+  const [series, setSeries] = useState<SeriesSet[]>([]);
   const [seriesBuilderMode, setSeriesBuilderMode] = useState<'simple' | 'advanced'>(
     template?.series && template.series.length > 0 ? 'advanced' : 'simple'
   );
@@ -125,18 +127,30 @@ export function CreateTemplateModal({
       repetitions: seriesItem.repetitions,
       recoveryBetweenSets: seriesItem.recoveryBetweenSets || '00:00',
       notes: seriesItem.notes,
-      intervals: (seriesItem.intervals || []).map((intervalItem, intervalIndex) => ({
-        id: intervalItem.id || createUniqueId(`interval-${seriesIndex}-${intervalIndex}`),
-        trainingMode: intervalItem.trainingMode || (intervalItem.duration || intervalItem.targetTime ? 'time' : 'distance'),
-        repetitions: intervalItem.repetitions || 1,
-        distance: intervalItem.distance,
-        duration: intervalItem.duration,
-        targetTime: intervalItem.targetTime,
-        targetSpeed: intervalItem.targetSpeed || '',
-        description: intervalItem.description,
-        intensity: intervalItem.intensity || 'moderate',
-        recoveryTime: intervalItem.recoveryTime || '00:00'
-      }))
+        intervals: (seriesItem.intervals || []).map((intervalItem, intervalIndex) => {
+          const intervalAny = intervalItem as any; // Para acceder a propiedades que pueden venir del backend
+          const paceTypeStr = String(intervalItem.paceType || '');
+          // Verificar tanto el formato del frontend (vo2max_percentage) como del backend (vo2MaxPercentage)
+          const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                                     paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                                     paceTypeStr === 'vo2MaxPercentage';
+          const vo2MaxValue = intervalItem.vo2maxPercentage ?? intervalAny.vo2MaxPercentage;
+        
+        return {
+          id: intervalItem.id || createUniqueId(`interval-${seriesIndex}-${intervalIndex}`),
+          trainingMode: intervalItem.trainingMode || (intervalItem.duration || intervalItem.targetTime ? 'time' : 'distance'),
+          repetitions: intervalItem.repetitions || 1,
+          distance: intervalItem.distance,
+          duration: intervalItem.duration,
+          targetTime: intervalItem.targetTime,
+          paceType: (isVo2MaxPercentage ? 'vo2max_percentage' : 'fixed') as 'fixed' | 'vo2max_percentage',
+          targetSpeed: isVo2MaxPercentage ? undefined : (intervalItem.targetSpeed || ''),
+          vo2maxPercentage: isVo2MaxPercentage ? vo2MaxValue : undefined,
+          description: intervalItem.description,
+          intensity: intervalItem.intensity || 'moderate',
+          recoveryTime: intervalItem.recoveryTime || '00:00'
+        };
+      })
     }));
   };
 
@@ -165,14 +179,14 @@ export function CreateTemplateModal({
     distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
     targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
     recoveryTime: interval.recoveryTime || '00:00',
-    paceType: 'fixed',
-    pace: parseSpeed(interval.targetSpeed),
-    vo2maxPercentage: undefined,
+    paceType: interval.paceType || 'fixed',
+    pace: interval.paceType === 'fixed' && interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
+    vo2maxPercentage: interval.paceType === 'vo2max_percentage' ? interval.vo2maxPercentage : undefined,
     description: interval.description,
     intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
     trainingMode: interval.trainingMode,
     duration: interval.duration,
-    targetSpeed: interval.targetSpeed
+    targetSpeed: interval.paceType === 'fixed' ? interval.targetSpeed : undefined
   });
 
   const flattenSeriesToTrainingIntervals = (seriesSets: SeriesSet[]): TrainingInterval[] => {
@@ -204,7 +218,9 @@ export function CreateTemplateModal({
     repetitions: interval.repetitions || 1,
     distance: interval.trainingMode === 'distance' ? interval.distance : interval.distance ?? 0,
     duration: interval.duration || interval.targetTime,
-    targetSpeed: interval.targetSpeed || (interval.pace ? formatMinutesToPace(interval.pace) : ''),
+    paceType: interval.paceType || 'fixed',
+    targetSpeed: interval.paceType === 'fixed' ? (interval.targetSpeed || (interval.pace ? formatMinutesToPace(interval.pace) : '')) : undefined,
+    vo2maxPercentage: interval.paceType === 'vo2max_percentage' ? interval.vo2maxPercentage : undefined,
     description: interval.description,
     intensity: interval.intensity || 'moderate'
   });
@@ -260,14 +276,14 @@ export function CreateTemplateModal({
           distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
           targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
           recoveryTime: interval.recoveryTime || '00:00',
-          paceType: 'Fixed',
-          pace: parseSpeed(interval.targetSpeed),
-          vo2MaxPercentage: undefined,
+          paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
+          pace: interval.paceType === 'fixed' && interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
+          vo2MaxPercentage: interval.paceType === 'vo2max_percentage' ? interval.vo2maxPercentage : undefined,
           description: interval.description,
           intensity: mapIntervalIntensityToBackend(interval.intensity),
           trainingMode: mapTrainingModeToBackend(interval.trainingMode),
           duration: interval.trainingMode === 'time' ? interval.duration : undefined,
-          targetSpeed: interval.targetSpeed,
+          targetSpeed: interval.paceType === 'fixed' ? interval.targetSpeed : undefined,
           orderIndex: idx
         }))
       }));
@@ -655,18 +671,26 @@ export function CreateTemplateModal({
       repetitions: series.repetitions,
       recoveryBetweenSets: series.recoveryBetweenSets,
       notes: series.notes || undefined,
-      intervals: (series.intervals || []).map((interval, intervalIndex) => ({
-        id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
-        trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
-        repetitions: interval.repetitions,
-        distance: interval.distance || undefined,
-        duration: interval.duration || interval.targetTime || undefined,
-        targetTime: interval.targetTime || undefined,
-        targetSpeed: interval.targetSpeed || '',
-        description: interval.description || '',
-        intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
-        recoveryTime: interval.recoveryTime || '00:00'
-      }))
+      intervals: (series.intervals || []).map((interval, intervalIndex) => {
+        const intervalAny = interval as any; // Para acceder a vo2MaxPercentage del backend
+        const paceTypeStr = String(interval.paceType || '');
+        const isVo2MaxPercentage = paceTypeStr.toLowerCase() === 'vo2maxpercentage' || paceTypeStr === 'vo2MaxPercentage';
+        const vo2MaxValue = intervalAny.vo2MaxPercentage ?? intervalAny.vo2maxPercentage;
+        return {
+          id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
+          trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
+          repetitions: interval.repetitions,
+          distance: interval.distance || undefined,
+          duration: interval.duration || interval.targetTime || undefined,
+          targetTime: interval.targetTime || undefined,
+          paceType: (isVo2MaxPercentage ? 'vo2max_percentage' : 'fixed') as 'fixed' | 'vo2max_percentage',
+          targetSpeed: isVo2MaxPercentage ? undefined : (interval.targetSpeed || ''),
+          vo2maxPercentage: isVo2MaxPercentage ? vo2MaxValue : undefined,
+          description: interval.description || '',
+          intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
+          recoveryTime: interval.recoveryTime || '00:00'
+        };
+      })
     }));
   };
 

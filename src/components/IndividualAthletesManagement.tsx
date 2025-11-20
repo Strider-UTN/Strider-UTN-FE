@@ -79,7 +79,64 @@ interface AthleteProfile {
   status: 'Activo' | 'Lesionado' | 'Descanso' | 'Inactivo';
   joinDate: string;
   lastActivity: string;
+  daysSinceLastWorkout?: number; // Días desde el último entrenamiento completado
+  trainingStartDate?: string; // Fecha de inicio de entrenamiento (formato: YYYY-MM)
+  vo2Max?: string; // Velocidad máxima por km en formato mm:ss (ejemplo: "03:30")
 }
+
+// Función para calcular años y meses de experiencia desde TrainingStartDate
+const calculateExperience = (trainingStartDate?: string): { years: number; months: number } | null => {
+  if (!trainingStartDate) {
+    return null;
+  }
+
+  try {
+    // Parsear formato YYYY-MM y crear fecha con día 1
+    const [year, month] = trainingStartDate.split('-').map(Number);
+    const startDate = new Date(year, month - 1, 1);
+    const today = new Date();
+
+    let years = today.getFullYear() - startDate.getFullYear();
+    let months = today.getMonth() - startDate.getMonth();
+
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    // Si el día de hoy es menor que el día de inicio, restar un mes
+    if (today.getDate() < startDate.getDate()) {
+      months--;
+      if (months < 0) {
+        years--;
+        months += 12;
+      }
+    }
+
+    return { years: Math.max(0, years), months: Math.max(0, months) };
+  } catch (error) {
+    console.error('Error al calcular experiencia:', error);
+    return null;
+  }
+};
+
+// Función para formatear experiencia como texto
+const formatExperience = (trainingStartDate?: string): string => {
+  const experience = calculateExperience(trainingStartDate);
+  if (!experience) {
+    return '-';
+  }
+
+  const parts: string[] = [];
+  if (experience.years > 0) {
+    parts.push(`${experience.years} ${experience.years === 1 ? 'Año' : 'Años'}`);
+  }
+  if (experience.months > 0) {
+    parts.push(`${experience.months} ${experience.months === 1 ? 'Mes' : 'Meses'}`);
+  }
+
+  return parts.length > 0 ? parts.join(' y ') : '-';
+};
 
 export function IndividualAthletesManagement() {
   const [athletes, setAthletes] = useState<AthleteProfile[]>([]);
@@ -141,7 +198,10 @@ export function IndividualAthletesManagement() {
           },
           status: 'Activo' as const,
           joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          daysSinceLastWorkout: athlete.daysSinceLastWorkout,
+          trainingStartDate: athlete.trainingStartDate,
+          vo2Max: (athlete as any).vO2Max || athlete.vo2Max // Backend retorna vO2Max (camelCase)
         }));
 
         setAthletes(mappedAthletes);
@@ -238,7 +298,10 @@ export function IndividualAthletesManagement() {
         },
         status: 'Activo' as const,
         joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        daysSinceLastWorkout: athlete.daysSinceLastWorkout,
+        trainingStartDate: athlete.trainingStartDate,
+        vo2Max: (athlete as any).vO2Max || athlete.vo2Max // Backend retorna vO2Max (camelCase)
       }));
 
       setAthletes(mappedAthletes);
@@ -632,12 +695,12 @@ export function IndividualAthletesManagement() {
                       </div>
 
                       {/* Información esencial simplificada */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                         <div className="flex items-center gap-2">
                           <Activity className="w-4 h-4 text-accent" />
                           <div>
                             <p className="text-muted-foreground">Experiencia</p>
-                            <p className="font-medium">{athlete.athleticExperience.yearsRunning} años</p>
+                            <p className="font-medium">{formatExperience(athlete.trainingStartDate)}</p>
                           </div>
                         </div>
 
@@ -646,6 +709,30 @@ export function IndividualAthletesManagement() {
                           <div>
                             <p className="text-muted-foreground">Vol. Semanal</p>
                             <p className="font-medium">{athlete.athleticExperience.weeklyVolume} km</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Heart className="w-4 h-4 text-red-500" />
+                          <div>
+                            <p className="text-muted-foreground">VO₂ Max</p>
+                            <p className="font-medium">{athlete.vo2Max || '-'}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                          <div>
+                            <p className="text-muted-foreground">Días desde último entrenamiento</p>
+                            <p className={`font-medium ${
+                              athlete.daysSinceLastWorkout != null && athlete.daysSinceLastWorkout > 5
+                                ? 'text-orange-600 dark:text-orange-400 font-semibold'
+                                : ''
+                            }`}>
+                              {athlete.daysSinceLastWorkout != null 
+                                ? `${athlete.daysSinceLastWorkout} ${athlete.daysSinceLastWorkout === 1 ? 'día' : 'días'}`
+                                : '-'}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -839,8 +926,8 @@ export function IndividualAthletesManagement() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Años corriendo:</span>
-                      <span className="font-medium">{athleteForDetails.athleticExperience.yearsRunning} años</span>
+                      <span className="text-muted-foreground">Experiencia:</span>
+                      <span className="font-medium">{formatExperience(athleteForDetails.trainingStartDate)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Vol. semanal:</span>

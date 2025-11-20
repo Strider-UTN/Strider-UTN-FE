@@ -268,12 +268,17 @@ export function IntervalList({
                         
                         {/* Detalles */}
                         <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
-                          {intervalAny.targetSpeed && (
+                          {intervalAny.paceType === 'vo2max_percentage' && intervalAny.vo2maxPercentage ? (
+                            <span className="flex items-center gap-1">
+                              <span className="font-medium">Velocidad:</span>
+                              {intervalAny.vo2maxPercentage}% VO₂ Max
+                            </span>
+                          ) : intervalAny.targetSpeed ? (
                             <span className="flex items-center gap-1">
                               <span className="font-medium">Velocidad:</span>
                               {intervalAny.targetSpeed}/km
                             </span>
-                          )}
+                          ) : null}
                           
                           {interval.recoveryTime && interval.recoveryTime !== '0:00' && (
                             <span className="flex items-center gap-1">

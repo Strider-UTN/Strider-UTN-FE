@@ -177,15 +177,59 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Crear un mapa de workouts por fecha
-    const workoutsByDate = new Map<string, PerformanceData>();
+    // Crear un mapa de workouts por fecha, agrupando múltiples sesiones del mismo día
+    const workoutsByDate = new Map<string, PerformanceData[]>();
     workouts.forEach(workout => {
       // Extraer solo la parte de fecha (YYYY-MM-DD) sin conversión de zona horaria
       const dateKey = extractDateOnly(workout.date);
-      workoutsByDate.set(dateKey, transformWorkoutToPerformanceData(workout));
+      const performanceData = transformWorkoutToPerformanceData(workout);
+      
+      if (!workoutsByDate.has(dateKey)) {
+        workoutsByDate.set(dateKey, []);
+      }
+      workoutsByDate.get(dateKey)!.push(performanceData);
     });
     
-    console.log('📅 Workouts mapeados por fecha:', workoutsByDate.size, 'días con entrenamientos');
+    // Consolidar múltiples workouts del mismo día
+    const consolidatedWorkoutsByDate = new Map<string, PerformanceData>();
+    workoutsByDate.forEach((dayWorkouts, dateKey) => {
+      if (dayWorkouts.length === 1) {
+        // Si solo hay un workout, usar directamente
+        consolidatedWorkoutsByDate.set(dateKey, dayWorkouts[0]);
+      } else {
+        // Si hay múltiples workouts, consolidar las métricas
+        const totalDistance = dayWorkouts.reduce((sum, w) => sum + w.distance, 0);
+        const totalDuration = dayWorkouts.reduce((sum, w) => sum + w.duration, 0);
+        const totalLoad = dayWorkouts.reduce((sum, w) => sum + w.load, 0);
+        
+        // Calcular ritmo promedio ponderado por distancia
+        const totalPaceMinutes = dayWorkouts.reduce((sum, w) => {
+          // pace está en min/km, multiplicar por distancia para obtener minutos totales
+          return sum + (w.pace * w.distance);
+        }, 0);
+        const avgPace = totalDistance > 0 ? totalPaceMinutes / totalDistance : 0;
+        
+        // Calcular frecuencia cardíaca promedio ponderada por duración
+        const totalHRMinutes = dayWorkouts.reduce((sum, w) => sum + (w.heartRate * w.duration), 0);
+        const avgHeartRate = totalDuration > 0 ? totalHRMinutes / totalDuration : 0;
+        
+        // Tomar el máximo de maxHeartRate
+        const maxHeartRate = Math.max(...dayWorkouts.map(w => w.maxHeartRate));
+        
+        consolidatedWorkoutsByDate.set(dateKey, {
+          date: dateKey,
+          distance: Math.round(totalDistance * 100) / 100,
+          pace: Math.round(avgPace * 100) / 100,
+          heartRate: Math.round(avgHeartRate),
+          maxHeartRate: Math.round(maxHeartRate),
+          elevation: 0,
+          duration: Math.round(totalDuration),
+          load: Math.round(totalLoad * 10) / 10
+        });
+      }
+    });
+    
+    console.log('📅 Workouts mapeados por fecha:', consolidatedWorkoutsByDate.size, 'días con entrenamientos');
     
     // Crear array con todos los días del período
     const performanceData: PerformanceData[] = [];
@@ -195,8 +239,8 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
       const dateKey = date.toISOString().split('T')[0];
       
       // Si hay workout para este día, usar esos datos, sino crear entrada vacía
-      if (workoutsByDate.has(dateKey)) {
-        performanceData.push(workoutsByDate.get(dateKey)!);
+      if (consolidatedWorkoutsByDate.has(dateKey)) {
+        performanceData.push(consolidatedWorkoutsByDate.get(dateKey)!);
       } else {
         performanceData.push({
           date: dateKey,

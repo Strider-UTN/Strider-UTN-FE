@@ -240,6 +240,20 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
     setIsSubmitting(true);
 
     try {
+      // Validar que la fecha de inicio no sea anterior al día de hoy
+      if (formData.startDate) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const selectedDate = new Date(`${formData.startDate}T00:00:00Z`);
+        selectedDate.setHours(0, 0, 0, 0);
+        
+        if (selectedDate < today) {
+          toast.error('La fecha de inicio no puede ser anterior al día de hoy');
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
       // Preparar fechas en formato ISO
       const startDateUtc = formData.startDate 
         ? new Date(`${formData.startDate}T00:00:00Z`).toISOString()
@@ -474,8 +488,12 @@ export function CreatePlanningModal({ isOpen, onClose, onSubmit, athletes = [], 
                       type="date"
                       value={formData.startDate}
                       onChange={(e) => setFormData(prev => ({ ...prev, startDate: e.target.value }))}
+                      min={new Date().toISOString().split('T')[0]}
                       required
                     />
+                    <p className="text-xs text-muted-foreground">
+                      La fecha de inicio no puede ser anterior al día de hoy
+                    </p>
                   </div>
 
                   <div className="space-y-2">

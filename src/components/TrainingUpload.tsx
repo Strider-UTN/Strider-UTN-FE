@@ -18,8 +18,20 @@ import { format, addDays, parse, isValid } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'motion/react';
-import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
 import { CompletedWorkoutService, CreateCompletedWorkoutDto } from '../services/completedWorkoutService';
+import { UserService } from '../services/userService';
+
+const formatDateInput = (value: string): string => {
+  value = value.replace(/-/g, '/');
+  value = value.slice(0, 10);
+  const digitsOnly = value.replace(/[^\d]/g, '').slice(0, 8);
+  if (digitsOnly.length <= 4) return digitsOnly;
+  if (digitsOnly.length <= 6) {
+    return `${digitsOnly.slice(0, 4)}/${digitsOnly.slice(4)}`;
+  }
+  return `${digitsOnly.slice(0, 4)}/${digitsOnly.slice(4, 6)}/${digitsOnly.slice(6)}`;
+};
 
 interface InjuryReport {
   bodyPart: string;
@@ -216,6 +228,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   const [plannedSessions, setPlannedSessions] = useState<PlannedSession[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [sessionsWithWorkouts, setSessionsWithWorkouts] = useState<Set<string>>(new Set()); // IDs de sesiones que ya tienen workouts cargados
+  const [athleteVO2Max, setAthleteVO2Max] = useState<string | undefined>(undefined);
   
   // Garmin states
   const [isGarminConnected, setIsGarminConnected] = useState(false);
@@ -438,6 +451,97 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
   ];
 
 
+  // Cargar VO2Max del atleta
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAthleteVO2Max = async () => {
+      try {
+        const profile = await UserService.getProfile();
+        if (!isMounted) return;
+        
+        const vo2Max = (profile as any).vO2Max || profile.vO2Max;
+        if (vo2Max) {
+          setAthleteVO2Max(vo2Max);
+        }
+      } catch (error) {
+        console.error('Error al cargar VO2Max del atleta:', error);
+      }
+    };
+
+    fetchAthleteVO2Max();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Funciones para calcular ritmo desde VO2Max
+  const paceToMinutes = (paceStr: string): number => {
+    const parts = paceStr.split(':');
+    if (parts.length === 2) {
+      const minutes = parseInt(parts[0], 10);
+      const seconds = parseInt(parts[1], 10);
+      if (!Number.isNaN(minutes) && !Number.isNaN(seconds)) {
+        return minutes + seconds / 60;
+      }
+    }
+    return 0;
+  };
+
+  const minutesToPace = (minutes: number): string => {
+    const mins = Math.floor(minutes);
+    const secs = Math.round((minutes - mins) * 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const calculatePaceFromVO2Max = (vo2MaxPaceStr: string, percentage: number): string => {
+    const vo2MaxMinutes = paceToMinutes(vo2MaxPaceStr);
+    if (vo2MaxMinutes <= 0) return '';
+    
+    // Calcular velocidad del VO2Max (km/h)
+    const vo2MaxVelocity = 60 / vo2MaxMinutes;
+    
+    // Aplicar porcentaje
+    const targetVelocity = vo2MaxVelocity * (percentage / 100);
+    
+    // Convertir de vuelta a ritmo (min/km)
+    const targetPaceMinutes = 60 / targetVelocity;
+    
+    return minutesToPace(targetPaceMinutes);
+  };
+
+  const determineTargetPace = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): string | undefined => {
+    if (interval.targetSpeed) {
+      return interval.targetSpeed;
+    }
+
+    // Si es VO2Max percentage, calcular el ritmo
+    const intervalAny = interval as any;
+    const paceTypeStr = String(interval.paceType || '');
+    const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                               paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                               paceTypeStr === 'vo2MaxPercentage';
+    
+    if (isVo2MaxPercentage && intervalAny.vo2MaxPercentage && athleteVO2Max) {
+      const calculatedPace = calculatePaceFromVO2Max(athleteVO2Max, intervalAny.vo2MaxPercentage);
+      if (calculatedPace) {
+        return calculatedPace;
+      }
+    }
+
+    if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
+      return `${interval.pace} ${interval.paceType}`;
+    }
+
+    if (interval.targetTime) {
+      // Formatear targetTime si es necesario
+      return interval.targetTime;
+    }
+
+    return undefined;
+  };
+
   // Cargar sesiones planificadas cuando cambia la fecha seleccionada
   useEffect(() => {
     const loadSessionsForDate = async () => {
@@ -475,12 +579,17 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
             let totalDistanceMeters = 0;
             session.series.forEach(series => {
               if (series.intervals && series.intervals.length > 0) {
+                // Calcular la distancia base de la serie (suma de intervalos * repeticiones de intervalo)
+                let seriesBaseDistanceMeters = 0;
                 series.intervals.forEach(interval => {
                   if (interval.distance) {
-                    // interval.distance está en metros, convertir a km
-                    totalDistanceMeters += interval.distance * (interval.repetitions || 1);
+                    // interval.distance está en metros
+                    seriesBaseDistanceMeters += interval.distance * (interval.repetitions || 1);
                   }
                 });
+                // Multiplicar por las repeticiones de la serie
+                const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
+                totalDistanceMeters += seriesBaseDistanceMeters * seriesRepetitions;
               }
             });
             estimatedDistance = totalDistanceMeters / 1000; // Convertir metros a km
@@ -533,14 +642,11 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
           let plannedPace = 'N/A';
           if (session.series && session.series.length > 0) {
             const firstInterval = session.series[0]?.intervals?.[0];
-            if (firstInterval?.targetSpeed) {
-              // targetSpeed ya viene en formato mm:ss/km
-              plannedPace = firstInterval.targetSpeed;
-            } else if (firstInterval?.pace) {
-              // pace viene como número decimal (min/km)
-              const minutes = Math.floor(firstInterval.pace);
-              const seconds = Math.round((firstInterval.pace - minutes) * 60);
-              plannedPace = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            if (firstInterval) {
+              const calculatedPace = determineTargetPace(firstInterval as TrainingIntervalResponseDto, athleteVO2Max);
+              if (calculatedPace) {
+                plannedPace = calculatedPace;
+              }
             }
           }
 
@@ -559,37 +665,43 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
             planningName: session.planningId ? `Planificación ${session.planningId}` : 'Sin planificación',
             trainingSessionAthleteId: session.trainingSessionAthleteId, // ID de la relación TrainingSessionAthlete
             intervals: session.structureType === 'simple' ? (session.series?.flatMap(series => 
-              series.intervals?.map(interval => ({
-                type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
-                duration: interval.duration ? (() => {
-                  const parts = interval.duration.split(':').map(Number);
-                  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
-                  if (parts.length === 2) return parts[0] + parts[1] / 60;
-                  return 0;
-                })() : 0,
-                pace: interval.targetSpeed || (interval.pace ? `${Math.floor(interval.pace)}:${Math.round((interval.pace % 1) * 60).toString().padStart(2, '0')}` : 'N/A'),
-                intensity: interval.intensity || 'Moderada',
-                distance: interval.distance / 1000, // Convertir metros a km
-                repetitions: interval.repetitions || 1
-              })) || []
+              series.intervals?.map(interval => {
+                const calculatedPace = determineTargetPace(interval as TrainingIntervalResponseDto, athleteVO2Max);
+                return {
+                  type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
+                  duration: interval.duration ? (() => {
+                    const parts = interval.duration.split(':').map(Number);
+                    if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+                    if (parts.length === 2) return parts[0] + parts[1] / 60;
+                    return 0;
+                  })() : 0,
+                  pace: calculatedPace || 'N/A',
+                  intensity: interval.intensity || 'Moderada',
+                  distance: interval.distance / 1000, // Convertir metros a km
+                  repetitions: interval.repetitions || 1
+                };
+              }) || []
             ) || []) : undefined,
             series: session.structureType === 'advanced' ? (session.series?.map(series => ({
               name: series.name || 'Serie sin nombre',
               repetitions: series.repetitions || 1,
               recoveryBetweenSets: series.recoveryBetweenSets || '00:00',
-              intervals: series.intervals?.map(interval => ({
-                type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
-                duration: interval.duration ? (() => {
-                  const parts = interval.duration.split(':').map(Number);
-                  if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
-                  if (parts.length === 2) return parts[0] + parts[1] / 60;
-                  return 0;
-                })() : 0,
-                pace: interval.targetSpeed || (interval.pace ? `${Math.floor(interval.pace)}:${Math.round((interval.pace % 1) * 60).toString().padStart(2, '0')}` : 'N/A'),
-                intensity: interval.intensity || 'Moderada',
-                distance: interval.distance / 1000, // Convertir metros a km
-                repetitions: interval.repetitions || 1
-              })) || []
+              intervals: series.intervals?.map(interval => {
+                const calculatedPace = determineTargetPace(interval as TrainingIntervalResponseDto, athleteVO2Max);
+                return {
+                  type: interval.type === 'Recovery' ? 'rest' : 'work' as 'work' | 'rest',
+                  duration: interval.duration ? (() => {
+                    const parts = interval.duration.split(':').map(Number);
+                    if (parts.length === 3) return parts[0] * 60 + parts[1] + parts[2] / 60;
+                    if (parts.length === 2) return parts[0] + parts[1] / 60;
+                    return 0;
+                  })() : 0,
+                  pace: calculatedPace || 'N/A',
+                  intensity: interval.intensity || 'Moderada',
+                  distance: interval.distance / 1000, // Convertir metros a km
+                  repetitions: interval.repetitions || 1
+                };
+              }) || []
             })) || []) : undefined
           };
         });
@@ -647,7 +759,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
     };
 
     loadSessionsForDate();
-  }, [selectedDate, sessionId]);
+  }, [selectedDate, sessionId, athleteVO2Max]);
 
   // Función para obtener las sesiones planificadas para la fecha seleccionada
   // Filtra las sesiones que ya tienen workouts cargados
