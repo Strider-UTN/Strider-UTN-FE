@@ -307,9 +307,9 @@ export function SessionRetroalimentacionModal({
   };
 
   // Función helper para calcular el ritmo en formato mm:ss/km
-  const calculatePace = (distanceKm: number, durationSeconds: number): string => {
-    if (distanceKm === 0 || durationSeconds === 0) return '00:00/km';
-    const secondsPerKm = durationSeconds / distanceKm;
+  const calculatePace = (distance: number, durationSeconds: number): string => {
+    if (distance === 0 || durationSeconds === 0) return '00:00/km';
+    const secondsPerKm = durationSeconds  / (distance / 1000);
     const minutes = Math.floor(secondsPerKm / 60);
     const seconds = Math.round(secondsPerKm % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
@@ -318,7 +318,7 @@ export function SessionRetroalimentacionModal({
   // Función helper para formatear duración de segundos a mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.round(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
@@ -900,7 +900,7 @@ export function SessionRetroalimentacionModal({
                       <div className="grid grid-cols-2 gap-3 text-sm">
                         <div>
                           <span className="text-muted-foreground">Distancia:</span>
-                          <p className="font-medium">{actualSession.actualDistance} km</p>
+                          <p className="font-medium">{(actualSession.actualDistance / 1000).toFixed(1)} km</p>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Duración:</span>
@@ -908,7 +908,7 @@ export function SessionRetroalimentacionModal({
                         </div>
                         <div>
                           <span className="text-muted-foreground">Ritmo:</span>
-                          <p className="font-medium">{actualSession.actualPace}</p>
+                          <p className="font-medium">{calculatePace(actualSession.actualDistance, actualSession.actualDuration * 60)}</p>
                         </div>
                         {actualSession.heartRate && (
                           <div>
@@ -917,10 +917,10 @@ export function SessionRetroalimentacionModal({
                           </div>
                         )}
                       </div>
-                      {actualSession.comments && (
+                      {actualSession.notes && (
                         <div className="text-sm">
                           <span className="text-muted-foreground">Comentarios:</span>
-                          <p className="mt-1">{actualSession.comments}</p>
+                          <p className="mt-1">{actualSession.notes}</p>
                         </div>
                       )}
                     </CardContent>
@@ -949,7 +949,7 @@ export function SessionRetroalimentacionModal({
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Distancia</p>
-                      <p className="font-medium">{calculateActualDistance().toFixed(2)} km</p>
+                      <p className="font-medium">{(calculateActualDistance() / 1000).toFixed(2)} km</p>
                     </div>
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Ritmo</p>
@@ -1241,7 +1241,7 @@ export function SessionRetroalimentacionModal({
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Distancia:</span>
-                            <p className="font-medium">{lap.distance.toFixed(2)} km</p>
+                            <p className="font-medium">{(lap.distance / 1000).toFixed(2)} km</p>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Duración:</span>

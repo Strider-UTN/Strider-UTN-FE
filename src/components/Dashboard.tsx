@@ -44,7 +44,8 @@ import {
   Upload,
   Heart,
   Mail,
-  UserPlus
+  UserPlus,
+  AlertTriangle
 } from 'lucide-react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -59,6 +60,7 @@ import {
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 import { toast } from 'sonner';
 import { AuthService } from '../services/authService';
 
@@ -137,6 +139,25 @@ type CoachActiveView =
 
 type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations';
 
+// Función helper para verificar si el perfil tiene campos incompletos
+// Función helper para verificar si el perfil tiene campos incompletos
+// Solo considera campos de información personal (excluyendo "Sobre ti" e información atlética)
+const hasIncompleteProfile = (user: User): boolean => {
+  // Campos básicos de información personal que todos deberían tener
+  const missingBasicFields = !user.phone || !user.dateOfBirth || !user.location;
+  
+  // Si es atleta, verificar altura y peso (parte de información personal, no atlética)
+  if (user.userType === 'athlete' && user.physicalProfile) {
+    const missingAthletePhysicalFields = 
+      !user.physicalProfile.height || 
+      !user.physicalProfile.weight;
+    
+    return missingBasicFields || missingAthletePhysicalFields;
+  }
+  
+  return missingBasicFields;
+};
+
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
   const [coachActiveView, setCoachActiveView] = useState<CoachActiveView>('my-athletes');
   const [athleteActiveView, setAthleteActiveView] = useState<AthleteActiveView>('calendar');
@@ -148,6 +169,8 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [sessionRefreshTrigger, setSessionRefreshTrigger] = useState(0);
   const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
+  
+  const hasIncompleteProfileData = hasIncompleteProfile(user);
   
   // Estados para filtros de sedes
   const [groupNameFilter, setGroupNameFilter] = useState('');
@@ -610,14 +633,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                 Analiza el rendimiento y métricas de tus atletas por periodo
               </p>
             </div>
-            <ReportsView 
-              planningId="all"
-              athletes={[
-                { id: 'athlete1', name: 'Carlos Mendoza', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 65 },
-                { id: 'athlete2', name: 'María García', groupId: 'group1', groupName: 'Sede Madrid Centro', vo2max: 62 },
-                { id: 'athlete3', name: 'Juan López', groupId: 'group2', groupName: 'Sede Madrid Norte', vo2max: 58 }
-              ]}
-            />
+            <ReportsView />
           </div>
         );
       case 'feedback':
@@ -675,21 +691,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
       case 'performance':
         // Usar PerformanceView que carga datos reales del backend
         return (
-          <PerformanceView 
-            units={user.preferences?.units || 'metric'}
-            onUnitsChange={(units) => {
-              // Actualizar preferencias del usuario si es necesario
-              if (onUpdateUser) {
-                onUpdateUser({
-                  ...user,
-                  preferences: {
-                    ...user.preferences,
-                    units
-                  }
-                });
-              }
-            }}
-          />
+          <PerformanceView />
         );
       case 'status':
         return <AthleteStatusManagement />;
@@ -773,7 +775,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
               <div className="flex items-center gap-4">
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" className="h-10 px-3 gap-2 hover:bg-accent/10">
+                    <Button variant="ghost" className="h-10 px-3 gap-2 hover:bg-accent hover:text-accent-foreground">
                       <Avatar className="w-8 h-8">
                         <AvatarImage src={user.profileImage} alt={user.realName} />
                         <AvatarFallback className="text-xs">
@@ -781,9 +783,23 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                         </AvatarFallback>
                       </Avatar>
                       <div className="text-left hidden sm:block">
-                        <p className="text-sm font-medium leading-none">
-                          {user.firstName || user.realName.split(' ')[0]}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p className="text-sm font-medium leading-none">
+                            {user.firstName || user.realName.split(' ')[0]}
+                          </p>
+                          {hasIncompleteProfileData && (
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <AlertTriangle className="w-4 h-4 text-destructive" />
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Tu perfil tiene campos incompletos</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          )}
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {user.email}
                         </p>
@@ -809,6 +825,18 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                     <DropdownMenuItem onClick={handleProfileClick}>
                       <User className="w-4 h-4 mr-2" />
                       Mi Perfil
+                      {hasIncompleteProfileData && (
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <AlertTriangle className="w-4 h-4 ml-auto text-destructive" />
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Tu perfil tiene campos incompletos</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      )}
                     </DropdownMenuItem>
                     <DropdownMenuItem onClick={onToggleTheme}>
                       {theme === 'dark' ? (
@@ -821,7 +849,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                     <DropdownMenuSeparator />
                     <DropdownMenuItem 
                       onClick={onLogout}
-                      className="text-red-600 focus:text-red-600 focus:bg-red-50"
+                      variant="destructive"
                     >
                       <LogOut className="w-4 h-4 mr-2" />
                       Cerrar Sesión

@@ -145,6 +145,24 @@ const safeFormatYmPretty = (ym?: string, localeArg = es): string => {
   return dt ? format(dt, 'LLLL yyyy', { locale: localeArg }) : '';
 };
 
+// Función helper para verificar si el perfil tiene campos incompletos
+// Solo considera campos de información personal (excluyendo "Sobre ti" e información atlética)
+const hasIncompleteProfile = (user: User): boolean => {
+  // Campos básicos de información personal que todos deberían tener
+  const missingBasicFields = !user.phone || !user.dateOfBirth || !user.location;
+  
+  // Si es atleta, verificar altura y peso (parte de información personal, no atlética)
+  if (user.userType === 'athlete' && user.physicalProfile) {
+    const missingAthletePhysicalFields = 
+      !user.physicalProfile.height || 
+      !user.physicalProfile.weight;
+    
+    return missingBasicFields || missingAthletePhysicalFields;
+  }
+  
+  return missingBasicFields;
+};
+
 export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'light', onToggleTheme }: UserProfileProps) {
   const [formData, setFormData] = useState<User>({
     ...user,
@@ -208,6 +226,9 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
   // Estado para mes visible en los calendarios (mejor UX)
   const [dobVisibleMonth, setDobVisibleMonth] = useState<Date | undefined>(undefined);
   const [trainingVisibleMonth, setTrainingVisibleMonth] = useState<Date | undefined>(undefined);
+
+  // Calcular si el perfil está incompleto basándose en formData
+  const isProfileIncomplete = hasIncompleteProfile(formData);
 
   // Utilidades para selects de mes/año en español
   const monthNamesEs = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -644,12 +665,18 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between pr-12">
-            <div className="flex items-center">
+            <div className="flex items-center gap-2">
               <Heart className="w-5 h-5 mr-2 text-accent" />
               ¡Hola {getUserFirstName()}!
               <span className="ml-3 text-xs px-2 py-1 rounded-full border bg-muted text-muted-foreground uppercase tracking-wide">
                 {formData.userType === 'athlete' ? 'Atleta' : 'Entrenador'}
               </span>
+              {isProfileIncomplete && (
+                <Badge variant="outline" className="ml-2 border-amber-500 text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/20">
+                  <AlertTriangle className="w-3 h-3 mr-1" />
+                  Perfil incompleto
+                </Badge>
+              )}
             </div>
             {!isEditing && (
               <Button
@@ -664,7 +691,14 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
             )}
           </DialogTitle>
           <DialogDescription className="mt-2">
-            Nos alegra verte de nuevo. Aquí puedes personalizar tu información y configuración de Strider.
+            {isProfileIncomplete ? (
+              <div className="flex items-center gap-2 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="w-4 h-4" />
+                <span>Tu perfil tiene campos incompletos. Por favor, completa la información faltante.</span>
+              </div>
+            ) : (
+              'Nos alegra verte de nuevo. Aquí puedes personalizar tu información y configuración de Strider.'
+            )}
           </DialogDescription>
         </DialogHeader>
 
@@ -880,6 +914,50 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                       placeholder="Tu ciudad, país"
                     />
                   </div>
+
+                  {/* Altura y Peso - Solo para atletas */}
+                  {formData.userType === 'athlete' && (
+                    <>
+                      <div className="space-y-2">
+                        <Label htmlFor="height">Altura (cm)</Label>
+                        <Input
+                          id="height"
+                          type="number"
+                          min="0"
+                          value={formData.physicalProfile?.height || ''}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            physicalProfile: {
+                              ...prev.physicalProfile!,
+                              height: e.target.value ? parseFloat(e.target.value) : undefined
+                            }
+                          }))}
+                          disabled={!isEditing}
+                          placeholder="Ej: 175"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="weight">Peso (kg)</Label>
+                        <Input
+                          id="weight"
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={formData.physicalProfile?.weight || ''}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            physicalProfile: {
+                              ...prev.physicalProfile!,
+                              weight: e.target.value ? parseFloat(e.target.value) : undefined
+                            }
+                          }))}
+                          disabled={!isEditing}
+                          placeholder="Ej: 70.5"
+                        />
+                      </div>
+                    </>
+                  )}
 
                   <div className="space-y-2 md:col-span-2">
                     <Label htmlFor="bio">Sobre ti</Label>

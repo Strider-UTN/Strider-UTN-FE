@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -18,19 +18,15 @@ import {
   Target,
   BarChart3,
   LineChart,
-  Download
+  Download,
+  Loader2
 } from 'lucide-react';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subWeeks, subMonths, isWithinInterval } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { BarChart, Bar, LineChart as RechartsLineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-
-interface Athlete {
-  id: string;
-  name: string;
-  groupId: string;
-  groupName: string;
-  vo2max?: number;
-}
+import { CompletedWorkoutService, CompletedWorkoutResponseDto, CompletedWorkoutsGroupedByAthleteDto } from '../services/completedWorkoutService';
+import { CoachAthleteRelationshipService, AthleteResponseDto } from '../services/coachAthleteRelationshipService';
+import { toast } from 'sonner';
 
 interface TrainingSession {
   id: string;
@@ -38,6 +34,7 @@ interface TrainingSession {
   athleteId: string;
   name: string;
   type: string;
+  category?: 'Training' | 'PrepCompetition' | 'MainCompetition' | 'training' | 'prepCompetition' | 'mainCompetition';
   distance: number;
   duration: number; // minutos
   avgPace: string;
@@ -49,202 +46,106 @@ interface TrainingSession {
 }
 
 interface ReportsViewProps {
-  planningId: string;
-  athletes: Athlete[];
+  planningId?: string;
 }
 
 type PeriodType = 'week' | 'month' | 'custom' | 'last4weeks' | 'last3months';
 
-// Mock data de sesiones de entrenamiento
-const mockTrainingSessions: TrainingSession[] = [
-  {
-    id: 'session1',
-    date: '2025-01-20',
-    athleteId: 'athlete1',
-    name: 'Carrera Continua',
-    type: 'Continuo',
-    distance: 12.5,
-    duration: 68,
-    avgPace: '5:26',
-    avgHR: 145,
-    maxHR: 162,
-    plannedDistance: 12,
-    plannedDuration: 65,
-    status: 'completed'
-  },
-  {
-    id: 'session2',
-    date: '2025-01-22',
-    athleteId: 'athlete1',
-    name: 'Intervalos 1000m',
-    type: 'Intervalos',
-    distance: 10.2,
-    duration: 55,
-    avgPace: '5:23',
-    avgHR: 165,
-    maxHR: 182,
-    plannedDistance: 10,
-    plannedDuration: 55,
-    status: 'completed'
-  },
-  {
-    id: 'session3',
-    date: '2025-01-24',
-    athleteId: 'athlete1',
-    name: 'Tempo Run',
-    type: 'Tempo',
-    distance: 8.5,
-    duration: 45,
-    avgPace: '5:17',
-    avgHR: 158,
-    maxHR: 172,
-    plannedDistance: 8,
-    plannedDuration: 45,
-    status: 'completed'
-  },
-  {
-    id: 'session4',
-    date: '2025-01-26',
-    athleteId: 'athlete1',
-    name: 'Carrera Larga',
-    type: 'Continuo',
-    distance: 18.2,
-    duration: 105,
-    avgPace: '5:46',
-    avgHR: 142,
-    maxHR: 158,
-    plannedDistance: 18,
-    plannedDuration: 105,
-    status: 'completed'
-  },
-  {
-    id: 'session5',
-    date: '2025-01-15',
-    athleteId: 'athlete2',
-    name: 'Intervalos en Pista',
-    type: 'Intervalos',
-    distance: 8.5,
-    duration: 48,
-    avgPace: '5:38',
-    avgHR: 168,
-    maxHR: 185,
-    plannedDistance: 8,
-    plannedDuration: 50,
-    status: 'completed'
-  },
-  {
-    id: 'session6',
-    date: '2025-01-17',
-    athleteId: 'athlete2',
-    name: 'Rodaje Suave',
-    type: 'Recuperación',
-    distance: 6.3,
-    duration: 38,
-    avgPace: '6:02',
-    avgHR: 132,
-    maxHR: 145,
-    plannedDistance: 6,
-    plannedDuration: 40,
-    status: 'completed'
-  },
-  {
-    id: 'session7',
-    date: '2025-01-19',
-    athleteId: 'athlete2',
-    name: 'Fartlek',
-    type: 'Fartlek',
-    distance: 9.8,
-    duration: 58,
-    avgPace: '5:55',
-    avgHR: 155,
-    maxHR: 175,
-    plannedDistance: 10,
-    plannedDuration: 60,
-    status: 'partial'
-  },
-  {
-    id: 'session8',
-    date: '2025-01-21',
-    athleteId: 'athlete2',
-    name: 'Tempo 10K',
-    type: 'Tempo',
-    distance: 10.0,
-    duration: 55,
-    avgPace: '5:30',
-    avgHR: 162,
-    maxHR: 178,
-    plannedDistance: 10,
-    plannedDuration: 55,
-    status: 'completed'
-  },
-  {
-    id: 'session9',
-    date: '2025-01-13',
-    athleteId: 'athlete3',
-    name: 'Carrera Base',
-    type: 'Continuo',
-    distance: 10.5,
-    duration: 62,
-    avgPace: '5:54',
-    avgHR: 148,
-    maxHR: 165,
-    plannedDistance: 10,
-    plannedDuration: 60,
-    status: 'completed'
-  },
-  {
-    id: 'session10',
-    date: '2025-01-16',
-    athleteId: 'athlete3',
-    name: 'Series Cortas',
-    type: 'Intervalos',
-    distance: 7.2,
-    duration: 42,
-    avgPace: '5:50',
-    avgHR: 170,
-    maxHR: 188,
-    plannedDistance: 7,
-    plannedDuration: 42,
-    status: 'completed'
-  },
-  {
-    id: 'session11',
-    date: '2025-01-18',
-    athleteId: 'athlete3',
-    name: 'Rodaje Medio',
-    type: 'Continuo',
-    distance: 12.0,
-    duration: 72,
-    avgPace: '6:00',
-    avgHR: 145,
-    maxHR: 160,
-    plannedDistance: 12,
-    plannedDuration: 72,
-    status: 'completed'
-  },
-  {
-    id: 'session12',
-    date: '2025-01-23',
-    athleteId: 'athlete3',
-    name: 'Cuestas',
-    type: 'Cuestas',
-    distance: 8.5,
-    duration: 50,
-    avgPace: '5:52',
-    avgHR: 165,
-    maxHR: 180,
-    plannedDistance: 8.5,
-    plannedDuration: 50,
-    status: 'completed'
-  }
-];
+// Función para calcular el ritmo promedio en formato mm:ss
+// El backend devuelve distance en km y duration en segundos
+const calculatePace = (distanceKm: number, durationSeconds: number): string => {
+  if (distanceKm === 0 || durationSeconds === 0) return '0:00';
+  const paceSecondsPerKm = durationSeconds / distanceKm;
+  const minutes = Math.floor(paceSecondsPerKm / 60);
+  const seconds = Math.round(paceSecondsPerKm % 60);
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+};
 
-export function ReportsView({ planningId, athletes }: ReportsViewProps) {
+// Función para obtener el tipo de entrenamiento desde el nombre
+const getTrainingType = (name: string): string => {
+  const lowerName = name.toLowerCase();
+  if (lowerName.includes('intervalo') || lowerName.includes('serie')) return 'Intervalos';
+  if (lowerName.includes('tempo')) return 'Tempo';
+  if (lowerName.includes('fartlek')) return 'Fartlek';
+  if (lowerName.includes('cuesta')) return 'Cuestas';
+  if (lowerName.includes('recuperación') || lowerName.includes('rodaje')) return 'Recuperación';
+  return 'Continuo';
+};
+
+// Función para formatear la categoría a texto legible
+const formatCategory = (category?: string): string => {
+  if (!category) return 'Entrenamiento';
+  const normalized = category.toLowerCase();
+  if (normalized === 'training') return 'Entrenamiento';
+  if (normalized === 'prepcompetition') return 'Competición Preparatoria';
+  if (normalized === 'maincompetition') return 'Competencia';
+  return 'Entrenamiento'; // Default
+};
+
+// Función para transformar workouts del backend al formato esperado
+// Siguiendo el mismo patrón que AthletePerformanceView
+const transformWorkoutToSession = (workout: CompletedWorkoutResponseDto, athleteId: string): TrainingSession => {
+  // El backend entrega la distancia en metros → convertir a kilómetros (igual que en AthletePerformanceView)
+  const distanceKm = workout.distance / 1000;
+  
+  // Calcular maxHR desde los laps si están disponibles (igual que en PerformanceView)
+  let maxHR = workout.averageHR;
+  if (workout.laps && workout.laps.length > 0) {
+    const maxHRFromLaps = Math.max(...workout.laps.map(lap => lap.averageHR));
+    maxHR = Math.max(maxHR, maxHRFromLaps);
+  } else {
+    // Estimación conservadora: averageHR + 15 (igual que en PerformanceView)
+    maxHR = workout.averageHR + 15;
+  }
+
+  // Duration viene en segundos según el DTO
+  const durationMinutes = workout.duration / 60;
+
+  return {
+    id: workout.id.toString(),
+    date: workout.date,
+    athleteId: athleteId,
+    name: workout.name || workout.trainingSessionName,
+    type: getTrainingType(workout.name || workout.trainingSessionName),
+    category: workout.category,
+    distance: distanceKm, // En km
+    duration: Math.round(durationMinutes), // En minutos
+    avgPace: calculatePace(distanceKm, workout.duration), // distance en km, duration en segundos
+    avgHR: workout.averageHR,
+    maxHR: Math.round(maxHR),
+    plannedDistance: undefined, // No disponible en el DTO actual
+    plannedDuration: undefined, // No disponible en el DTO actual
+    status: workout.feedback ? 'completed' : 'completed' // Todos los workouts son completados
+  };
+};
+
+export function ReportsView({ planningId }: ReportsViewProps) {
   const [selectedAthleteId, setSelectedAthleteId] = useState<string>('all');
   const [periodType, setPeriodType] = useState<PeriodType>('last4weeks');
   const [customDateFrom, setCustomDateFrom] = useState<Date | undefined>();
   const [customDateTo, setCustomDateTo] = useState<Date | undefined>();
   const [reportView, setReportView] = useState<'overview' | 'detailed'>('overview');
+  const [athletes, setAthletes] = useState<AthleteResponseDto[]>([]);
+  const [trainingSessions, setTrainingSessions] = useState<TrainingSession[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingAthletes, setIsLoadingAthletes] = useState(false);
+
+  // Cargar atletas del coach
+  useEffect(() => {
+    const loadAthletes = async () => {
+      setIsLoadingAthletes(true);
+      try {
+        const athletesList = await CoachAthleteRelationshipService.getMyAthletes();
+        setAthletes(athletesList);
+      } catch (error) {
+        console.error('Error al cargar atletas:', error);
+        toast.error('Error al cargar la lista de atletas');
+      } finally {
+        setIsLoadingAthletes(false);
+      }
+    };
+    loadAthletes();
+  }, []);
 
   // Calcular rango de fechas según el tipo de periodo
   const dateRange = useMemo(() => {
@@ -281,25 +182,76 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
     }
   }, [periodType, customDateFrom, customDateTo]);
 
-  // Filtrar sesiones según atleta y rango de fechas
+  // Cargar workouts del backend cuando cambian los filtros
+  useEffect(() => {
+    const loadWorkouts = async () => {
+      if (!dateRange.from || !dateRange.to) {
+        // Si no hay rango de fechas válido, limpiar las sesiones
+        setTrainingSessions([]);
+        return;
+      }
+
+      setIsLoading(true);
+      // Limpiar sesiones anteriores mientras se cargan las nuevas para evitar mostrar datos incorrectos
+      setTrainingSessions([]);
+      
+      try {
+        // Formatear fechas correctamente: startDate a las 00:00, endDate a las 23:59
+        const startDateObj = new Date(dateRange.from);
+        startDateObj.setHours(0, 0, 0, 0);
+        const startDate = format(startDateObj, 'yyyy-MM-dd');
+        
+        const endDateObj = new Date(dateRange.to);
+        endDateObj.setHours(23, 59, 59, 999);
+        const endDate = format(endDateObj, 'yyyy-MM-dd');
+
+        const filters: {
+          planningId?: number;
+          athleteId?: number;
+          startDate: string;
+          endDate: string;
+        } = {
+          startDate,
+          endDate
+        };
+
+        if (planningId && planningId !== 'all') {
+          filters.planningId = parseInt(planningId);
+        }
+
+        if (selectedAthleteId !== 'all') {
+          filters.athleteId = parseInt(selectedAthleteId);
+        }
+
+        const groupedWorkouts = await CompletedWorkoutService.getForCoachWithFiltersGroupedByAthlete(filters);
+        
+        // Transformar workouts agrupados a sesiones planas
+        const sessions: TrainingSession[] = [];
+        groupedWorkouts.forEach(group => {
+          group.workouts.forEach(workout => {
+            sessions.push(transformWorkoutToSession(workout, group.athleteId.toString()));
+          });
+        });
+
+        setTrainingSessions(sessions);
+      } catch (error) {
+        console.error('Error al cargar workouts:', error);
+        toast.error('Error al cargar los entrenamientos');
+        // En caso de error, asegurarse de que las sesiones estén vacías
+        setTrainingSessions([]);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadWorkouts();
+  }, [dateRange.from, dateRange.to, selectedAthleteId, planningId]);
+
+  // Las sesiones ya vienen filtradas del backend por atleta y rango de fechas
+  // No necesitamos filtrar nuevamente en el frontend
   const filteredSessions = useMemo(() => {
-    let sessions = mockTrainingSessions;
-
-    // Filtrar por atleta
-    if (selectedAthleteId !== 'all') {
-      sessions = sessions.filter(s => s.athleteId === selectedAthleteId);
-    }
-
-    // Filtrar por rango de fechas
-    if (dateRange.from && dateRange.to) {
-      sessions = sessions.filter(s => {
-        const sessionDate = new Date(s.date);
-        return isWithinInterval(sessionDate, { start: dateRange.from!, end: dateRange.to! });
-      });
-    }
-
-    return sessions;
-  }, [selectedAthleteId, dateRange]);
+    return trainingSessions;
+  }, [trainingSessions]);
 
   // Calcular métricas agregadas
   const metrics = useMemo(() => {
@@ -332,10 +284,23 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
       ? Math.round((totalDistance / plannedDistance) * 100)
       : 100;
 
-    // Distribución por tipo de entrenamiento
-    const typeDistribution: Record<string, number> = {};
+    // Distribución por categoría (Entrenamientos, Competiciones Preparatorias, Competencias)
+    const categoryDistribution: Record<string, number> = {
+      'Entrenamientos': 0,
+      'Competiciones Preparatorias': 0,
+      'Competencias': 0
+    };
     filteredSessions.forEach(s => {
-      typeDistribution[s.type] = (typeDistribution[s.type] || 0) + 1;
+      // Normalizar la categoría: el backend devuelve en camelCase (training, prepCompetition, mainCompetition)
+      // Convertimos a minúsculas para normalizar la comparación
+      const category = s.category?.toLowerCase() || 'training';
+      if (category === 'training') {
+        categoryDistribution['Entrenamientos']++;
+      } else if (category === 'prepcompetition') {
+        categoryDistribution['Competiciones Preparatorias']++;
+      } else if (category === 'maincompetition') {
+        categoryDistribution['Competencias']++;
+      }
     });
 
     return {
@@ -346,7 +311,7 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
       avgPace,
       avgHR,
       completionRate,
-      typeDistribution
+      categoryDistribution
     };
   }, [filteredSessions]);
 
@@ -371,20 +336,142 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
     return Object.values(weekMap).sort((a, b) => a.week.localeCompare(b.week));
   }, [filteredSessions]);
 
-  // Datos para gráfico de distribución por tipo
-  const typeDistributionData = useMemo(() => {
-    return Object.entries(metrics.typeDistribution).map(([type, count]) => ({
-      name: type,
-      value: count
-    }));
-  }, [metrics.typeDistribution]);
+  // Datos para gráfico de distribución por categoría
+  const categoryDistributionData = useMemo(() => {
+    return Object.entries(metrics.categoryDistribution)
+      .filter(([_, count]) => count > 0) // Solo mostrar categorías con datos
+      .map(([category, count]) => ({
+        name: category,
+        value: count
+      }));
+  }, [metrics.categoryDistribution]);
 
   // Colores para el gráfico de distribución
   const COLORS = ['#06b6d4', '#0891b2', '#0e7490', '#155e75', '#164e63', '#1e293b'];
 
   const selectedAthlete = selectedAthleteId === 'all' 
     ? null 
-    : athletes.find(a => a.id === selectedAthleteId);
+    : athletes.find(a => a.id.toString() === selectedAthleteId);
+
+  // Función para exportar datos a CSV
+  const handleExportToCSV = () => {
+    if (filteredSessions.length === 0) {
+      toast.error('No hay datos para exportar');
+      return;
+    }
+
+    // Crear encabezados del CSV
+    const headers = [
+      'Fecha',
+      ...(selectedAthleteId === 'all' ? ['Atleta'] : []),
+      'Sesión',
+      'Categoría',
+      'Distancia (km)',
+      'Duración (min)',
+      'Ritmo (min/km)',
+      'FC Promedio (bpm)',
+      'FC Máxima (bpm)',
+      'Estado'
+    ];
+
+    // Crear filas de datos
+    const rows = filteredSessions.map(session => {
+      const athlete = athletes.find(a => a.id.toString() === session.athleteId);
+      const row = [
+        format(new Date(session.date), 'yyyy-MM-dd'),
+        ...(selectedAthleteId === 'all' ? [athlete?.name || 'Desconocido'] : []),
+        session.name,
+        formatCategory(session.category),
+        session.distance.toFixed(2),
+        session.duration.toString(),
+        session.avgPace,
+        session.avgHR?.toString() || 'N/A',
+        session.maxHR?.toString() || 'N/A',
+        session.status === 'completed' ? 'Completada' :
+        session.status === 'partial' ? 'Parcial' : 'Planificada'
+      ];
+      return row;
+    });
+
+    // Función para escapar valores CSV (manejar comas y comillas)
+    const escapeCSVValue = (value: string): string => {
+      if (value.includes(',') || value.includes('"') || value.includes('\n')) {
+        return `"${value.replace(/"/g, '""')}"`;
+      }
+      return value;
+    };
+
+    // Construir el contenido CSV
+    let csvContent = '';
+
+    // Agregar información del reporte al inicio
+    csvContent += 'REPORTE DE ENTRENAMIENTOS\n';
+    csvContent += `Periodo: ${dateRange.from ? format(dateRange.from, 'dd/MM/yyyy', { locale: es }) : 'N/A'} - ${dateRange.to ? format(dateRange.to, 'dd/MM/yyyy', { locale: es }) : 'N/A'}\n`;
+    if (selectedAthlete) {
+      csvContent += `Atleta: ${selectedAthlete.name}\n`;
+    } else {
+      csvContent += 'Atleta: Todos los atletas\n';
+    }
+    csvContent += '\n';
+
+    // Agregar métricas resumidas
+    csvContent += 'MÉTRICAS RESUMIDAS\n';
+    csvContent += `Total Sesiones,${metrics.totalSessions}\n`;
+    csvContent += `Sesiones Completadas,${metrics.completedSessions}\n`;
+    csvContent += `Distancia Total (km),${metrics.totalDistance.toFixed(2)}\n`;
+    csvContent += `Duración Total (horas),${(metrics.totalDuration / 60).toFixed(2)}\n`;
+    csvContent += `Ritmo Promedio (min/km),${metrics.avgPace}\n`;
+    csvContent += `FC Promedio (bpm),${metrics.avgHR || 'N/A'}\n`;
+    csvContent += `Cumplimiento,${metrics.completionRate}%\n`;
+    csvContent += '\n';
+
+    // Agregar distribución por categoría
+    csvContent += 'DISTRIBUCIÓN POR CATEGORÍA\n';
+    Object.entries(metrics.categoryDistribution).forEach(([category, count]) => {
+      csvContent += `${category},${count}\n`;
+    });
+    csvContent += '\n';
+
+    // Agregar encabezados de la tabla
+    csvContent += headers.map(escapeCSVValue).join(',') + '\n';
+
+    // Agregar filas de datos
+    rows.forEach(row => {
+      csvContent += row.map(escapeCSVValue).join(',') + '\n';
+    });
+
+    // Crear blob y descargar
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    // Generar nombre de archivo con fecha y atleta
+    const fileName = `reporte_entrenamientos_${
+      dateRange.from ? format(dateRange.from, 'yyyy-MM-dd') : 'all'
+    }_${
+      dateRange.to ? format(dateRange.to, 'yyyy-MM-dd') : 'all'
+    }${
+      selectedAthlete ? `_${selectedAthlete.name.replace(/\s+/g, '_')}` : '_todos'
+    }.csv`;
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', fileName);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    toast.success('Reporte exportado correctamente');
+  };
+
+  if (isLoadingAthletes) {
+    return (
+      <div className="flex items-center justify-center py-12">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+        <span className="ml-3 text-muted-foreground">Cargando atletas...</span>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -413,7 +500,7 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
                     </div>
                   </SelectItem>
                   {athletes.map(athlete => (
-                    <SelectItem key={athlete.id} value={athlete.id}>
+                    <SelectItem key={athlete.id} value={athlete.id.toString()}>
                       <div className="flex items-center gap-2">
                         <User className="w-4 h-4" />
                         {athlete.name}
@@ -496,9 +583,14 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
                 </>
               )}
             </div>
-            <Button variant="outline" className="gap-2">
+            <Button 
+              variant="outline" 
+              className="gap-2"
+              onClick={handleExportToCSV}
+              disabled={filteredSessions.length === 0 || isLoading}
+            >
               <Download className="w-4 h-4" />
-              Exportar
+              Exportar CSV
             </Button>
           </div>
         </CardContent>
@@ -641,19 +733,19 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
               </CardContent>
             </Card>
 
-            {/* Gráfico de distribución por tipo */}
+            {/* Gráfico de distribución por categoría */}
             <Card>
               <CardHeader>
-                <CardTitle>Distribución por Tipo</CardTitle>
+                <CardTitle>Distribución por Categoría</CardTitle>
                 <CardDescription>
-                  Sesiones según tipo de entrenamiento
+                  Sesiones según categoría: Entrenamientos, Competiciones Preparatorias y Competencias
                 </CardDescription>
               </CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
-                      data={typeDistributionData}
+                      data={categoryDistributionData}
                       cx="50%"
                       cy="50%"
                       labelLine={false}
@@ -662,7 +754,7 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
                       fill="#8884d8"
                       dataKey="value"
                     >
-                      {typeDistributionData.map((entry, index) => (
+                      {categoryDistributionData.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
@@ -691,7 +783,7 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
                       <th className="p-3 text-left">Fecha</th>
                       {selectedAthleteId === 'all' && <th className="p-3 text-left">Atleta</th>}
                       <th className="p-3 text-left">Sesión</th>
-                      <th className="p-3 text-left">Tipo</th>
+                      <th className="p-3 text-left">Categoría</th>
                       <th className="p-3 text-right">Distancia</th>
                       <th className="p-3 text-right">Duración</th>
                       <th className="p-3 text-right">Ritmo</th>
@@ -699,20 +791,29 @@ export function ReportsView({ planningId, athletes }: ReportsViewProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredSessions.length > 0 ? (
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={selectedAthleteId === 'all' ? 8 : 7} className="p-8 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
+                            <span className="text-muted-foreground">Cargando sesiones...</span>
+                          </div>
+                        </td>
+                      </tr>
+                    ) : filteredSessions.length > 0 ? (
                       filteredSessions.map((session) => {
-                        const athlete = athletes.find(a => a.id === session.athleteId);
+                        const athlete = athletes.find(a => a.id.toString() === session.athleteId);
                         return (
                           <tr key={session.id} className="border-b">
                             <td className="p-3">
                               {format(new Date(session.date), 'dd MMM yyyy', { locale: es })}
                             </td>
                             {selectedAthleteId === 'all' && (
-                              <td className="p-3">{athlete?.name}</td>
+                              <td className="p-3">{athlete?.name || 'Desconocido'}</td>
                             )}
                             <td className="p-3 font-medium">{session.name}</td>
                             <td className="p-3">
-                              <Badge variant="outline">{session.type}</Badge>
+                              <Badge variant="outline">{formatCategory(session.category)}</Badge>
                             </td>
                             <td className="p-3 text-right">{session.distance.toFixed(1)} km</td>
                             <td className="p-3 text-right">{session.duration} min</td>
