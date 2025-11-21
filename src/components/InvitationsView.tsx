@@ -14,7 +14,8 @@ import {
   AlertCircle,
   UserCheck,
   RefreshCw,
-  Users
+  Users,
+  TrendingUp
 } from 'lucide-react';
 import { 
   CoachAthleteRelationshipService, 
@@ -26,6 +27,10 @@ import {
   GroupInvitationResponseDto,
   MyTrainingGroupResponseDto
 } from '../services/groupService';
+import { 
+  VO2MaxSuggestionService,
+  VO2MaxSuggestionResponseDto
+} from '../services/vo2MaxSuggestionService';
 import { toast } from 'sonner';
 
 interface InvitationsViewProps {
@@ -37,12 +42,14 @@ export function InvitationsView({ onInvitationResponded }: InvitationsViewProps)
   const [myCoaches, setMyCoaches] = useState<CoachResponseDto[]>([]);
   const [pendingGroupInvitations, setPendingGroupInvitations] = useState<GroupInvitationResponseDto[]>([]);
   const [myGroups, setMyGroups] = useState<MyTrainingGroupResponseDto[]>([]);
+  const [pendingVO2MaxSuggestions, setPendingVO2MaxSuggestions] = useState<VO2MaxSuggestionResponseDto[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [activeMainTab, setActiveMainTab] = useState<'coaches' | 'groups'>('coaches');
+  const [activeMainTab, setActiveMainTab] = useState<'coaches' | 'groups' | 'vo2max'>('coaches');
   const [activeCoachTab, setActiveCoachTab] = useState<'pending' | 'coaches'>('pending');
   const [activeGroupTab, setActiveGroupTab] = useState<'pending' | 'my-groups'>('pending');
   const [respondingToId, setRespondingToId] = useState<number | null>(null);
   const [respondingToGroupInvitationId, setRespondingToGroupInvitationId] = useState<number | null>(null);
+  const [respondingToVO2MaxSuggestionId, setRespondingToVO2MaxSuggestionId] = useState<number | null>(null);
 
   useEffect(() => {
     loadData();
@@ -55,17 +62,20 @@ export function InvitationsView({ onInvitationResponded }: InvitationsViewProps)
         invitations, 
         coaches,
         groupInvitations,
-        groups
+        groups,
+        vo2MaxSuggestions
       ] = await Promise.all([
         CoachAthleteRelationshipService.getPendingInvitations(),
         CoachAthleteRelationshipService.getMyCoaches('Accepted'),
         GroupService.getPendingInvitations(),
-        GroupService.getMyGroups()
+        GroupService.getMyGroups(),
+        VO2MaxSuggestionService.getPendingSuggestions().catch(() => []) // Si falla (no es atleta), devolver array vacío
       ]);
       setPendingInvitations(invitations);
       setMyCoaches(coaches);
       setPendingGroupInvitations(groupInvitations);
       setMyGroups(groups);
+      setPendingVO2MaxSuggestions(vo2MaxSuggestions);
     } catch (error) {
       console.error('Error al cargar invitaciones:', error);
       // El error ya fue manejado por el servicio
@@ -127,6 +137,24 @@ export function InvitationsView({ onInvitationResponded }: InvitationsViewProps)
     } catch (error) {
       console.error('Error al abandonar sede:', error);
       // El error ya fue manejado por el servicio
+    }
+  };
+
+  const handleRespondToVO2MaxSuggestion = async (suggestionId: number, accept: boolean) => {
+    setRespondingToVO2MaxSuggestionId(suggestionId);
+    try {
+      await VO2MaxSuggestionService.respondToSuggestion(suggestionId, accept);
+      await loadData(); // Recargar datos
+      
+      // Notificar al Dashboard para actualizar el contador del badge
+      if (onInvitationResponded) {
+        onInvitationResponded();
+      }
+    } catch (error) {
+      console.error('Error al responder sugerencia de VO2Max:', error);
+      // El error ya fue manejado por el servicio
+    } finally {
+      setRespondingToVO2MaxSuggestionId(null);
     }
   };
 
@@ -203,6 +231,24 @@ export function InvitationsView({ onInvitationResponded }: InvitationsViewProps)
             {pendingGroupInvitations.length > 0 && (
               <Badge variant="secondary" className="ml-1">
                 {pendingGroupInvitations.length}
+              </Badge>
+            )}
+          </div>
+        </button>
+        <button
+          onClick={() => setActiveMainTab('vo2max')}
+          className={`px-4 py-2 font-medium transition-colors ${
+            activeMainTab === 'vo2max'
+              ? 'border-b-2 border-primary text-primary'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            <TrendingUp className="w-4 h-4" />
+            VO2Max
+            {pendingVO2MaxSuggestions.length > 0 && (
+              <Badge variant="secondary" className="ml-1">
+                {pendingVO2MaxSuggestions.length}
               </Badge>
             )}
           </div>
@@ -575,6 +621,90 @@ export function InvitationsView({ onInvitationResponded }: InvitationsViewProps)
                         >
                           <X className="w-4 h-4 mr-2" />
                           Abandonar Sede
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))
+              )}
+            </div>
+          )}
+
+          {/* Sugerencias de VO2Max */}
+          {activeMainTab === 'vo2max' && (
+            <div className="space-y-4">
+              {pendingVO2MaxSuggestions.length === 0 ? (
+                <Card>
+                  <CardContent className="text-center py-12">
+                    <TrendingUp className="w-16 h-16 text-muted-foreground mx-auto mb-4" />
+                    <h3 className="font-medium mb-2">No hay sugerencias de VO2Max pendientes</h3>
+                    <p className="text-muted-foreground text-sm">
+                      Cuando un entrenador te sugiera una actualización de VO2Max, aparecerá aquí
+                    </p>
+                  </CardContent>
+                </Card>
+              ) : (
+                pendingVO2MaxSuggestions.map((suggestion) => (
+                  <Card key={suggestion.id} className="border-l-4 border-l-purple-500">
+                    <CardHeader>
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-4">
+                          <Avatar className="w-12 h-12">
+                            <AvatarFallback className="bg-purple-100 text-purple-700">
+                              {getInitials(suggestion.coachName)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <div>
+                            <CardTitle className="text-lg">{suggestion.coachName}</CardTitle>
+                            <CardDescription>{suggestion.coachEmail}</CardDescription>
+                            <div className="mt-2">
+                              <Badge variant="outline" className="text-sm">
+                                VO2Max sugerido: {suggestion.suggestedVO2Max}/km
+                              </Badge>
+                            </div>
+                          </div>
+                        </div>
+                        <Badge variant="outline" className="flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {formatDate(suggestion.suggestedAt)}
+                        </Badge>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {suggestion.message && (
+                        <div className="bg-muted/50 p-3 rounded-lg">
+                          <p className="text-sm text-muted-foreground mb-1">
+                            <strong>Mensaje:</strong>
+                          </p>
+                          <p className="text-sm">{suggestion.message}</p>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <Button
+                          onClick={() => handleRespondToVO2MaxSuggestion(suggestion.id, true)}
+                          className="flex-1"
+                          disabled={respondingToVO2MaxSuggestionId === suggestion.id}
+                        >
+                          {respondingToVO2MaxSuggestionId === suggestion.id ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <Check className="w-4 h-4 mr-2" />
+                          )}
+                          Aceptar
+                        </Button>
+                        <Button
+                          onClick={() => handleRespondToVO2MaxSuggestion(suggestion.id, false)}
+                          variant="destructive"
+                          className="flex-1"
+                          disabled={respondingToVO2MaxSuggestionId === suggestion.id}
+                        >
+                          {respondingToVO2MaxSuggestionId === suggestion.id ? (
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          ) : (
+                            <X className="w-4 h-4 mr-2" />
+                          )}
+                          Rechazar
                         </Button>
                       </div>
                     </CardContent>

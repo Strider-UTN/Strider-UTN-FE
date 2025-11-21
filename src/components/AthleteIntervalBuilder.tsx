@@ -24,7 +24,9 @@ export function AthleteIntervalBuilder({
     repetitions: 1,
     distance: 400,
     duration: '',
+    paceType: 'fixed' as 'fixed' | 'vo2max_percentage',
     targetSpeed: '',
+    vo2maxPercentage: undefined as number | undefined,
     recoveryTime: '2:00',
     description: '',
     intensity: 'moderate' as 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max'
@@ -65,9 +67,20 @@ export function AthleteIntervalBuilder({
       return;
     }
 
-    if (!newInterval.targetSpeed) {
-      toast.error('Debes especificar la velocidad');
-      return;
+    if (newInterval.trainingMode === 'distance') {
+      if (newInterval.paceType === 'fixed' && !newInterval.targetSpeed) {
+        toast.error('Debes especificar la velocidad');
+        return;
+      }
+      if (newInterval.paceType === 'vo2max_percentage' && (!newInterval.vo2maxPercentage || newInterval.vo2maxPercentage <= 0 || newInterval.vo2maxPercentage > 100)) {
+        toast.error('Debes especificar un porcentaje de VO2Max válido (1-100)');
+        return;
+      }
+    } else {
+      if (!newInterval.targetSpeed) {
+        toast.error('Debes especificar la velocidad');
+        return;
+      }
     }
 
     if (!newInterval.recoveryTime) {
@@ -85,14 +98,19 @@ export function AthleteIntervalBuilder({
         distance: newInterval.trainingMode === 'distance' ? newInterval.distance : 0,
         targetTime: newInterval.trainingMode === 'time' ? newInterval.duration : '',
         recoveryTime: newInterval.recoveryTime,
-        paceType: 'fixed',
-        pace: parseSpeed(newInterval.targetSpeed),
+        paceType: newInterval.trainingMode === 'distance' ? newInterval.paceType : 'fixed',
+        pace: newInterval.trainingMode === 'distance' && newInterval.paceType === 'fixed' 
+          ? parseSpeed(newInterval.targetSpeed) 
+          : (newInterval.trainingMode === 'time' ? parseSpeed(newInterval.targetSpeed) : undefined),
+        vo2maxPercentage: newInterval.trainingMode === 'distance' && newInterval.paceType === 'vo2max_percentage'
+          ? newInterval.vo2maxPercentage
+          : undefined,
         description: newInterval.description,
         intensity: newInterval.intensity,
         // Guardar el modo de entrenamiento como parte de la descripción interna
         trainingMode: newInterval.trainingMode,
         duration: newInterval.trainingMode === 'time' ? newInterval.duration : undefined,
-        targetSpeed: newInterval.targetSpeed
+        targetSpeed: newInterval.paceType === 'fixed' ? newInterval.targetSpeed : undefined
       } as any;
 
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -105,7 +123,9 @@ export function AthleteIntervalBuilder({
         repetitions: 1,
         distance: 400,
         duration: '',
+        paceType: 'fixed',
         targetSpeed: '',
+        vo2maxPercentage: undefined,
         recoveryTime: '2:00',
         description: '',
         intensity: 'moderate'
@@ -115,8 +135,12 @@ export function AthleteIntervalBuilder({
         ? `${newInterval.distance >= 1000 ? `${newInterval.distance/1000}K` : `${newInterval.distance}m`}`
         : newInterval.duration;
 
+      const speedText = newInterval.trainingMode === 'distance' && newInterval.paceType === 'vo2max_percentage'
+        ? `${newInterval.vo2maxPercentage}% VO₂ Max`
+        : `${newInterval.targetSpeed}/km`;
+
       toast.success(`Serie agregada exitosamente`, {
-        description: `${newInterval.repetitions} x ${modeText} a ${newInterval.targetSpeed}/km`
+        description: `${newInterval.repetitions} x ${modeText} a ${speedText}`
       });
     } catch (error) {
       toast.error('Error al agregar la serie');
@@ -157,7 +181,7 @@ export function AthleteIntervalBuilder({
       distance: interval.distance,
       targetTime: interval.targetTime || '',
       recoveryTime: interval.recoveryTime,
-      paceType: interval.paceType,
+      paceType: interval.paceType || 'fixed',
       pace: interval.pace,
       vo2maxPercentage: interval.vo2maxPercentage,
       description: interval.description || '',

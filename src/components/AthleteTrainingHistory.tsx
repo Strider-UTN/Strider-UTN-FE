@@ -166,7 +166,7 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
 
   const calculatePace = (distance: number, duration: number): string => {
     if (distance === 0 || duration === 0) return '—';
-    const paceSecondsPerKm = duration / distance;
+    const paceSecondsPerKm = duration / (distance / 1000);
     const mins = Math.floor(paceSecondsPerKm / 60);
     const secs = Math.round(paceSecondsPerKm % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}/km`;
@@ -392,7 +392,7 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
                   {workout.distance > 0 && (
                     <span>
                       <span className="text-muted-foreground">Distancia: </span>
-                      <span className="font-semibold">{workout.distance.toFixed(1)} km</span>
+                      <span className="font-semibold">{(workout.distance / 1000).toFixed(1)} km</span>
                     </span>
                   )}
                   {workout.distance > 0 && workout.duration > 0 && (
@@ -505,7 +505,7 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
                         {workout.distance > 0 && (
                           <span>
                             <span className="text-muted-foreground">Distancia: </span>
-                            <span className="font-semibold">{workout.distance.toFixed(1)} km</span>
+                            <span className="font-semibold">{(workout.distance / 1000).toFixed(1)} km</span>
                           </span>
                         )}
                         {workout.distance > 0 && workout.duration > 0 && (

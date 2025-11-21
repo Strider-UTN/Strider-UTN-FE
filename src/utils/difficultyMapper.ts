@@ -36,11 +36,14 @@ export function mapDifficultyFromBackend(difficulty: string | number | undefined
     'Moderate': 3,
     'Hard': 4,
     'VeryHard': 5,
-    // También soportar minúsculas por si acaso
-    'veryeasy': 1,
+    // También soportar camelCase (como viene del backend)
+    'veryEasy': 1,
     'easy': 2,
     'moderate': 3,
     'hard': 4,
+    'veryHard': 5,
+    // También soportar minúsculas por si acaso
+    'veryeasy': 1,
     'veryhard': 5
   };
 

@@ -35,6 +35,11 @@ export interface AthleteResponseDto {
   status: string;
   linkedSince: string;
   lastActivity?: string;
+  daysSinceLastWorkout?: number; // Días desde el último entrenamiento completado
+  trainingStartDate?: string; // Fecha de inicio de entrenamiento (formato: YYYY-MM)
+  vo2Max?: string; // Velocidad máxima por km en formato mm:ss (ejemplo: "03:30")
+  vO2Max?: string; // Alias para compatibilidad con backend (camelCase)
+  birthDate?: string; // Fecha de nacimiento completa (formato ISO)
 }
 
 export interface CoachResponseDto {

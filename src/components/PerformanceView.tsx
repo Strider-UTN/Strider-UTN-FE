@@ -10,7 +10,6 @@ import { CompletedWorkoutService, CompletedWorkoutResponseDto } from '../service
 import { toast } from 'sonner';
 
 type TimePeriod = '7d' | '30d' | '3m' | '6m' | '1y';
-type Units = 'metric' | 'imperial';
 
 interface PerformanceData {
   date: string;
@@ -65,9 +64,11 @@ const formatDateFromString = (dateString: string, format: 'short' | 'long' = 'sh
 
 // Transformar CompletedWorkoutResponseDto a PerformanceData
 const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto): PerformanceData => {
+  // El backend entrega la distancia en metros → convertir a kilómetros
+  const distanceKm = workout.distance / 1000;
   // Calcular pace: duration (segundos) / distance (km) = segundos/km, luego convertir a min/km
   const durationMinutes = workout.duration / 60;
-  const pace = workout.distance > 0 ? durationMinutes / workout.distance : 0;
+  const pace = distanceKm > 0 ? durationMinutes / distanceKm : 0;
   
   // Calcular maxHeartRate desde los laps o usar una estimación
   let maxHeartRate = workout.averageHR;
@@ -82,11 +83,11 @@ const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto)
   // Calcular carga: distancia × factor de intensidad (basado en FC promedio)
   // Factor de intensidad va de 0.5 a 1.5 aproximadamente basado en FC
   const intensityFactor = workout.averageHR > 0 ? (workout.averageHR - 120) / 80 : 0;
-  const load = workout.distance > 0 ? workout.distance * (0.5 + intensityFactor) : 0;
+  const load = distanceKm > 0 ? distanceKm * (0.5 + intensityFactor) : 0;
   
   return {
     date: extractDateOnly(workout.date), // Usar solo la parte de fecha sin zona horaria
-    distance: workout.distance,
+    distance: distanceKm,
     pace: Math.round(pace * 100) / 100,
     heartRate: workout.averageHR,
     maxHeartRate: Math.round(maxHeartRate),
@@ -97,11 +98,9 @@ const transformWorkoutToPerformanceData = (workout: CompletedWorkoutResponseDto)
 };
 
 interface PerformanceViewProps {
-  units: Units;
-  onUnitsChange: (units: Units) => void;
 }
 
-export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) {
+export function PerformanceView({}: PerformanceViewProps) {
   const [timePeriod, setTimePeriod] = useState<TimePeriod>('30d');
   const [activeTab, setActiveTab] = useState('load');
   const [workouts, setWorkouts] = useState<CompletedWorkoutResponseDto[]>([]);
@@ -177,15 +176,59 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     
-    // Crear un mapa de workouts por fecha
-    const workoutsByDate = new Map<string, PerformanceData>();
+    // Crear un mapa de workouts por fecha, agrupando múltiples sesiones del mismo día
+    const workoutsByDate = new Map<string, PerformanceData[]>();
     workouts.forEach(workout => {
       // Extraer solo la parte de fecha (YYYY-MM-DD) sin conversión de zona horaria
       const dateKey = extractDateOnly(workout.date);
-      workoutsByDate.set(dateKey, transformWorkoutToPerformanceData(workout));
+      const performanceData = transformWorkoutToPerformanceData(workout);
+      
+      if (!workoutsByDate.has(dateKey)) {
+        workoutsByDate.set(dateKey, []);
+      }
+      workoutsByDate.get(dateKey)!.push(performanceData);
     });
     
-    console.log('📅 Workouts mapeados por fecha:', workoutsByDate.size, 'días con entrenamientos');
+    // Consolidar múltiples workouts del mismo día
+    const consolidatedWorkoutsByDate = new Map<string, PerformanceData>();
+    workoutsByDate.forEach((dayWorkouts, dateKey) => {
+      if (dayWorkouts.length === 1) {
+        // Si solo hay un workout, usar directamente
+        consolidatedWorkoutsByDate.set(dateKey, dayWorkouts[0]);
+      } else {
+        // Si hay múltiples workouts, consolidar las métricas
+        const totalDistance = dayWorkouts.reduce((sum, w) => sum + w.distance, 0);
+        const totalDuration = dayWorkouts.reduce((sum, w) => sum + w.duration, 0);
+        const totalLoad = dayWorkouts.reduce((sum, w) => sum + w.load, 0);
+        
+        // Calcular ritmo promedio ponderado por distancia
+        const totalPaceMinutes = dayWorkouts.reduce((sum, w) => {
+          // pace está en min/km, multiplicar por distancia para obtener minutos totales
+          return sum + (w.pace * w.distance);
+        }, 0);
+        const avgPace = totalDistance > 0 ? totalPaceMinutes / totalDistance : 0;
+        
+        // Calcular frecuencia cardíaca promedio ponderada por duración
+        const totalHRMinutes = dayWorkouts.reduce((sum, w) => sum + (w.heartRate * w.duration), 0);
+        const avgHeartRate = totalDuration > 0 ? totalHRMinutes / totalDuration : 0;
+        
+        // Tomar el máximo de maxHeartRate
+        const maxHeartRate = Math.max(...dayWorkouts.map(w => w.maxHeartRate));
+        
+        consolidatedWorkoutsByDate.set(dateKey, {
+          date: dateKey,
+          distance: Math.round(totalDistance * 100) / 100,
+          pace: Math.round(avgPace * 100) / 100,
+          heartRate: Math.round(avgHeartRate),
+          maxHeartRate: Math.round(maxHeartRate),
+          elevation: 0,
+          duration: Math.round(totalDuration),
+          load: Math.round(totalLoad * 10) / 10
+        });
+      }
+    });
+    
+    console.log('📅 Workouts mapeados por fecha:', consolidatedWorkoutsByDate.size, 'días con entrenamientos');
     
     // Crear array con todos los días del período
     const performanceData: PerformanceData[] = [];
@@ -195,8 +238,8 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
       const dateKey = date.toISOString().split('T')[0];
       
       // Si hay workout para este día, usar esos datos, sino crear entrada vacía
-      if (workoutsByDate.has(dateKey)) {
-        performanceData.push(workoutsByDate.get(dateKey)!);
+      if (consolidatedWorkoutsByDate.has(dateKey)) {
+        performanceData.push(consolidatedWorkoutsByDate.get(dateKey)!);
       } else {
         performanceData.push({
           date: dateKey,
@@ -220,32 +263,20 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
   // Calcular métricas agregadas
   const validData = data.filter(d => d.distance > 0);
   const totalDistance = data.reduce((sum, d) => sum + d.distance, 0);
-  const trainingDays = validData.length;
+  const trainingDays = validData.length; // Días únicos con entrenamiento
+  const totalSessions = workouts.length; // Total de sesiones (puede haber múltiples por día)
   const avgLoad = validData.length > 0 ? validData.reduce((sum, d) => sum + d.load, 0) / validData.length : 0;
   const avgMaxHeartRate = validData.length > 0 ? validData.reduce((sum, d) => sum + d.maxHeartRate, 0) / validData.length : 0;
   
-  // Conversiones de unidades
-  const convertDistance = (km: number) => {
-    return units === 'metric' ? km : km * 0.621371; // km to miles
-  };
-  
+  // Formateo de unidades (solo sistema métrico)
   const formatDistance = (distance: number) => {
-    const converted = convertDistance(distance);
-    const unit = units === 'metric' ? 'km' : 'mi';
-    return `${converted.toFixed(1)} ${unit}`;
+    return `${distance.toFixed(1)} km`;
   };
   
   const formatPace = (paceMinPerKm: number) => {
-    if (units === 'imperial') {
-      const paceMinPerMile = paceMinPerKm * 1.60934;
-      const mins = Math.floor(paceMinPerMile);
-      const secs = Math.floor((paceMinPerMile - mins) * 60);
-      return `${mins}:${secs.toString().padStart(2, '0')}/mi`;
-    } else {
-      const mins = Math.floor(paceMinPerKm);
-      const secs = Math.floor((paceMinPerKm - mins) * 60);
-      return `${mins}:${secs.toString().padStart(2, '0')}/km`;
-    }
+    const mins = Math.floor(paceMinPerKm);
+    const secs = Math.floor((paceMinPerKm - mins) * 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}/km`;
   };
 
   const formatDuration = (minutes: number) => {
@@ -284,16 +315,6 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
         </div>
         
         <div className="flex flex-col sm:flex-row gap-3">
-          <Select value={units} onValueChange={(value: Units) => onUnitsChange(value)}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="metric">Métrico</SelectItem>
-              <SelectItem value="imperial">Imperial</SelectItem>
-            </SelectContent>
-          </Select>
-          
           <Select value={timePeriod} onValueChange={(value: TimePeriod) => setTimePeriod(value)}>
             <SelectTrigger className="w-40">
               <SelectValue />
@@ -338,16 +359,24 @@ export function PerformanceView({ units, onUnitsChange }: PerformanceViewProps) 
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Días de Entrenamiento</CardTitle>
+            <CardTitle className="text-sm font-medium">Sesiones y Días</CardTitle>
             <Activity className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-primary">
-              {trainingDays}
+            <div className="space-y-1">
+              <div className="text-2xl font-bold text-primary">
+                {totalSessions}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Sesiones completadas
+              </p>
+              <div className="text-xl font-semibold text-primary/80 pt-1">
+                {trainingDays}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Días entrenados
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Sesiones completadas
-            </p>
           </CardContent>
         </Card>
 

@@ -24,6 +24,7 @@ import {
   Activity,
   Heart,
   Users,
+  User,
   UserPlus,
   Send,
   Eye,
@@ -49,6 +50,7 @@ interface AthleteProfile {
   email: string;
   phone: string;
   birthYear: number;
+  birthDate?: string; // Fecha de nacimiento completa (formato ISO)
   height: number; // cm
   weight: number; // kg
   emergencyContact: {
@@ -79,7 +81,64 @@ interface AthleteProfile {
   status: 'Activo' | 'Lesionado' | 'Descanso' | 'Inactivo';
   joinDate: string;
   lastActivity: string;
+  daysSinceLastWorkout?: number; // Días desde el último entrenamiento completado
+  trainingStartDate?: string; // Fecha de inicio de entrenamiento (formato: YYYY-MM)
+  vo2Max?: string; // Velocidad máxima por km en formato mm:ss (ejemplo: "03:30")
 }
+
+// Función para calcular años y meses de experiencia desde TrainingStartDate
+const calculateExperience = (trainingStartDate?: string): { years: number; months: number } | null => {
+  if (!trainingStartDate) {
+    return null;
+  }
+
+  try {
+    // Parsear formato YYYY-MM y crear fecha con día 1
+    const [year, month] = trainingStartDate.split('-').map(Number);
+    const startDate = new Date(year, month - 1, 1);
+    const today = new Date();
+
+    let years = today.getFullYear() - startDate.getFullYear();
+    let months = today.getMonth() - startDate.getMonth();
+
+    if (months < 0) {
+      years--;
+      months += 12;
+    }
+
+    // Si el día de hoy es menor que el día de inicio, restar un mes
+    if (today.getDate() < startDate.getDate()) {
+      months--;
+      if (months < 0) {
+        years--;
+        months += 12;
+      }
+    }
+
+    return { years: Math.max(0, years), months: Math.max(0, months) };
+  } catch (error) {
+    console.error('Error al calcular experiencia:', error);
+    return null;
+  }
+};
+
+// Función para formatear experiencia como texto
+const formatExperience = (trainingStartDate?: string): string => {
+  const experience = calculateExperience(trainingStartDate);
+  if (!experience) {
+    return '-';
+  }
+
+  const parts: string[] = [];
+  if (experience.years > 0) {
+    parts.push(`${experience.years} ${experience.years === 1 ? 'Año' : 'Años'}`);
+  }
+  if (experience.months > 0) {
+    parts.push(`${experience.months} ${experience.months === 1 ? 'Mes' : 'Meses'}`);
+  }
+
+  return parts.length > 0 ? parts.join(' y ') : '-';
+};
 
 export function IndividualAthletesManagement() {
   const [athletes, setAthletes] = useState<AthleteProfile[]>([]);
@@ -111,12 +170,20 @@ export function IndividualAthletesManagement() {
         
         // Mapear los atletas del backend a la estructura AthleteProfile
         // Nota: El backend solo devuelve información básica, algunos campos pueden ser mock por ahora
-        const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => ({
+        const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => {
+          // Calcular birthYear desde birthDate si está disponible
+          let birthYear = 1990; // Default
+          if (athlete.birthDate) {
+            birthYear = new Date(athlete.birthDate).getFullYear();
+          }
+          
+          return {
           id: athlete.id.toString(),
           name: athlete.name,
           email: athlete.email,
           phone: athlete.phone || '+34 000 000 000',
-          birthYear: 1990, // TODO: Obtener del backend cuando esté disponible
+          birthYear: birthYear,
+          birthDate: athlete.birthDate,
           height: 175, // TODO: Obtener del backend cuando esté disponible
           weight: 70, // TODO: Obtener del backend cuando esté disponible
           emergencyContact: {
@@ -141,8 +208,13 @@ export function IndividualAthletesManagement() {
           },
           status: 'Activo' as const,
           joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
-        }));
+          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          daysSinceLastWorkout: athlete.daysSinceLastWorkout,
+          trainingStartDate: athlete.trainingStartDate,
+          vo2Max: (athlete as any).vO2Max || athlete.vo2Max, // Backend retorna vO2Max (camelCase)
+          birthDate: athlete.birthDate
+        };
+        });
 
         setAthletes(mappedAthletes);
         
@@ -238,7 +310,10 @@ export function IndividualAthletesManagement() {
         },
         status: 'Activo' as const,
         joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]
+        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+        daysSinceLastWorkout: athlete.daysSinceLastWorkout,
+        trainingStartDate: athlete.trainingStartDate,
+        vo2Max: (athlete as any).vO2Max || athlete.vo2Max // Backend retorna vO2Max (camelCase)
       }));
 
       setAthletes(mappedAthletes);
@@ -381,8 +456,23 @@ export function IndividualAthletesManagement() {
     return { text: 'Muy Alto', color: 'bg-red-100 text-red-800' };
   };
 
-  const calculateAge = (birthYear: number) => {
-    return new Date().getFullYear() - birthYear;
+  // Calcular edad desde birthDate considerando si el cumpleaños ya pasó este año
+  const calculateAge = (birthDate?: string | null): number => {
+    if (!birthDate) return 0;
+    try {
+      const today = new Date();
+      const birth = new Date(birthDate);
+      // Verificar que la fecha es válida
+      if (isNaN(birth.getTime())) return 0;
+      let age = today.getFullYear() - birth.getFullYear();
+      const monthDiff = today.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+        age--;
+      }
+      return age > 0 ? age : 0;
+    } catch {
+      return 0;
+    }
   };
 
   const getInitials = (name: string) => {
@@ -442,17 +532,31 @@ export function IndividualAthletesManagement() {
 
   // Si se está mostrando la vista de rendimiento, renderizar AthletePerformanceView
   if (showPerformanceView && athleteForPerformance) {
+    // Calcular edad desde birthDate considerando si el cumpleaños ya pasó este año
+    const calculateAge = (birthDate?: string): number => {
+      if (!birthDate) return 0;
+      const today = new Date();
+      const birth = new Date(birthDate);
+      let age = today.getFullYear() - birth.getFullYear();
+      const monthDiff = today.getMonth() - birth.getMonth();
+      if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
+        age--;
+      }
+      return age;
+    };
+
     return (
       <AthletePerformanceView
         athlete={{
           id: athleteForPerformance.id,
           name: athleteForPerformance.name,
           email: athleteForPerformance.email,
-          userType: 'athlete' as const,
-          realName: athleteForPerformance.name
+          age: calculateAge(athleteForPerformance.birthDate),
+          groupName: 'Sin grupo', // TODO: Obtener del backend cuando esté disponible
+          joinDate: athleteForPerformance.joinDate,
+          vo2Max: athleteForPerformance.vo2Max
         }}
         onBack={handleBackFromPerformance}
-        userType="coach"
       />
     );
   }
@@ -632,20 +736,50 @@ export function IndividualAthletesManagement() {
                       </div>
 
                       {/* Información esencial simplificada */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                         <div className="flex items-center gap-2">
                           <Activity className="w-4 h-4 text-accent" />
                           <div>
                             <p className="text-muted-foreground">Experiencia</p>
-                            <p className="font-medium">{athlete.athleticExperience.yearsRunning} años</p>
+                            <p className="font-medium">{formatExperience(athlete.trainingStartDate)}</p>
                           </div>
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <Activity className="w-4 h-4 text-secondary" />
+                          <User className="w-4 h-4 text-secondary" />
                           <div>
-                            <p className="text-muted-foreground">Vol. Semanal</p>
-                            <p className="font-medium">{athlete.athleticExperience.weeklyVolume} km</p>
+                            <p className="text-muted-foreground">Edad</p>
+                            <p className="font-medium">
+                              {athlete.birthDate 
+                                ? `${calculateAge(athlete.birthDate)} años` 
+                                : athlete.birthYear && athlete.birthYear > 1900
+                                  ? `${new Date().getFullYear() - athlete.birthYear} años`
+                                  : 'N/A'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Heart className="w-4 h-4 text-red-500" />
+                          <div>
+                            <p className="text-muted-foreground">VO₂ Max</p>
+                            <p className="font-medium">{athlete.vo2Max || '-'}</p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-muted-foreground" />
+                          <div>
+                            <p className="text-muted-foreground">Días desde último entrenamiento</p>
+                            <p className={`font-medium ${
+                              athlete.daysSinceLastWorkout != null && athlete.daysSinceLastWorkout > 5
+                                ? 'text-orange-600 dark:text-orange-400 font-semibold'
+                                : ''
+                            }`}>
+                              {athlete.daysSinceLastWorkout != null 
+                                ? `${athlete.daysSinceLastWorkout} ${athlete.daysSinceLastWorkout === 1 ? 'día' : 'días'}`
+                                : '-'}
+                            </p>
                           </div>
                         </div>
                       </div>
@@ -657,7 +791,7 @@ export function IndividualAthletesManagement() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleViewAthletePerformance(athlete)}
-                      className="text-accent hover:text-accent hover:bg-accent/10"
+                      className="text-primary hover:text-primary hover:bg-primary/10"
                     >
                       <Activity className="w-4 h-4 mr-1" />
                       Rendimiento
@@ -667,7 +801,7 @@ export function IndividualAthletesManagement() {
                       variant="ghost"
                       size="sm"
                       onClick={() => handleViewAthleteDetails(athlete)}
-                      className="text-primary hover:text-primary/80"
+                      className="text-primary hover:text-primary hover:bg-primary/10"
                     >
                       Ver Detalles
                     </Button>
@@ -677,7 +811,7 @@ export function IndividualAthletesManagement() {
                         <Button
                           variant="ghost"
                           size="sm"
-                          className="h-8 w-8 p-0"
+                          className="h-8 w-8 p-0 hover:bg-primary/10"
                         >
                           <MoreVertical className="w-4 h-4" />
                         </Button>
@@ -802,7 +936,13 @@ export function IndividualAthletesManagement() {
                   <CardContent className="space-y-3">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Edad:</span>
-                      <span className="font-medium">{calculateAge(athleteForDetails.birthYear)} años</span>
+                      <span className="font-medium">
+                        {athleteForDetails.birthDate 
+                          ? `${calculateAge(athleteForDetails.birthDate)} años` 
+                          : athleteForDetails.birthYear && athleteForDetails.birthYear > 1900
+                            ? `${new Date().getFullYear() - athleteForDetails.birthYear} años`
+                            : 'N/A'}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Año de nacimiento:</span>
@@ -839,8 +979,8 @@ export function IndividualAthletesManagement() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">Años corriendo:</span>
-                      <span className="font-medium">{athleteForDetails.athleticExperience.yearsRunning} años</span>
+                      <span className="text-muted-foreground">Experiencia:</span>
+                      <span className="font-medium">{formatExperience(athleteForDetails.trainingStartDate)}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Vol. semanal:</span>

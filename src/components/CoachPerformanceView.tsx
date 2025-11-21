@@ -7,7 +7,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Users, TrendingUp, Activity, Zap, User } from 'lucide-react';
 import { AthletePerformanceView } from './AthletePerformanceView';
 
-type Units = 'metric' | 'imperial';
 
 interface AthleteData {
   id: string;
@@ -98,23 +97,16 @@ const mockGroups: TrainingGroup[] = [
 ];
 
 interface CoachPerformanceViewProps {
-  units: Units;
-  onUnitsChange: (units: Units) => void;
 }
 
-export function CoachPerformanceView({ units, onUnitsChange }: CoachPerformanceViewProps) {
+export function CoachPerformanceView({}: CoachPerformanceViewProps) {
   const [selectedAthlete, setSelectedAthlete] = useState<AthleteData | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
 
-  const convertDistance = (km: number) => {
-    return units === 'metric' ? km : km * 0.621371;
-  };
-  
+  // Formateo de unidades (solo sistema métrico)
   const formatDistance = (distance: number) => {
-    const converted = convertDistance(distance);
-    const unit = units === 'metric' ? 'km' : 'mi';
-    return `${converted.toFixed(1)} ${unit}`;
+    return `${distance.toFixed(1)} km`;
   };
 
   // Filtrar atletas para estadísticas (por agrupación y estado)
@@ -152,7 +144,6 @@ export function CoachPerformanceView({ units, onUnitsChange }: CoachPerformanceV
     return (
       <AthletePerformanceView
         athlete={selectedAthlete}
-        units={units}
         onBack={() => setSelectedAthlete(null)}
       />
     );
@@ -196,15 +187,6 @@ export function CoachPerformanceView({ units, onUnitsChange }: CoachPerformanceV
             </SelectContent>
           </Select>
           
-          <Select value={units} onValueChange={(value: Units) => onUnitsChange(value)}>
-            <SelectTrigger className="w-32">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="metric">Métrico</SelectItem>
-              <SelectItem value="imperial">Imperial</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
       </div>
 

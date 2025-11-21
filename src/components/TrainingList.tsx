@@ -72,7 +72,7 @@ export function TrainingList({ userType, refreshTrigger }: TrainingListProps) {
   const loadSessions = async () => {
     setIsLoading(true);
     try {
-      const backendSessions = await TrainingSessionService.getAllTrainingSessions();
+      const backendSessions = await trainingSessionService.getAllTrainingSessions();
       // Convertir del formato del backend al formato del frontend
       const convertedSessions = backendSessions.map(convertBackendToFrontend);
       setSessions(convertedSessions);

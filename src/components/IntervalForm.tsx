@@ -15,7 +15,9 @@ interface IntervalFormData {
   repetitions: number;
   distance: number; // Para modo distancia
   duration: string; // Para modo tiempo (formato mm:ss)
-  targetSpeed: string; // Velocidad en min/km (formato mm:ss)
+  paceType: 'fixed' | 'vo2max_percentage'; // Tipo de velocidad
+  targetSpeed: string; // Velocidad en min/km (formato mm:ss) - solo para fixed
+  vo2maxPercentage?: number; // Porcentaje de VO2Max - solo para vo2max_percentage
   recoveryTime: string;
   description: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
@@ -57,7 +59,10 @@ export function IntervalForm({ formData, onFormChange, onSubmit, isLoading = fal
     const hasValidRecovery = formData.recoveryTime.trim() !== '';
     
     if (formData.trainingMode === 'distance') {
-      return hasValidRepetitions && formData.distance >= 100 && formData.targetSpeed.trim() !== '' && hasValidRecovery;
+      const hasValidSpeed = formData.paceType === 'fixed' 
+        ? formData.targetSpeed.trim() !== ''
+        : formData.vo2maxPercentage !== undefined && formData.vo2maxPercentage > 0 && formData.vo2maxPercentage <= 100;
+      return hasValidRepetitions && formData.distance >= 100 && hasValidSpeed && hasValidRecovery;
     } else {
       return hasValidRepetitions && formData.duration.trim() !== '' && formData.targetSpeed.trim() !== '' && hasValidRecovery;
     }
@@ -74,8 +79,14 @@ export function IntervalForm({ formData, onFormChange, onSubmit, isLoading = fal
       if (formData.distance < 100) {
         errors.push('La distancia mínima es 100 metros');
       }
-      if (!formData.targetSpeed.trim()) {
-        errors.push('Debes especificar la velocidad objetivo');
+      if (formData.paceType === 'fixed') {
+        if (!formData.targetSpeed.trim()) {
+          errors.push('Debes especificar la velocidad objetivo');
+        }
+      } else if (formData.paceType === 'vo2max_percentage') {
+        if (formData.vo2maxPercentage === undefined || formData.vo2maxPercentage <= 0 || formData.vo2maxPercentage > 100) {
+          errors.push('Debes especificar un porcentaje de VO2Max válido (entre 1 y 100)');
+        }
       }
     } else {
       if (!formData.duration.trim()) {
@@ -272,6 +283,34 @@ export function IntervalForm({ formData, onFormChange, onSubmit, isLoading = fal
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="paceType">
+                    Tipo de Velocidad <span className="text-red-500">*</span>
+                  </Label>
+                  <Select
+                    value={formData.paceType}
+                    onValueChange={(value: 'fixed' | 'vo2max_percentage') => {
+                      onFormChange('paceType', value);
+                      // Resetear campos cuando cambia el tipo
+                      if (value === 'fixed') {
+                        onFormChange('vo2maxPercentage', undefined);
+                      } else {
+                        onFormChange('targetSpeed', '');
+                      }
+                    }}
+                  >
+                    <SelectTrigger id="paceType">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="fixed">Velocidad Fija</SelectItem>
+                      <SelectItem value="vo2max_percentage">% VO₂ Max</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {formData.paceType === 'fixed' ? (
+                <div className="space-y-2">
                   <Label htmlFor="targetSpeed">
                     Velocidad (min/km) <span className="text-red-500">*</span>
                   </Label>
@@ -287,7 +326,28 @@ export function IntervalForm({ formData, onFormChange, onSubmit, isLoading = fal
                     </p>
                   )}
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-2">
+                  <Label htmlFor="vo2maxPercentage">
+                    Porcentaje de VO₂ Max <span className="text-red-500">*</span>
+                  </Label>
+                  <Input
+                    id="vo2maxPercentage"
+                    type="number"
+                    min="1"
+                    max="100"
+                    placeholder="Ej: 85"
+                    value={formData.vo2maxPercentage || ''}
+                    onChange={(e) => {
+                      const value = e.target.value === '' ? undefined : parseInt(e.target.value);
+                      onFormChange('vo2maxPercentage', value);
+                    }}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Porcentaje de la velocidad máxima del atleta (1-100%)
+                  </p>
+                </div>
+              )}
             </>
           ) : (
             <>
@@ -363,7 +423,13 @@ export function IntervalForm({ formData, onFormChange, onSubmit, isLoading = fal
                   : formData.duration || '0:00'
               }
             </span>
-            {formData.targetSpeed && (
+            {formData.trainingMode === 'distance' && formData.paceType === 'fixed' && formData.targetSpeed && (
+              <span className="text-muted-foreground">• Velocidad: {formData.targetSpeed}/km</span>
+            )}
+            {formData.trainingMode === 'distance' && formData.paceType === 'vo2max_percentage' && formData.vo2maxPercentage && (
+              <span className="text-muted-foreground">• {formData.vo2maxPercentage}% VO₂ Max</span>
+            )}
+            {formData.trainingMode === 'time' && formData.targetSpeed && (
               <span className="text-muted-foreground">• Velocidad: {formData.targetSpeed}/km</span>
             )}
             {formData.recoveryTime && (

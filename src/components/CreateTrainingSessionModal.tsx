@@ -74,7 +74,9 @@ interface IntervalInSeries {
   distance?: number;
   duration?: string;
   targetTime?: string;
-  targetSpeed: string;
+  paceType: 'fixed' | 'vo2max_percentage'; // Tipo de velocidad
+  targetSpeed?: string; // ritmo en min/km - solo para fixed
+  vo2maxPercentage?: number; // Porcentaje de VO2Max - solo para vo2max_percentage
   description?: string;
   intensity: 'easy' | 'moderate' | 'hard' | 'very_hard' | 'max';
   recoveryTime?: string;
@@ -641,14 +643,14 @@ export function CreateTrainingSessionModal({
           distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
           targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
           recoveryTime: interval.recoveryTime || '00:00',
-          paceType: 'Fixed',
-          pace: interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
-          vo2MaxPercentage: undefined,
+          paceType: interval.paceType === 'fixed' ? 'Fixed' : 'Vo2MaxPercentage',
+          pace: interval.paceType === 'fixed' && interval.targetSpeed ? parseSpeed(interval.targetSpeed) : (interval.pace || undefined),
+          vo2MaxPercentage: interval.paceType === 'vo2max_percentage' ? interval.vo2maxPercentage : undefined,
           description: interval.description,
           intensity: mapIntervalIntensityToBackend(interval.intensity),
           trainingMode: mapTrainingModeToBackend(interval.trainingMode),
           duration: interval.trainingMode === 'time' ? interval.duration : undefined,
-          targetSpeed: interval.targetSpeed,
+          targetSpeed: interval.paceType === 'fixed' ? interval.targetSpeed : undefined,
           orderIndex: intervalIdx
         }))
       }));
@@ -674,7 +676,7 @@ export function CreateTrainingSessionModal({
             intensity: mapIntervalIntensityToBackend(interval.intensity),
             trainingMode: mapTrainingModeToBackend(interval.trainingMode),
             duration: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.duration,
-            targetSpeed: interval.targetSpeed,
+            targetSpeed: interval.paceType === 'fixed' ? interval.targetSpeed : undefined,
             orderIndex: idx
           }))
         }
@@ -965,7 +967,9 @@ export function CreateTrainingSessionModal({
         distance: interval.distance || undefined,
         duration: interval.duration || interval.targetTime || undefined,
         targetTime: interval.targetTime || undefined,
-        targetSpeed: interval.targetSpeed || '',
+        paceType: (interval.paceType?.toLowerCase() === 'vo2maxpercentage' ? 'vo2max_percentage' : 'fixed') as 'fixed' | 'vo2max_percentage',
+        targetSpeed: interval.paceType?.toLowerCase() === 'vo2maxpercentage' ? undefined : (interval.targetSpeed || ''),
+        vo2maxPercentage: interval.paceType?.toLowerCase() === 'vo2maxpercentage' ? interval.vo2MaxPercentage : undefined,
         description: interval.description || '',
         intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
         recoveryTime: interval.recoveryTime || '00:00'
@@ -999,14 +1003,14 @@ export function CreateTrainingSessionModal({
           distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
           targetTime: interval.trainingMode === 'time' ? interval.duration || interval.targetTime : interval.targetTime,
           recoveryTime: interval.recoveryTime || '00:00',
-          paceType: 'fixed',
-          pace: interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
-          vo2maxPercentage: undefined,
+          paceType: interval.paceType || 'fixed',
+          pace: interval.paceType === 'fixed' && interval.targetSpeed ? parseSpeed(interval.targetSpeed) : undefined,
+          vo2maxPercentage: interval.paceType === 'vo2max_percentage' ? interval.vo2maxPercentage : undefined,
           description: interval.description,
           intensity: interval.intensity,
           trainingMode: interval.trainingMode,
           duration: interval.duration,
-          targetSpeed: interval.targetSpeed,
+          targetSpeed: interval.paceType === 'fixed' ? interval.targetSpeed : undefined,
           orderIndex: intervalIndex
         });
       });

@@ -18,6 +18,7 @@ import { MesocycleService, MesocycleResponseDto } from '../services/mesocycleSer
 import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
 import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
 import { AuthService } from '../services/authService';
+import { UserService } from '../services/userService';
 import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
 import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 import { CompletedWorkoutService } from '../services/completedWorkoutService';
@@ -131,6 +132,37 @@ export function AthleteTrainingPlan() {
 
   // Obtener ID del atleta logueado
   const athleteId = AuthService.getCurrentUserId();
+  const [athleteVO2Max, setAthleteVO2Max] = useState<string | undefined>(undefined);
+
+  // Cargar VO2Max del atleta
+  useEffect(() => {
+    if (!athleteId) {
+      setAthleteVO2Max(undefined);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchAthleteVO2Max = async () => {
+      try {
+        const profile = await UserService.getProfile();
+        if (!isMounted) return;
+        
+        const vo2Max = (profile as any).vO2Max || profile.vo2Max;
+        if (vo2Max) {
+          setAthleteVO2Max(vo2Max);
+        }
+      } catch (error) {
+        console.error('Error al cargar VO2Max del atleta:', error);
+      }
+    };
+
+    fetchAthleteVO2Max();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [athleteId]);
 
   // Función helper para extraer fecha sin timezone
   const extractDateOnly = (dateString: string): string => {
@@ -1020,9 +1052,60 @@ export function AthleteTrainingPlan() {
     return 'Intervalo';
   };
 
-  const determineTargetPace = (interval: TrainingIntervalResponseDto): string | undefined => {
+  // Función para convertir ritmo en formato mm:ss a minutos decimales
+  const paceToMinutes = (paceStr: string): number => {
+    const parts = paceStr.split(':');
+    if (parts.length === 2) {
+      const minutes = parseInt(parts[0], 10);
+      const seconds = parseInt(parts[1], 10);
+      if (!Number.isNaN(minutes) && !Number.isNaN(seconds)) {
+        return minutes + seconds / 60;
+      }
+    }
+    return 0;
+  };
+
+  // Función para convertir minutos decimales a formato mm:ss
+  const minutesToPace = (minutes: number): string => {
+    const mins = Math.floor(minutes);
+    const secs = Math.round((minutes - mins) * 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Función para calcular el ritmo basado en VO2Max y porcentaje
+  const calculatePaceFromVO2Max = (vo2MaxPaceStr: string, percentage: number): string => {
+    const vo2MaxMinutes = paceToMinutes(vo2MaxPaceStr);
+    if (vo2MaxMinutes <= 0) return '';
+    
+    // Calcular velocidad del VO2Max (km/h)
+    const vo2MaxVelocity = 60 / vo2MaxMinutes;
+    
+    // Aplicar porcentaje
+    const targetVelocity = vo2MaxVelocity * (percentage / 100);
+    
+    // Convertir de vuelta a ritmo (min/km)
+    const targetPaceMinutes = 60 / targetVelocity;
+    
+    return minutesToPace(targetPaceMinutes);
+  };
+
+  const determineTargetPace = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): string | undefined => {
     if (interval.targetSpeed) {
       return interval.targetSpeed;
+    }
+
+    // Si es VO2Max percentage, calcular el ritmo
+    const intervalAny = interval as any;
+    const paceTypeStr = String(interval.paceType || '');
+    const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                               paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                               paceTypeStr === 'vo2MaxPercentage';
+    
+    if (isVo2MaxPercentage && intervalAny.vo2MaxPercentage && athleteVO2Max) {
+      const calculatedPace = calculatePaceFromVO2Max(athleteVO2Max, intervalAny.vo2MaxPercentage);
+      if (calculatedPace) {
+        return calculatedPace;
+      }
     }
 
     if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
@@ -1036,7 +1119,7 @@ export function AthleteTrainingPlan() {
     return undefined;
   };
 
-  const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto) => {
+  const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string) => {
     const repetitions = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
     const distancePerRepMeters = typeof interval.distance === 'number' ? interval.distance : undefined;
     const totalDistanceMeters = distancePerRepMeters ? distancePerRepMeters * repetitions : undefined;
@@ -1047,7 +1130,7 @@ export function AthleteTrainingPlan() {
       repetitions,
       distancePerRepMeters,
       totalDistanceMeters,
-      targetPace: determineTargetPace(interval),
+      targetPace: determineTargetPace(interval, athleteVO2Max),
       recoveryTime: interval.recoveryTime,
       intensity: mapIntervalIntensityFromBackend(interval.intensity),
       notes: interval.description,
@@ -1056,7 +1139,7 @@ export function AthleteTrainingPlan() {
     };
   };
 
-  const buildSeriesStructure = (session: TrainingSessionResponseDto) => {
+  const buildSeriesStructure = (session: TrainingSessionResponseDto, athleteVO2Max?: string) => {
     const isSimpleStructure = session.structureType?.toLowerCase() === 'simple';
     const fallbackIntervals = session.intervals ?? [];
     const hasBackendSeries = Array.isArray(session.series) && session.series.length > 0;
@@ -1078,7 +1161,7 @@ export function AthleteTrainingPlan() {
     }
 
     return backendSeries.map((series, index) => {
-      const mappedIntervals = (series.intervals ?? []).map(mapIntervalToCalendarInterval);
+      const mappedIntervals = (series.intervals ?? []).map(interval => mapIntervalToCalendarInterval(interval, athleteVO2Max));
       const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
       const baseDistance = mappedIntervals.reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
       const totalDistanceMeters = baseDistance * seriesRepetitions;
@@ -1126,15 +1209,15 @@ export function AthleteTrainingPlan() {
     return session.intervals ?? [];
   };
 
-  const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto) => {
+  const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto, athleteVO2Max?: string) => {
     const rawDate = session.date?.toString() ?? '';
     const dateString = rawDate
       ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate)
       : extractDateOnly(new Date().toISOString());
     const intervals = getIntervalsFromSession(session);
-    const series = buildSeriesStructure(session);
+    const series = buildSeriesStructure(session, athleteVO2Max);
     const simpleIntervalDetails = session.structureType?.toLowerCase() === 'simple'
-      ? intervals.map(mapIntervalToCalendarInterval)
+      ? intervals.map(interval => mapIntervalToCalendarInterval(interval, athleteVO2Max))
       : undefined;
     const totalDistanceKm = calculateSessionDistanceKm(
       series,
@@ -1203,7 +1286,7 @@ export function AthleteTrainingPlan() {
         return;
       }
       
-      const mappedSession = mapBackendSessionToCalendar(fullSession);
+      const mappedSession = mapBackendSessionToCalendar(fullSession, athleteVO2Max);
       setSelectedSessionFull(mappedSession);
       
       // Verificar si hay workout completado
@@ -1232,6 +1315,14 @@ export function AthleteTrainingPlan() {
       setIsLoadingSessionDetail(false);
     }
   };
+
+  // Recargar sesión cuando cambie athleteVO2Max y haya una sesión abierta
+  useEffect(() => {
+    if (selectedSession && athleteVO2Max && isSessionDetailOpen) {
+      handleSessionDetail(selectedSession);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [athleteVO2Max]);
 
   const handleToggleCompleted = (sessionId: string) => {
     if (completedSessions.has(sessionId)) {
@@ -2084,7 +2175,7 @@ export function AthleteTrainingPlan() {
                                       <div>
                                         Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
                                       </div>
-                                      {interval.recoveryTime && (
+                                      {interval.recoveryTime && interval.recoveryTime !== '00:00' && (
                                         <div>
                                           Recuperación: {formatDurationLabel(interval.recoveryTime)}
                                         </div>
@@ -2134,7 +2225,7 @@ export function AthleteTrainingPlan() {
                               <div>
                                 Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
                               </div>
-                              {interval.recoveryTime && (
+                              {interval.recoveryTime && interval.recoveryTime !== '00:00' && (
                                 <div>
                                   Recuperación: {formatDurationLabel(interval.recoveryTime)}
                                 </div>

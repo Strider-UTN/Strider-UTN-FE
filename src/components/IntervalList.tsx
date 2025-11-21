@@ -170,16 +170,57 @@ export function IntervalList({
                               />
                             </div>
                             <div className="space-y-2">
-                              <Label htmlFor={`edit-speed-${interval.id}`}>
-                                Velocidad (min/km)
+                              <Label htmlFor={`edit-paceType-${interval.id}`}>
+                                Tipo de Velocidad
                               </Label>
-                              <Input
-                                id={`edit-speed-${interval.id}`}
-                                placeholder="Ej: 4:30"
-                                value={editDataAny.targetSpeed || ''}
-                                onChange={(e) => onEditChange('targetSpeed', e.target.value)}
-                              />
+                              <Select
+                                value={editDataAny.paceType || 'fixed'}
+                                onValueChange={(value: 'fixed' | 'vo2max_percentage') => {
+                                  onEditChange('paceType', value);
+                                  // Resetear campos cuando cambia el tipo
+                                  if (value === 'fixed') {
+                                    onEditChange('vo2maxPercentage', undefined);
+                                  } else {
+                                    onEditChange('targetSpeed', '');
+                                  }
+                                }}
+                              >
+                                <SelectTrigger id={`edit-paceType-${interval.id}`}>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="fixed">Velocidad Fija</SelectItem>
+                                  <SelectItem value="vo2max_percentage">% VO₂ Max</SelectItem>
+                                </SelectContent>
+                              </Select>
                             </div>
+                            {editDataAny.paceType === 'vo2max_percentage' ? (
+                              <div className="space-y-2">
+                                <Label htmlFor={`edit-vo2max-${interval.id}`}>
+                                  % VO₂ Max
+                                </Label>
+                                <Input
+                                  id={`edit-vo2max-${interval.id}`}
+                                  type="number"
+                                  min="1"
+                                  max="100"
+                                  value={editDataAny.vo2maxPercentage || ''}
+                                  onChange={(e) => onEditChange('vo2maxPercentage', e.target.value ? parseInt(e.target.value) : undefined)}
+                                />
+                              </div>
+                            ) : (
+                              <div className="space-y-2">
+                                <Label htmlFor={`edit-speed-${interval.id}`}>
+                                  Velocidad (min/km)
+                                </Label>
+                                <Input
+                                  id={`edit-speed-${interval.id}`}
+                                  placeholder="Ej: 4:30"
+                                  value={editDataAny.targetSpeed || ''}
+                                  onChange={(e) => onEditChange('targetSpeed', e.target.value)}
+                                />
+                              </div>
+                            )}
                           </>
                         ) : (
                           <>
@@ -268,12 +309,17 @@ export function IntervalList({
                         
                         {/* Detalles */}
                         <div className="flex items-center gap-3 text-sm text-muted-foreground flex-wrap">
-                          {intervalAny.targetSpeed && (
+                          {intervalAny.paceType === 'vo2max_percentage' && intervalAny.vo2maxPercentage ? (
+                            <span className="flex items-center gap-1">
+                              <span className="font-medium">Velocidad:</span>
+                              {intervalAny.vo2maxPercentage}% VO₂ Max
+                            </span>
+                          ) : intervalAny.targetSpeed ? (
                             <span className="flex items-center gap-1">
                               <span className="font-medium">Velocidad:</span>
                               {intervalAny.targetSpeed}/km
                             </span>
-                          )}
+                          ) : null}
                           
                           {interval.recoveryTime && interval.recoveryTime !== '0:00' && (
                             <span className="flex items-center gap-1">

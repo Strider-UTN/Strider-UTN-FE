@@ -13,6 +13,7 @@ import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalRes
 import { mapTrainingCategoryFromBackend } from '../utils/trainingCategoryMapper';
 import { mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 import { CompletedWorkoutService } from '../services/completedWorkoutService';
+import { UserService } from '../services/userService';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 
@@ -364,9 +365,60 @@ const formatDistanceKm = (kilometers?: number): string => {
   return `${kilometers.toFixed(2)} km`;
 };
 
-const determineTargetPace = (interval: TrainingIntervalResponseDto): string | undefined => {
+// Función para convertir ritmo en formato mm:ss a minutos decimales
+const paceToMinutes = (paceStr: string): number => {
+  const parts = paceStr.split(':');
+  if (parts.length === 2) {
+    const minutes = parseInt(parts[0], 10);
+    const seconds = parseInt(parts[1], 10);
+    if (!Number.isNaN(minutes) && !Number.isNaN(seconds)) {
+      return minutes + seconds / 60;
+    }
+  }
+  return 0;
+};
+
+// Función para convertir minutos decimales a formato mm:ss
+const minutesToPace = (minutes: number): string => {
+  const mins = Math.floor(minutes);
+  const secs = Math.round((minutes - mins) * 60);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+// Función para calcular el ritmo basado en VO2Max y porcentaje
+const calculatePaceFromVO2Max = (vo2MaxPaceStr: string, percentage: number): string => {
+  const vo2MaxMinutes = paceToMinutes(vo2MaxPaceStr);
+  if (vo2MaxMinutes <= 0) return '';
+  
+  // Calcular velocidad del VO2Max (km/h)
+  const vo2MaxVelocity = 60 / vo2MaxMinutes;
+  
+  // Aplicar porcentaje
+  const targetVelocity = vo2MaxVelocity * (percentage / 100);
+  
+  // Convertir de vuelta a ritmo (min/km)
+  const targetPaceMinutes = 60 / targetVelocity;
+  
+  return minutesToPace(targetPaceMinutes);
+};
+
+const determineTargetPace = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): string | undefined => {
   if (interval.targetSpeed) {
     return interval.targetSpeed;
+  }
+
+  // Si es VO2Max percentage, calcular el ritmo
+  const intervalAny = interval as any;
+  const paceTypeStr = String(interval.paceType || '');
+  const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                             paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                             paceTypeStr === 'vo2MaxPercentage';
+  
+  if (isVo2MaxPercentage && intervalAny.vo2MaxPercentage && athleteVO2Max) {
+    const calculatedPace = calculatePaceFromVO2Max(athleteVO2Max, intervalAny.vo2MaxPercentage);
+    if (calculatedPace) {
+      return calculatedPace;
+    }
   }
 
   if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
@@ -397,7 +449,7 @@ const formatIntervalIntensityLabel = (intensity?: string): string | undefined =>
   }
 };
 
-const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto): CalendarSeriesInterval => {
+const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): CalendarSeriesInterval => {
   const repetitions = interval.repetitions && interval.repetitions > 0 ? interval.repetitions : 1;
   const distancePerRepMeters = typeof interval.distance === 'number' ? interval.distance : undefined;
   const totalDistanceMeters = distancePerRepMeters ? distancePerRepMeters * repetitions : undefined;
@@ -408,14 +460,14 @@ const mapIntervalToCalendarInterval = (interval: TrainingIntervalResponseDto): C
     repetitions,
     distancePerRepMeters,
     totalDistanceMeters,
-    targetPace: determineTargetPace(interval),
+    targetPace: determineTargetPace(interval, athleteVO2Max),
     recoveryTime: interval.recoveryTime,
     intensity: mapIntervalIntensityFromBackend(interval.intensity),
     notes: interval.description
   };
 };
 
-const buildSeriesStructure = (session: TrainingSessionResponseDto): CalendarSeries[] => {
+const buildSeriesStructure = (session: TrainingSessionResponseDto, athleteVO2Max?: string): CalendarSeries[] => {
   const isSimpleStructure = session.structureType?.toLowerCase() === 'simple';
   const fallbackIntervals = session.intervals ?? [];
   const hasBackendSeries = Array.isArray(session.series) && session.series.length > 0;
@@ -437,7 +489,7 @@ const buildSeriesStructure = (session: TrainingSessionResponseDto): CalendarSeri
   }
 
   return backendSeries.map((series, index) => {
-    const mappedIntervals = (series.intervals ?? []).map(mapIntervalToCalendarInterval);
+    const mappedIntervals = (series.intervals ?? []).map(interval => mapIntervalToCalendarInterval(interval, athleteVO2Max));
     const seriesRepetitions = series.repetitions && series.repetitions > 0 ? series.repetitions : 1;
     const baseDistance = mappedIntervals.reduce((sum, interval) => sum + (interval.totalDistanceMeters ?? 0), 0);
     const totalDistanceMeters = baseDistance * seriesRepetitions;
@@ -571,7 +623,7 @@ const getIntervalsFromSession = (session: TrainingSessionResponseDto): TrainingI
   return session.intervals ?? [];
 };
 
-const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto): TrainingSession => {
+const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto, athleteVO2Max?: string): TrainingSession => {
   const rawDate = session.date?.toString() ?? '';
   const dateString = rawDate
     ? (rawDate.includes('T') ? rawDate.split('T')[0] : rawDate)
@@ -579,9 +631,9 @@ const mapBackendSessionToCalendar = (session: TrainingSessionResponseDto): Train
   const intervals = getIntervalsFromSession(session);
   const duration = calculateSessionDuration(intervals);
   const intensity = deriveSessionIntensity(intervals);
-  const series = buildSeriesStructure(session);
+  const series = buildSeriesStructure(session, athleteVO2Max);
   const simpleIntervalDetails = session.structureType?.toLowerCase() === 'simple'
-    ? intervals.map(mapIntervalToCalendarInterval)
+    ? intervals.map(interval => mapIntervalToCalendarInterval(interval, athleteVO2Max))
     : undefined;
   const totalDistanceKm = calculateSessionDistanceKm(
     series,
@@ -648,6 +700,39 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
   const [hasCompletedWorkout, setHasCompletedWorkout] = useState<boolean>(false);
   const [completedWorkout, setCompletedWorkout] = useState<any>(null);
   const [showWorkoutDetails, setShowWorkoutDetails] = useState(false);
+  const [athleteVO2Max, setAthleteVO2Max] = useState<string | undefined>(undefined);
+
+  // Cargar VO2Max del atleta
+  useEffect(() => {
+    if (!athleteId) {
+      setAthleteVO2Max(undefined);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchAthleteVO2Max = async () => {
+      try {
+        // Obtener el perfil del atleta (asumiendo que el atleta está viendo su propio calendario)
+        // Si es el coach viendo el calendario del atleta, necesitaríamos otro endpoint
+        const profile = await UserService.getProfile();
+        if (!isMounted) return;
+        
+        const vo2Max = (profile as any).vO2Max || profile.vo2Max;
+        if (vo2Max) {
+          setAthleteVO2Max(vo2Max);
+        }
+      } catch (error) {
+        console.error('Error al cargar VO2Max del atleta:', error);
+      }
+    };
+
+    fetchAthleteVO2Max();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [athleteId]);
 
   useEffect(() => {
     if (!athleteId) {
@@ -663,7 +748,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
         const sessions = await TrainingSessionService.getTrainingSessionsByAthleteId(athleteId, planningId);
         if (!isMounted) return;
 
-        const mappedSessions = sessions.map(mapBackendSessionToCalendar);
+        const mappedSessions = sessions.map(session => mapBackendSessionToCalendar(session, athleteVO2Max));
         setTrainingSessions(mappedSessions);
         setLoadError(null);
       } catch (error) {
@@ -682,7 +767,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
     return () => {
       isMounted = false;
     };
-  }, [athleteId, planningId]);
+  }, [athleteId, planningId, athleteVO2Max]);
 
   const calendarDays = useMemo(() => {
     const firstDay = startOfMonth(currentMonth);
@@ -1145,7 +1230,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
                                   <div>
                                     Distancia total: {formatDistanceMeters(interval.totalDistanceMeters)}
                                   </div>
-                                  {interval.recoveryTime && (
+                                  {interval.recoveryTime && interval.recoveryTime !== '00:00' && (
                                     <div>
                                       Recuperación: {formatDurationLabel(interval.recoveryTime)}
                                     </div>

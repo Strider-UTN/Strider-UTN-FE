@@ -4,8 +4,10 @@ import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Textarea } from './ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { TrainingSessionService, TrainingSessionResponseDto } from '../services/trainingSessionService';
+import { TrainingSessionService, TrainingSessionResponseDto, TrainingIntervalResponseDto } from '../services/trainingSessionService';
 import { CompletedWorkoutService, CompletedWorkoutResponseDto, WorkoutLapResponseDto } from '../services/completedWorkoutService';
+import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
+import { UserService } from '../services/userService';
 import { 
   MessageSquare,
   Send,
@@ -105,6 +107,7 @@ export function SessionRetroalimentacionModal({
   const [completedWorkoutData, setCompletedWorkoutData] = useState<CompletedWorkoutResponseDto | null>(null);
   const [isLoadingCompletedWorkout, setIsLoadingCompletedWorkout] = useState(false);
   const [lapFeedbacks, setLapFeedbacks] = useState<Record<number, string>>({});
+  const [athleteVO2Max, setAthleteVO2Max] = useState<string | undefined>(undefined);
 
   // Cargar sesión planificada desde el backend cuando se abre el modal
   useEffect(() => {
@@ -156,6 +159,99 @@ export function SessionRetroalimentacionModal({
       setLapFeedbacks({});
     }
   }, [isOpen, completedWorkoutId]);
+
+  // Cargar VO2Max del atleta
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchAthleteVO2Max = async () => {
+      try {
+        // Primero, verificar si el usuario actual es un atleta
+        // Si es atleta, obtener el VO2Max de su propio perfil
+        let currentUserProfile;
+        try {
+          currentUserProfile = await UserService.getProfile();
+        } catch (error) {
+          console.error('Error al obtener perfil del usuario:', error);
+        }
+
+        const isAthlete = currentUserProfile && (
+          currentUserProfile.userType === 'athlete' || 
+          currentUserProfile.userType === 0 ||
+          (typeof currentUserProfile.userType === 'string' && currentUserProfile.userType.toLowerCase() === 'athlete')
+        );
+
+        // Si el usuario es un atleta, usar su propio perfil
+        if (isAthlete && currentUserProfile) {
+          const vo2Max = (currentUserProfile as any)?.VO2Max || currentUserProfile.vO2Max || currentUserProfile.vo2Max;
+          if (!isMounted) return;
+          
+          if (vo2Max) {
+            console.log('VO2Max obtenido del perfil del atleta:', vo2Max);
+            setAthleteVO2Max(vo2Max);
+          } else {
+            setAthleteVO2Max(undefined);
+          }
+          return;
+        }
+
+        // Si es entrenador, obtener athleteId y buscar en la lista de atletas
+        let athleteId: number | undefined;
+        
+        if (completedWorkoutData?.athleteId) {
+          athleteId = completedWorkoutData.athleteId;
+        } else if (plannedSessionData?.athletes && plannedSessionData.athletes.length > 0) {
+          athleteId = plannedSessionData.athletes[0].athleteId;
+        } else if (plannedSessionData?.athleteIds && plannedSessionData.athleteIds.length > 0) {
+          athleteId = plannedSessionData.athleteIds[0];
+        }
+
+        if (!athleteId) {
+          setAthleteVO2Max(undefined);
+          return;
+        }
+
+        // Obtener la lista de atletas del entrenador
+        const athletesData = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
+        // El DTO del frontend tiene 'id', no 'athleteId'
+        const athlete = athletesData.find(a => a.id === athleteId);
+        
+        if (!isMounted) return;
+        
+        if (!athlete) {
+          console.log('Atleta no encontrado en la lista del entrenador. athleteId:', athleteId, 'Total atletas:', athletesData.length);
+          setAthleteVO2Max(undefined);
+          return;
+        }
+        
+        // El backend retorna VO2Max (mayúsculas) pero el frontend puede tener vO2Max o vo2Max
+        const vo2Max = (athlete as any)?.VO2Max || athlete?.vO2Max || athlete?.vo2Max;
+        
+        if (vo2Max) {
+          console.log('VO2Max encontrado para atleta:', athleteId, 'VO2Max:', vo2Max);
+          setAthleteVO2Max(vo2Max);
+        } else {
+          console.log('VO2Max no encontrado para atleta:', athleteId, 'Athlete data:', athlete);
+          setAthleteVO2Max(undefined);
+        }
+      } catch (error) {
+        console.error('Error al cargar VO2Max del atleta:', error);
+        if (isMounted) {
+          setAthleteVO2Max(undefined);
+        }
+      }
+    };
+
+    if (isOpen && (completedWorkoutData || plannedSessionData)) {
+      fetchAthleteVO2Max();
+    } else {
+      setAthleteVO2Max(undefined);
+    }
+
+    return () => {
+      isMounted = false;
+    };
+  }, [isOpen, completedWorkoutData, plannedSessionData]);
 
   // Inicializar formulario con datos existentes
   useEffect(() => {
@@ -211,9 +307,9 @@ export function SessionRetroalimentacionModal({
   };
 
   // Función helper para calcular el ritmo en formato mm:ss/km
-  const calculatePace = (distanceKm: number, durationSeconds: number): string => {
-    if (distanceKm === 0 || durationSeconds === 0) return '00:00/km';
-    const secondsPerKm = durationSeconds / distanceKm;
+  const calculatePace = (distance: number, durationSeconds: number): string => {
+    if (distance === 0 || durationSeconds === 0) return '00:00/km';
+    const secondsPerKm = durationSeconds  / (distance / 1000);
     const minutes = Math.floor(secondsPerKm / 60);
     const seconds = Math.round(secondsPerKm % 60);
     return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
@@ -222,8 +318,74 @@ export function SessionRetroalimentacionModal({
   // Función helper para formatear duración de segundos a mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+    const secs = Math.round(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Funciones para calcular ritmo desde VO2Max
+  const paceToMinutes = (paceStr: string): number => {
+    const parts = paceStr.split(':');
+    if (parts.length === 2) {
+      const minutes = parseInt(parts[0], 10);
+      const seconds = parseInt(parts[1], 10);
+      if (!Number.isNaN(minutes) && !Number.isNaN(seconds)) {
+        return minutes + seconds / 60;
+      }
+    }
+    return 0;
+  };
+
+  const minutesToPace = (minutes: number): string => {
+    const mins = Math.floor(minutes);
+    const secs = Math.round((minutes - mins) * 60);
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const calculatePaceFromVO2Max = (vo2MaxPaceStr: string, percentage: number): string => {
+    const vo2MaxMinutes = paceToMinutes(vo2MaxPaceStr);
+    if (vo2MaxMinutes <= 0) return '';
+    
+    // Calcular velocidad del VO2Max (km/h)
+    const vo2MaxVelocity = 60 / vo2MaxMinutes;
+    
+    // Aplicar porcentaje
+    const targetVelocity = vo2MaxVelocity * (percentage / 100);
+    
+    // Convertir de vuelta a ritmo (min/km)
+    const targetPaceMinutes = 60 / targetVelocity;
+    
+    return minutesToPace(targetPaceMinutes);
+  };
+
+  const determineTargetPace = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): string | undefined => {
+    if (interval.targetSpeed) {
+      return interval.targetSpeed;
+    }
+
+    // Si es VO2Max percentage, calcular el ritmo
+    const intervalAny = interval as any;
+    const paceTypeStr = String(interval.paceType || '');
+    const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                               paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                               paceTypeStr === 'vo2MaxPercentage';
+    
+    if (isVo2MaxPercentage && intervalAny.vo2MaxPercentage && athleteVO2Max) {
+      const calculatedPace = calculatePaceFromVO2Max(athleteVO2Max, intervalAny.vo2MaxPercentage);
+      if (calculatedPace) {
+        return calculatedPace;
+      }
+    }
+
+    if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
+      return `${interval.pace} ${interval.paceType}`;
+    }
+
+    if (interval.targetTime) {
+      // Formatear targetTime si es necesario
+      return interval.targetTime;
+    }
+
+    return undefined;
   };
 
   // Calcular duración real del workout: usar laps si están disponibles, sino usar el valor del workout
@@ -621,37 +783,40 @@ export function SessionRetroalimentacionModal({
                                 )}
                                 {series.intervals && series.intervals.length > 0 && (
                                   <div className="space-y-1">
-                                    {series.intervals.map((interval, intervalIdx) => (
-                                      <div key={interval.id || intervalIdx} className="text-xs">
-                                        <span className="font-medium">
-                                          {interval.repetitions}x
-                                        </span>
-                                        {' '}
-                                        {interval.distance > 0 && (
-                                          <span>
-                                            {interval.distance >= 1000 
-                                              ? `${(interval.distance / 1000).toFixed(1)} km`
-                                              : `${interval.distance} m`}
+                                    {series.intervals.map((interval, intervalIdx) => {
+                                      const targetPace = determineTargetPace(interval, athleteVO2Max);
+                                      return (
+                                        <div key={interval.id || intervalIdx} className="text-xs">
+                                          <span className="font-medium">
+                                            {interval.repetitions}x
                                           </span>
-                                        )}
-                                        {interval.duration && (
-                                          <span>{interval.duration}</span>
-                                        )}
-                                        {interval.targetTime && (
-                                          <span>{interval.targetTime}</span>
-                                        )}
-                                        {interval.recoveryTime && (
-                                          <span className="text-muted-foreground">
-                                            {' '}· Recuperación: {interval.recoveryTime}
-                                          </span>
-                                        )}
-                                        {interval.description && (
-                                          <span className="text-muted-foreground block mt-0.5">
-                                            {interval.description}
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
+                                          {' '}
+                                          {interval.distance > 0 && (
+                                            <span>
+                                              {interval.distance >= 1000 
+                                                ? `${(interval.distance / 1000).toFixed(1)} km`
+                                                : `${interval.distance} m`}
+                                            </span>
+                                          )}
+                                          {interval.duration && (
+                                            <span>{interval.duration}</span>
+                                          )}
+                                          {interval.targetTime && (
+                                            <span>{interval.targetTime}</span>
+                                          )}
+                                          {targetPace && (
+                                            <span className="text-muted-foreground">
+                                              {' '}· Ritmo: {targetPace}/km
+                                            </span>
+                                          )}
+                                          {interval.description && (
+                                            <span className="text-muted-foreground block mt-0.5">
+                                              {interval.description}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 )}
                                 {series.repetitions > 1 && (
@@ -671,37 +836,45 @@ export function SessionRetroalimentacionModal({
                         <div className="text-sm space-y-2">
                           <span className="text-muted-foreground font-medium">Intervalos:</span>
                           <div className="space-y-1">
-                            {plannedSessionData.intervals.map((interval, idx) => (
-                              <div key={interval.id || idx} className="text-xs bg-muted/50 rounded-lg p-2">
-                                <span className="font-medium">
-                                  {interval.repetitions}x
-                                </span>
-                                {' '}
-                                {interval.distance > 0 && (
-                                  <span>
-                                    {interval.distance >= 1000 
-                                      ? `${(interval.distance / 1000).toFixed(1)} km`
-                                      : `${interval.distance} m`}
+                            {plannedSessionData.intervals.map((interval, idx) => {
+                              const targetPace = determineTargetPace(interval, athleteVO2Max);
+                              return (
+                                <div key={interval.id || idx} className="text-xs bg-muted/50 rounded-lg p-2">
+                                  <span className="font-medium">
+                                    {interval.repetitions}x
                                   </span>
-                                )}
-                                {interval.duration && (
-                                  <span>{interval.duration}</span>
-                                )}
-                                {interval.targetTime && (
-                                  <span>{interval.targetTime}</span>
-                                )}
-                                {interval.recoveryTime && (
-                                  <span className="text-muted-foreground">
-                                    {' '}· Recuperación: {interval.recoveryTime}
-                                  </span>
-                                )}
-                                {interval.description && (
-                                  <span className="text-muted-foreground block mt-0.5">
-                                    {interval.description}
-                                  </span>
-                                )}
-                              </div>
-                            ))}
+                                  {' '}
+                                  {interval.distance > 0 && (
+                                    <span>
+                                      {interval.distance >= 1000 
+                                        ? `${(interval.distance / 1000).toFixed(1)} km`
+                                        : `${interval.distance} m`}
+                                    </span>
+                                  )}
+                                  {interval.duration && (
+                                    <span>{interval.duration}</span>
+                                  )}
+                                  {interval.targetTime && (
+                                    <span>{interval.targetTime}</span>
+                                  )}
+                                  {targetPace && (
+                                    <span className="text-muted-foreground">
+                                      {' '}· Ritmo: {targetPace}/km
+                                    </span>
+                                  )}
+                                  {interval.recoveryTime && interval.recoveryTime !== '00:00' && (
+                                    <span className="text-muted-foreground">
+                                      {' '}· Recuperación: {interval.recoveryTime}
+                                    </span>
+                                  )}
+                                  {interval.description && (
+                                    <span className="text-muted-foreground block mt-0.5">
+                                      {interval.description}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
                       )}
@@ -727,7 +900,7 @@ export function SessionRetroalimentacionModal({
                       <div className="grid grid-cols-2 gap-3 text-sm">
                         <div>
                           <span className="text-muted-foreground">Distancia:</span>
-                          <p className="font-medium">{actualSession.actualDistance} km</p>
+                          <p className="font-medium">{(actualSession.actualDistance / 1000).toFixed(1)} km</p>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Duración:</span>
@@ -735,7 +908,7 @@ export function SessionRetroalimentacionModal({
                         </div>
                         <div>
                           <span className="text-muted-foreground">Ritmo:</span>
-                          <p className="font-medium">{actualSession.actualPace}</p>
+                          <p className="font-medium">{calculatePace(actualSession.actualDistance, actualSession.actualDuration * 60)}</p>
                         </div>
                         {actualSession.heartRate && (
                           <div>
@@ -744,10 +917,10 @@ export function SessionRetroalimentacionModal({
                           </div>
                         )}
                       </div>
-                      {actualSession.comments && (
+                      {actualSession.notes && (
                         <div className="text-sm">
                           <span className="text-muted-foreground">Comentarios:</span>
-                          <p className="mt-1">{actualSession.comments}</p>
+                          <p className="mt-1">{actualSession.notes}</p>
                         </div>
                       )}
                     </CardContent>
@@ -776,7 +949,7 @@ export function SessionRetroalimentacionModal({
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Distancia</p>
-                      <p className="font-medium">{calculateActualDistance().toFixed(2)} km</p>
+                      <p className="font-medium">{(calculateActualDistance() / 1000).toFixed(2)} km</p>
                     </div>
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Ritmo</p>
@@ -1068,7 +1241,7 @@ export function SessionRetroalimentacionModal({
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                           <div>
                             <span className="text-muted-foreground">Distancia:</span>
-                            <p className="font-medium">{lap.distance.toFixed(2)} km</p>
+                            <p className="font-medium">{(lap.distance / 1000).toFixed(2)} km</p>
                           </div>
                           <div>
                             <span className="text-muted-foreground">Duración:</span>
