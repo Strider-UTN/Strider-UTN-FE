@@ -936,7 +936,13 @@ export function IndividualAthletesManagement() {
                   <CardContent className="space-y-3">
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Edad:</span>
-                      <span className="font-medium">{calculateAge(athleteForDetails.birthYear)} años</span>
+                      <span className="font-medium">
+                        {athleteForDetails.birthDate 
+                          ? `${calculateAge(athleteForDetails.birthDate)} años` 
+                          : athleteForDetails.birthYear && athleteForDetails.birthYear > 1900
+                            ? `${new Date().getFullYear() - athleteForDetails.birthYear} años`
+                            : 'N/A'}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground">Año de nacimiento:</span>

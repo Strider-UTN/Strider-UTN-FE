@@ -148,19 +148,49 @@ const safeFormatYmPretty = (ym?: string, localeArg = es): string => {
 // Función helper para verificar si el perfil tiene campos incompletos
 // Solo considera campos de información personal (excluyendo "Sobre ti" e información atlética)
 const hasIncompleteProfile = (user: User): boolean => {
-  // Campos básicos de información personal que todos deberían tener
-  const missingBasicFields = !user.phone || !user.dateOfBirth || !user.location;
-  
-  // Si es atleta, verificar altura y peso (parte de información personal, no atlética)
-  if (user.userType === 'athlete' && user.physicalProfile) {
-    const missingAthletePhysicalFields = 
-      !user.physicalProfile.height || 
-      !user.physicalProfile.weight;
+  // Función helper para verificar si un string está vacío o es inválido
+  const isEmpty = (value: string | undefined | null): boolean => {
+    if (value === undefined || value === null) return true;
+    if (typeof value !== 'string') return true;
+    return value.trim() === '';
+  };
+
+  // Campos comunes para todos los usuarios
+  const missingPhone = isEmpty(user.phone);
+  const missingDateOfBirth = isEmpty(user.dateOfBirth);
+  const missingLocation = isEmpty(user.location);
+  const missingCommonFields = missingPhone || missingDateOfBirth || missingLocation;
+
+  // Para entrenadores: también verificar nombre y apellidos
+  if (user.userType === 'coach') {
+    // Verificar firstName y lastName, o si no existen, verificar que realName tenga al menos dos palabras
+    const hasFirstName = !isEmpty(user.firstName);
+    const hasLastName = !isEmpty(user.lastName);
+    const hasFullName = !isEmpty(user.realName) && user.realName.trim().split(/\s+/).length >= 2;
+    const hasName = (hasFirstName && hasLastName) || hasFullName;
     
-    return missingBasicFields || missingAthletePhysicalFields;
+    return missingCommonFields || !hasName;
   }
   
-  return missingBasicFields;
+  // Para atletas: verificar altura y peso además de los campos comunes
+  if (user.userType === 'athlete') {
+    // Verificar que physicalProfile exista y tenga height y weight válidos (> 0)
+    if (!user.physicalProfile) {
+      return true; // Si no existe physicalProfile, el perfil está incompleto
+    }
+    
+    const hasHeight = user.physicalProfile.height !== undefined && 
+                      user.physicalProfile.height !== null && 
+                      user.physicalProfile.height > 0;
+    const hasWeight = user.physicalProfile.weight !== undefined && 
+                      user.physicalProfile.weight !== null && 
+                      user.physicalProfile.weight > 0;
+    const missingAthletePhysicalFields = !hasHeight || !hasWeight;
+    
+    return missingCommonFields || missingAthletePhysicalFields;
+  }
+  
+  return missingCommonFields;
 };
 
 export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'light', onToggleTheme }: UserProfileProps) {
@@ -299,12 +329,19 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
           : { weekly: km, unit: 'km' };
       })();
 
+      // Separar fullName en firstName y lastName
+      const nameParts = profileData.fullName ? profileData.fullName.trim().split(/\s+/) : [];
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.slice(1).join(' ') || '';
+
       const mappedUser: User = {
         id: profileData.id.toString(),
         username: profileData.username,
         email: profileData.email,
         userType: mappedUserType,
         realName: profileData.fullName,
+        firstName: firstName,
+        lastName: lastName,
         phone: profileData.phoneNumber,
         location: profileData.address,
         profileImage: profileData.profilePictureUrl,

@@ -15,6 +15,7 @@ import { TrainingTemplateService, CreateTrainingTemplateDto, CreateTrainingSerie
 import { translateCategory } from '../utils/templateTranslations';
 import { mapIntervalIntensityToBackend, mapIntervalIntensityFromBackend } from '../utils/intervalIntensityMapper';
 import { mapTrainingCategoryToBackend } from '../utils/trainingCategoryMapper';
+import { mapDifficultyFromBackend } from '../utils/difficultyMapper';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { TrainingSeriesResponseDto } from '../services/trainingTemplateService';
 
@@ -48,7 +49,7 @@ interface TrainingTemplate {
   series: SeriesSet[];
   intervals?: TrainingInterval[];
   notes: string;
-  difficulty: 1 | 2 | 3 | 4 | 5;
+  difficulty: 1 | 2 | 3 | 4 | 5 | string | number; // Backend puede enviar string o número
   isFavorite: boolean;
   createdAt: string;
   lastUsed?: string;
@@ -130,11 +131,13 @@ export function CreateTemplateModal({
         intervals: (seriesItem.intervals || []).map((intervalItem, intervalIndex) => {
           const intervalAny = intervalItem as any; // Para acceder a propiedades que pueden venir del backend
           const paceTypeStr = String(intervalItem.paceType || '');
-          // Verificar tanto el formato del frontend (vo2max_percentage) como del backend (vo2MaxPercentage)
+          // Verificar tanto el formato del frontend (vo2max_percentage) como del backend (vo2MaxPercentage, Vo2MaxPercentage)
           const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
                                      paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
-                                     paceTypeStr === 'vo2MaxPercentage';
+                                     paceTypeStr === 'vo2MaxPercentage' ||
+                                     paceTypeStr === 'Vo2MaxPercentage';
           const vo2MaxValue = intervalItem.vo2maxPercentage ?? intervalAny.vo2MaxPercentage;
+          
         
         return {
           id: intervalItem.id || createUniqueId(`interval-${seriesIndex}-${intervalIndex}`),
@@ -323,12 +326,13 @@ export function CreateTemplateModal({
   // Actualizar el estado cuando cambia el template (modo edición)
   useEffect(() => {
     if (template) {
+      const mappedDifficulty = mapDifficultyFromBackend(template.difficulty as any);
       setFormData({
         name: template.name,
         description: template.description,
         category: template.category,
         notes: template.notes,
-        difficulty: template.difficulty
+        difficulty: mappedDifficulty
       });
       setTags(template.tags || []);
 
@@ -343,9 +347,9 @@ export function CreateTemplateModal({
       else
       {
         setSeries([]);
-        const simpleIntervals = template.intervals && template.intervals.length > 0
-          ? template.intervals
-          : flattenSeriesToTrainingIntervals(normalizedSeries);
+        // Para structureType "simple", siempre generar los intervalos desde las series normalizadas
+        // para asegurar que el paceType esté correctamente mapeado
+        const simpleIntervals = flattenSeriesToTrainingIntervals(normalizedSeries);
         setIntervals(simpleIntervals);
         setSeriesBuilderMode('simple');
       }
@@ -674,7 +678,11 @@ export function CreateTemplateModal({
       intervals: (series.intervals || []).map((interval, intervalIndex) => {
         const intervalAny = interval as any; // Para acceder a vo2MaxPercentage del backend
         const paceTypeStr = String(interval.paceType || '');
-        const isVo2MaxPercentage = paceTypeStr.toLowerCase() === 'vo2maxpercentage' || paceTypeStr === 'vo2MaxPercentage';
+        // Verificar tanto el formato del frontend (vo2max_percentage) como del backend (vo2MaxPercentage, Vo2MaxPercentage)
+        const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                                   paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                                   paceTypeStr === 'vo2MaxPercentage' ||
+                                   paceTypeStr === 'Vo2MaxPercentage';
         const vo2MaxValue = intervalAny.vo2MaxPercentage ?? intervalAny.vo2maxPercentage;
         return {
           id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,

@@ -15,6 +15,7 @@ import { AthleteStatusManagement } from './AthleteStatusManagement';
 import { InvitationsView } from './InvitationsView';
 import { CoachAthleteRelationshipService } from '../services/coachAthleteRelationshipService';
 import { GroupService } from '../services/groupService';
+import { UserService, UserProfileResponseDto } from '../services/userService';
 import { PlanningManagement } from './PlanningManagement';
 import { ReportsView } from './ReportsView';
 import { CreateGroupModal } from './CreateGroupModal';
@@ -140,22 +141,51 @@ type CoachActiveView =
 type AthleteActiveView = 'calendar' | 'training-plan' | 'upload-training' | 'training-history' | 'performance' | 'status' | 'invitations';
 
 // Función helper para verificar si el perfil tiene campos incompletos
-// Función helper para verificar si el perfil tiene campos incompletos
 // Solo considera campos de información personal (excluyendo "Sobre ti" e información atlética)
 const hasIncompleteProfile = (user: User): boolean => {
-  // Campos básicos de información personal que todos deberían tener
-  const missingBasicFields = !user.phone || !user.dateOfBirth || !user.location;
-  
-  // Si es atleta, verificar altura y peso (parte de información personal, no atlética)
-  if (user.userType === 'athlete' && user.physicalProfile) {
-    const missingAthletePhysicalFields = 
-      !user.physicalProfile.height || 
-      !user.physicalProfile.weight;
+  // Función helper para verificar si un string está vacío o es inválido
+  const isEmpty = (value: string | undefined | null): boolean => {
+    if (value === undefined || value === null) return true;
+    if (typeof value !== 'string') return true;
+    return value.trim() === '';
+  };
+
+  // Campos comunes para todos los usuarios
+  const missingPhone = isEmpty(user.phone);
+  const missingDateOfBirth = isEmpty(user.dateOfBirth);
+  const missingLocation = isEmpty(user.location);
+  const missingCommonFields = missingPhone || missingDateOfBirth || missingLocation;
+
+  // Para entrenadores: también verificar nombre y apellidos
+  if (user.userType === 'coach') {
+    // Verificar firstName y lastName, o si no existen, verificar que realName tenga al menos dos palabras
+    const hasFirstName = !isEmpty(user.firstName);
+    const hasLastName = !isEmpty(user.lastName);
+    const hasFullName = !isEmpty(user.realName) && user.realName.trim().split(/\s+/).length >= 2;
+    const hasName = (hasFirstName && hasLastName) || hasFullName;
     
-    return missingBasicFields || missingAthletePhysicalFields;
+    return missingCommonFields || !hasName;
   }
   
-  return missingBasicFields;
+  // Para atletas: verificar altura y peso además de los campos comunes
+  if (user.userType === 'athlete') {
+    // Verificar que physicalProfile exista y tenga height y weight válidos (> 0)
+    if (!user.physicalProfile) {
+      return true; // Si no existe physicalProfile, el perfil está incompleto
+    }
+    
+    const hasHeight = user.physicalProfile.height !== undefined && 
+                      user.physicalProfile.height !== null && 
+                      user.physicalProfile.height > 0;
+    const hasWeight = user.physicalProfile.weight !== undefined && 
+                      user.physicalProfile.weight !== null && 
+                      user.physicalProfile.weight > 0;
+    const missingAthletePhysicalFields = !hasHeight || !hasWeight;
+    
+    return missingCommonFields || missingAthletePhysicalFields;
+  }
+  
+  return missingCommonFields;
 };
 
 export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onToggleTheme }: DashboardProps) {
@@ -169,8 +199,71 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
   const [isProfileOpen, setIsProfileOpen] = useState(false);
   const [sessionRefreshTrigger, setSessionRefreshTrigger] = useState(0);
   const [pendingInvitationsCount, setPendingInvitationsCount] = useState(0);
+  const [fullUserProfile, setFullUserProfile] = useState<User | null>(null);
+  const [isLoadingProfile, setIsLoadingProfile] = useState(true);
   
-  const hasIncompleteProfileData = hasIncompleteProfile(user);
+  // Cargar perfil completo desde el backend al montar el componente
+  useEffect(() => {
+    const loadFullProfile = async () => {
+      setIsLoadingProfile(true);
+      try {
+        const profileData = await UserService.getProfile();
+        
+        // Mapear los datos del backend al formato del frontend (similar a UserProfile.tsx)
+        const formattedBirthDate = profileData.birthDate 
+          ? (typeof profileData.birthDate === 'string' 
+              ? (profileData.birthDate.includes('T')
+                  ? profileData.birthDate.split('T')[0]
+                  : profileData.birthDate)
+              : undefined)
+          : undefined;
+
+        const mappedUserType: 'athlete' | 'coach' = ((): 'athlete' | 'coach' => {
+          if (typeof profileData.userType === 'string') {
+            const v = profileData.userType.toLowerCase();
+            return v === 'athlete' ? 'athlete' : 'coach';
+          }
+          return profileData.userType === 0 ? 'athlete' : 'coach';
+        })();
+
+        // Separar fullName en firstName y lastName
+        const nameParts = profileData.fullName ? profileData.fullName.trim().split(/\s+/) : [];
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+
+        const mappedUser: User = {
+          ...user, // Mantener datos del token
+          phone: profileData.phoneNumber,
+          location: profileData.address,
+          dateOfBirth: formattedBirthDate,
+          firstName: firstName,
+          lastName: lastName,
+          realName: profileData.fullName,
+          physicalProfile: mappedUserType === 'athlete' ? {
+            ...user.physicalProfile,
+            height: profileData.height,
+            weight: profileData.weight,
+          } : user.physicalProfile
+        };
+
+        setFullUserProfile(mappedUser);
+        // Actualizar el usuario en el componente padre también
+        onUpdateUser(mappedUser);
+      } catch (error) {
+        console.error('Error al cargar perfil completo:', error);
+        // Si falla, usar el usuario del prop
+        setFullUserProfile(user);
+      } finally {
+        setIsLoadingProfile(false);
+      }
+    };
+
+    loadFullProfile();
+  }, []); // Solo ejecutar una vez al montar
+
+  // Usar el perfil completo si está disponible, sino usar el user del prop
+  const userForValidation = fullUserProfile || user;
+  const hasIncompleteProfileData = !isLoadingProfile && hasIncompleteProfile(userForValidation);
   
   // Estados para filtros de sedes
   const [groupNameFilter, setGroupNameFilter] = useState('');
@@ -677,10 +770,10 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
       case 'training-history':
         // Para atletas, crear un objeto atleta basado en el usuario actual
         const athleteFromUser = {
-          id: user.id,
-          name: user.realName,
-          email: user.email,
-          profileImage: user.profileImage
+          id: userForValidation.id,
+          name: userForValidation.realName,
+          email: userForValidation.email,
+          profileImage: userForValidation.profileImage
         };
         return (
           <AthleteTrainingHistory 
@@ -777,15 +870,15 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" className="h-10 px-3 gap-2 hover:bg-accent hover:text-accent-foreground">
                       <Avatar className="w-8 h-8">
-                        <AvatarImage src={user.profileImage} alt={user.realName} />
+                        <AvatarImage src={userForValidation.profileImage} alt={userForValidation.realName} />
                         <AvatarFallback className="text-xs">
-                          {getInitials(user.firstName || user.realName)}
+                          {getInitials(userForValidation.firstName || userForValidation.realName)}
                         </AvatarFallback>
                       </Avatar>
                       <div className="text-left hidden sm:block">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium leading-none">
-                            {user.firstName || user.realName.split(' ')[0]}
+                            {userForValidation.firstName || userForValidation.realName.split(' ')[0]}
                           </p>
                           {hasIncompleteProfileData && (
                             <TooltipProvider>
@@ -801,7 +894,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                           )}
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {user.email}
+                          {userForValidation.email}
                         </p>
                       </div>
                       <ChevronDown className="w-4 h-4 opacity-50" />
@@ -811,10 +904,10 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
                     <DropdownMenuLabel className="font-normal">
                       <div className="flex flex-col space-y-1">
                         <p className="text-sm font-medium leading-none">
-                          {user.firstName || user.realName}
+                          {userForValidation.firstName || userForValidation.realName}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          {user.email}
+                          {userForValidation.email}
                         </p>
                         <Badge variant="outline" className="text-xs w-fit mt-1">
                           {userType === 'coach' ? 'Entrenador' : 'Atleta'}
@@ -923,8 +1016,11 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
       <UserProfile 
         isOpen={isProfileOpen}
         onClose={() => setIsProfileOpen(false)}
-        user={user} 
-        onUpdateUser={onUpdateUser}
+        user={userForValidation} 
+        onUpdateUser={(updatedUser) => {
+          setFullUserProfile(updatedUser);
+          onUpdateUser(updatedUser);
+        }}
         theme={theme}
         onToggleTheme={onToggleTheme}
       />

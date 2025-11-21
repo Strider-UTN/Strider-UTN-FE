@@ -116,7 +116,11 @@ function convertBackendToFrontend(backendTemplate: TrainingTemplateResponseDto):
     intervals: (series.intervals || []).map((interval, intervalIndex) => {
       const intervalAny = interval as any; // Para acceder a vo2MaxPercentage del backend
       const paceTypeStr = String(interval.paceType || '');
-      const isVo2MaxPercentage = paceTypeStr.toLowerCase() === 'vo2maxpercentage' || paceTypeStr === 'vo2MaxPercentage';
+      // Verificar tanto el formato del frontend (vo2max_percentage) como del backend (vo2MaxPercentage, Vo2MaxPercentage)
+      const isVo2MaxPercentage = paceTypeStr === 'vo2max_percentage' || 
+                                 paceTypeStr.toLowerCase() === 'vo2maxpercentage' || 
+                                 paceTypeStr === 'vo2MaxPercentage' ||
+                                 paceTypeStr === 'Vo2MaxPercentage';
       return {
         id: interval.id?.toString() || `interval-${seriesIndex}-${intervalIndex}-${Date.now()}`,
         trainingMode: (interval.trainingMode?.toLowerCase() as 'distance' | 'time') || (interval.duration ? 'time' : 'distance'),
@@ -179,9 +183,9 @@ function flattenSeries(series: SeriesSet[]): TrainingInterval[] {
         distance: interval.trainingMode === 'distance' ? interval.distance || 0 : 0,
         targetTime: interval.trainingMode === 'time' ? interval.duration : undefined,
         recoveryTime: interval.recoveryTime || '00:00',
-        paceType: 'fixed',
+        paceType: interval.paceType || 'fixed', // Preservar el paceType original
         pace: interval.targetSpeed ? parseSpeedValue(interval.targetSpeed) : undefined,
-        vo2maxPercentage: undefined,
+        vo2maxPercentage: interval.vo2maxPercentage, // Preservar el vo2maxPercentage original
         description: interval.description,
         intensity: mapIntervalIntensityFromBackend(interval.intensity) || 'moderate',
         trainingMode: interval.trainingMode,
