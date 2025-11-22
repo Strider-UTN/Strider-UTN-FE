@@ -10,6 +10,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { Separator } from './ui/separator';
 import { Switch } from './ui/switch';
+import { Checkbox } from './ui/checkbox';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Calendar as CalendarComponent } from './ui/calendar';
@@ -111,6 +112,7 @@ interface User {
       };
     };
     medicalConditions?: string[]; // Lista de condiciones médicas
+    hasMedicalConsent?: boolean; // Consentimiento para compartir condiciones médicas
   };
 }
 
@@ -340,7 +342,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
 
       const mappedUser: User = {
         id: profileData.id.toString(),
-        username: profileData.username,
+        username: profileData.email.split('@')[0] || 'usuario', // Generate username from email since backend no longer provides it
         email: profileData.email,
         userType: mappedUserType,
         realName: profileData.fullName,
@@ -1720,8 +1722,38 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           <AlertTriangle className="w-4 h-4 mr-2" />
                           Condiciones Médicas o de Salud
                         </h5>
-                        <div className="space-y-3">
-                          {(formData.physicalProfile?.medicalConditions || []).map((condition, index) => (
+                        
+                        {/* Checkbox de consentimiento - solo mostrar si no hay condiciones médicas */}
+                        {(!formData.physicalProfile?.medicalConditions || formData.physicalProfile.medicalConditions.length === 0) && (
+                          <div className="flex items-start space-x-2 p-4 bg-muted/50 rounded-lg border">
+                            <Checkbox
+                              id="medical-consent-profile"
+                              checked={formData.physicalProfile?.hasMedicalConsent || false}
+                              onCheckedChange={(checked) => {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  physicalProfile: {
+                                    ...prev.physicalProfile!,
+                                    hasMedicalConsent: checked === true
+                                  }
+                                }));
+                              }}
+                              disabled={!isEditing}
+                              className="mt-1"
+                            />
+                            <Label
+                              htmlFor="medical-consent-profile"
+                              className="text-sm font-normal leading-relaxed cursor-pointer"
+                            >
+                              Autorizo a compartir información sobre condiciones médicas o de salud con mi entrenador asignado para personalizar mi plan de entrenamiento de manera segura.
+                            </Label>
+                          </div>
+                        )}
+                        
+                        {/* Solo mostrar la sección de condiciones médicas si hay consentimiento o si ya hay condiciones */}
+                        {((formData.physicalProfile?.hasMedicalConsent && isEditing) || (formData.physicalProfile?.medicalConditions && formData.physicalProfile.medicalConditions.length > 0)) ? (
+                          <div className="space-y-3">
+                            {(formData.physicalProfile?.medicalConditions || []).map((condition, index) => (
                             <div key={index} className="flex items-center gap-2">
                               <Input
                                 value={condition}
@@ -1780,7 +1812,8 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                               + Agregar Condición
                             </Button>
                           )}
-                        </div>
+                          </div>
+                        ) : null}
                         <p className="text-xs text-muted-foreground">
                           Describe cualquier enfermedad, lesión previa, condición física o tratamiento médico que pueda afectar tu rendimiento deportivo o representar un riesgo durante el entrenamiento.
                         </p>

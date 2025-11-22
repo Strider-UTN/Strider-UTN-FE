@@ -203,28 +203,43 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response) => response,
       (error: AxiosError) => {
-        // Si recibimos 401, el token es inválido o expiró
+        // Si recibimos 401, verificar si es del endpoint de login o de otro endpoint
         if (error.response?.status === 401) {
-          const tokenBeforeClear = getAuthToken();
-          clearAuthToken();
+          const requestUrl = error.config?.url || '';
+          const isLoginEndpoint = requestUrl.includes('/api/Auth/Login');
           
-          // Solo redirigir si había un token antes (evitar loops)
-          if (tokenBeforeClear) {
-            // Mostrar mensaje informativo
-            toast.error('Tu sesión ha expirado o no tienes autorización', {
-              description: 'Serás redirigido al login...',
-              duration: 3000
-            });
+          if (isLoginEndpoint) {
+            // Si es del endpoint de login, solo mostrar el mensaje de error sin redirigir
+            const errorMessage = extractErrorMessage(error);
+            if (errorMessage) {
+              toast.error(errorMessage);
+            } else {
+              // Si no hay mensaje específico, mostrar mensaje genérico
+              toast.error('Email o contraseña incorrectos. Por favor, revisa tus credenciales e intenta de nuevo.');
+            }
+          } else {
+            // Si es de otro endpoint, significa que el token expiró o es inválido
+            const tokenBeforeClear = getAuthToken();
+            clearAuthToken();
             
-            // Redirigir al login después de un breve delay
-            setTimeout(() => {
-              // Verificar que el token sigue sin estar (evitar múltiples redirecciones)
-              if (!getAuthToken()) {
-                // Redirigir a la raíz (donde está el login)
-                // El token ya fue limpiado arriba, así que la app mostrará el login
-                window.location.href = '/';
-              }
-            }, 1500);
+            // Solo redirigir si había un token antes (evitar loops)
+            if (tokenBeforeClear) {
+              // Mostrar mensaje informativo
+              toast.error('Tu sesión ha expirado o no tienes autorización', {
+                description: 'Serás redirigido al login...',
+                duration: 3000
+              });
+              
+              // Redirigir al login después de un breve delay
+              setTimeout(() => {
+                // Verificar que el token sigue sin estar (evitar múltiples redirecciones)
+                if (!getAuthToken()) {
+                  // Redirigir a la raíz (donde está el login)
+                  // El token ya fue limpiado arriba, así que la app mostrará el login
+                  window.location.href = '/';
+                }
+              }, 1500);
+            }
           }
         }
         

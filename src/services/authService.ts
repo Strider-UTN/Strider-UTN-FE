@@ -20,7 +20,6 @@ export interface EmailLoginResponse {
 }
 
 export interface CreateCoachDto {
-  Username: string;
   FullName: string;
   Email: string;
   Password: string;
@@ -346,7 +345,6 @@ export class AuthService {
    * @returns Promise que se resuelve cuando el coach es creado exitosamente
    */
   static async createCoach(coachData: {
-    username: string;
     fullName: string;
     email: string;
     password: string;
@@ -365,7 +363,6 @@ export class AuthService {
       };
       
       const dto: CreateCoachDto = {
-        Username: coachData.username,
         FullName: coachData.fullName,
         Email: coachData.email,
         Password: coachData.password,
@@ -390,7 +387,6 @@ export class AuthService {
    * @returns Promise que se resuelve cuando el atleta es creado exitosamente
    */
   static async createAthlete(athleteData: {
-    username: string;
     fullName: string;
     email: string;
     password: string;
@@ -421,7 +417,6 @@ export class AuthService {
       };
 
       const dto = {
-        Username: athleteData.username,
         FullName: athleteData.fullName,
         Email: athleteData.email,
         Password: athleteData.password,
