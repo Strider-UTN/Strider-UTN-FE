@@ -231,18 +231,54 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
         const firstName = nameParts[0] || '';
         const lastName = nameParts.slice(1).join(' ') || '';
 
+        // Mapear trainingVolume
+        const mappedTrainingVolume = profileData.trainingVolumeType === 'Weekly' || profileData.trainingVolumeType === 0
+          ? { weekly: profileData.trainingVolumeKm || 0, monthly: 0, unit: 'km' as const }
+          : { weekly: 0, monthly: profileData.trainingVolumeKm || 0, unit: 'km' as const };
+
         const mappedUser: User = {
           ...user, // Mantener datos del token
           phone: profileData.phoneNumber,
           location: profileData.address,
           dateOfBirth: formattedBirthDate,
+          gender: profileData.gender !== undefined && profileData.gender !== null
+            ? (typeof profileData.gender === 'number'
+                ? (profileData.gender === 0 ? 'masculino' : profileData.gender === 1 ? 'femenino' : 'no-especifica')
+                : typeof profileData.gender === 'string'
+                ? (profileData.gender.toLowerCase() === 'male' ? 'masculino'
+                    : profileData.gender.toLowerCase() === 'female' ? 'femenino'
+                    : profileData.gender.toLowerCase() === 'other' ? 'no-especifica'
+                    : profileData.gender)
+                : profileData.gender)
+            : undefined,
           firstName: firstName,
           lastName: lastName,
           realName: profileData.fullName,
           physicalProfile: mappedUserType === 'athlete' ? {
-            ...user.physicalProfile,
-            height: profileData.height,
-            weight: profileData.weight,
+            height: profileData.height !== undefined && profileData.height !== null ? Number(profileData.height) : undefined,
+            weight: profileData.weight !== undefined && profileData.weight !== null ? Number(profileData.weight) : undefined,
+            vo2Max: (profileData as any).vO2Max || profileData.vo2Max,
+            yearsOfExperience: profileData.yearsOfExperience,
+            trainingStartDate: profileData.trainingStartDate || '',
+            trainingVolume: mappedTrainingVolume,
+            emergencyContact: {
+              name: profileData.emergencyContactName?.trim() || '',
+              phone: profileData.emergencyContactPhone?.trim() || '',
+              relationship: profileData.emergencyContactRelationship?.trim() || ''
+            },
+            medicalInfo: {
+              healthInsurance: {
+                hasInsurance: (profileData as any).hasHealthInsurance || false,
+                provider: (profileData as any).healthInsuranceProvider || '',
+                memberNumber: (profileData as any).healthInsuranceMemberNumber || ''
+              },
+              medicalClearance: {
+                hasValidClearance: (profileData as any).lastCheckupDate ? true : false,
+                lastCheckupDate: (profileData as any).lastCheckupDate ? new Date((profileData as any).lastCheckupDate).toISOString().split('T')[0] : '',
+                expiryDate: (profileData as any).medicalClearanceExpiryDate ? new Date((profileData as any).medicalClearanceExpiryDate).toISOString().split('T')[0] : '',
+                isExpired: (profileData as any).medicalClearanceExpiryDate ? new Date((profileData as any).medicalClearanceExpiryDate) < new Date() : false
+              }
+            }
           } : user.physicalProfile
         };
 
@@ -403,7 +439,7 @@ export function Dashboard({ onLogout, userType, user, onUpdateUser, theme, onTog
     { id: 'training-history', label: 'Histórico de sesiones', icon: FileText },
     { id: 'performance', label: 'Rendimiento', icon: BarChart3 },
     { id: 'status', label: 'Estado y Lesiones', icon: Heart },
-    { id: 'invitations', label: 'Invitaciones', icon: Mail, badgeCount: pendingInvitationsCount }
+    { id: 'invitations', label: 'Notificaciones', icon: Mail, badgeCount: pendingInvitationsCount }
   ];
 
   const handleCreateSession = (session: any) => {

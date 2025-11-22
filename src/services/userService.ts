@@ -11,6 +11,7 @@ export interface UpdateUserProfileDto {
   address?: string;
   profilePictureUrl?: string;
   birthDate?: string; // Formato: YYYY-MM-DD (ISO date string)
+  gender?: number | string; // 0 = MALE, 1 = FEMALE, 2 = OTHER
   bio?: string;
   // Campos específicos para atletas
   height?: number;
@@ -23,6 +24,13 @@ export interface UpdateUserProfileDto {
   trainingStartDate?: string; // Formato: YYYY-MM (ejemplo: 2020-03)
   trainingVolumeType?: 'Weekly' | 'Monthly';
   trainingVolumeKm?: number;
+  // Información médica
+  hasHealthInsurance?: boolean;
+  healthInsuranceProvider?: string;
+  healthInsuranceMemberNumber?: string;
+  lastCheckupDate?: string; // Formato: YYYY-MM-DD (ISO date string)
+  medicalClearanceExpiryDate?: string; // Formato: YYYY-MM-DD (ISO date string)
+  medicalConditions?: string[]; // Lista de condiciones médicas
 }
 
 export interface UserProfileResponseDto {
@@ -50,6 +58,13 @@ export interface UserProfileResponseDto {
   trainingStartDate?: string; // Formato: YYYY-MM
   trainingVolumeType: number | string; // 0/1 o 'weekly'|'monthly'
   trainingVolumeKm: number;
+  // Información médica
+  hasHealthInsurance?: boolean;
+  healthInsuranceProvider?: string;
+  healthInsuranceMemberNumber?: string;
+  lastCheckupDate?: string; // Formato: YYYY-MM-DD (ISO date string)
+  medicalClearanceExpiryDate?: string; // Formato: YYYY-MM-DD (ISO date string)
+  medicalConditions?: string[]; // Lista de condiciones médicas
 }
 
 /**

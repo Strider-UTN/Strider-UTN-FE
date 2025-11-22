@@ -67,6 +67,7 @@ interface AthleteProfile {
     healthInsurance: {
       provider: string;
       memberNumber: string;
+      hasInsurance?: boolean;
     };
     medicalClearance: {
       hasValidClearance: boolean;
@@ -77,6 +78,7 @@ interface AthleteProfile {
       certificateFileName?: string;
       uploadDate?: string;
     };
+    medicalConditions?: string[];
   };
   status: 'Activo' | 'Lesionado' | 'Descanso' | 'Inactivo';
   joinDate: string;
@@ -156,6 +158,8 @@ export function IndividualAthletesManagement() {
 
   const [isAthleteDetailsModalOpen, setIsAthleteDetailsModalOpen] = useState(false);
   const [athleteForDetails, setAthleteForDetails] = useState<AthleteProfile | null>(null);
+  const [athleteInjuries, setAthleteInjuries] = useState<CoachRecentInjury[]>([]);
+  const [isLoadingAthleteInjuries, setIsLoadingAthleteInjuries] = useState(false);
   const [showPerformanceView, setShowPerformanceView] = useState(false);
   const [athleteForPerformance, setAthleteForPerformance] = useState<AthleteProfile | null>(null);
   const [isMedicalClearanceModalOpen, setIsMedicalClearanceModalOpen] = useState(false);
@@ -177,34 +181,45 @@ export function IndividualAthletesManagement() {
             birthYear = new Date(athlete.birthDate).getFullYear();
           }
           
+          // Calcular si el apto físico está expirado
+          const isExpired = athlete.medicalClearanceExpiryDate 
+            ? new Date(athlete.medicalClearanceExpiryDate) < new Date()
+            : false;
+          
+          const hasValidClearance = !!athlete.lastCheckupDate;
+
           return {
           id: athlete.id.toString(),
           name: athlete.name,
           email: athlete.email,
-          phone: athlete.phone || '+34 000 000 000',
+          phone: athlete.phone || '',
           birthYear: birthYear,
           birthDate: athlete.birthDate,
-          height: 175, // TODO: Obtener del backend cuando esté disponible
-          weight: 70, // TODO: Obtener del backend cuando esté disponible
+          height: athlete.height || 0,
+          weight: athlete.weight || 0,
           emergencyContact: {
-            name: 'Contacto de emergencia', // TODO: Obtener del backend cuando esté disponible
-            phone: '+34 000 000 000',
-            relationship: 'Familiar'
+            name: athlete.emergencyContactName || '',
+            phone: athlete.emergencyContactPhone || '',
+            relationship: athlete.emergencyContactRelationship || ''
           },
           athleticExperience: {
-            yearsRunning: 5, // TODO: Obtener del backend cuando esté disponible
+            yearsRunning: 5, // TODO: Calcular desde trainingStartDate
             weeklyVolume: 50, // TODO: Obtener del backend cuando esté disponible
             monthlyVolume: 200 // TODO: Obtener del backend cuando esté disponible
           },
           medicalInfo: {
             healthInsurance: {
-              provider: 'Seguro', // TODO: Obtener del backend cuando esté disponible
-              memberNumber: '000000'
+              provider: athlete.healthInsuranceProvider || '',
+              memberNumber: athlete.healthInsuranceMemberNumber || '',
+              hasInsurance: athlete.hasHealthInsurance || false
             },
             medicalClearance: {
-              hasValidClearance: false, // TODO: Obtener del backend cuando esté disponible
-              isExpired: false
-            }
+              hasValidClearance: hasValidClearance,
+              lastCheckupDate: athlete.lastCheckupDate,
+              expiryDate: athlete.medicalClearanceExpiryDate,
+              isExpired: isExpired
+            },
+            medicalConditions: athlete.medicalConditions || []
           },
           status: 'Activo' as const,
           joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
@@ -280,41 +295,60 @@ export function IndividualAthletesManagement() {
     try {
       const athleteRelationships = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
       
-      const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => ({
-        id: athlete.id.toString(),
-        name: athlete.name,
-        email: athlete.email,
-        phone: athlete.phone || '+34 000 000 000',
-        birthYear: 1990,
-        height: 175,
-        weight: 70,
-        emergencyContact: {
-          name: 'Contacto de emergencia',
-          phone: '+34 000 000 000',
-          relationship: 'Familiar'
-        },
-        athleticExperience: {
-          yearsRunning: 5,
-          weeklyVolume: 50,
-          monthlyVolume: 200
-        },
-        medicalInfo: {
-          healthInsurance: {
-            provider: 'Seguro',
-            memberNumber: '000000'
+      const mappedAthletes: AthleteProfile[] = athleteRelationships.map((athlete: AthleteResponseDto) => {
+        let birthYear = 1990;
+        if (athlete.birthDate) {
+          birthYear = new Date(athlete.birthDate).getFullYear();
+        }
+        
+        const isExpired = athlete.medicalClearanceExpiryDate 
+          ? new Date(athlete.medicalClearanceExpiryDate) < new Date()
+          : false;
+        
+        const hasValidClearance = !!athlete.lastCheckupDate;
+
+        return {
+          id: athlete.id.toString(),
+          name: athlete.name,
+          email: athlete.email,
+          phone: athlete.phone || '',
+          birthYear: birthYear,
+          birthDate: athlete.birthDate,
+          height: athlete.height || 0,
+          weight: athlete.weight || 0,
+          emergencyContact: {
+            name: athlete.emergencyContactName || '',
+            phone: athlete.emergencyContactPhone || '',
+            relationship: athlete.emergencyContactRelationship || ''
           },
-          medicalClearance: {
-            hasValidClearance: false,
-            isExpired: false
-          }
-        },
-        status: 'Activo' as const,
-        joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
-        daysSinceLastWorkout: athlete.daysSinceLastWorkout,
-        trainingStartDate: athlete.trainingStartDate,
-        vo2Max: (athlete as any).vO2Max || athlete.vo2Max // Backend retorna vO2Max (camelCase)
-      }));
+          athleticExperience: {
+            yearsRunning: 5, // TODO: Calcular desde trainingStartDate
+            weeklyVolume: 50, // TODO: Obtener del backend cuando esté disponible
+            monthlyVolume: 200 // TODO: Obtener del backend cuando esté disponible
+          },
+          medicalInfo: {
+            healthInsurance: {
+              provider: athlete.healthInsuranceProvider || '',
+              memberNumber: athlete.healthInsuranceMemberNumber || '',
+              hasInsurance: athlete.hasHealthInsurance || false
+            },
+            medicalClearance: {
+              hasValidClearance: hasValidClearance,
+              lastCheckupDate: athlete.lastCheckupDate,
+              expiryDate: athlete.medicalClearanceExpiryDate,
+              isExpired: isExpired
+            },
+            medicalConditions: athlete.medicalConditions || []
+          },
+          status: 'Activo' as const,
+          joinDate: athlete.linkedSince ? new Date(athlete.linkedSince).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          lastActivity: athlete.lastActivity ? new Date(athlete.lastActivity).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+          daysSinceLastWorkout: athlete.daysSinceLastWorkout,
+          trainingStartDate: athlete.trainingStartDate,
+          vo2Max: (athlete as any).vO2Max || athlete.vo2Max, // Backend retorna vO2Max (camelCase)
+          birthDate: athlete.birthDate
+        };
+      });
 
       setAthletes(mappedAthletes);
       
@@ -386,9 +420,20 @@ export function IndividualAthletesManagement() {
     }
   };
 
-  const handleViewAthleteDetails = (athlete: AthleteProfile) => {
+  const handleViewAthleteDetails = async (athlete: AthleteProfile) => {
     setAthleteForDetails(athlete);
     setIsAthleteDetailsModalOpen(true);
+    // Cargar lesiones del atleta
+    setIsLoadingAthleteInjuries(true);
+    try {
+      const injuries = await CoachInjuryService.getTop3RecentInjuriesForAthlete(parseInt(athlete.id));
+      setAthleteInjuries(injuries);
+    } catch (error) {
+      console.error('Error al cargar lesiones del atleta:', error);
+      setAthleteInjuries([]);
+    } finally {
+      setIsLoadingAthleteInjuries(false);
+    }
   };
 
   const handleViewAthletePerformance = (athlete: AthleteProfile) => {
@@ -486,13 +531,13 @@ export function IndividualAthletesManagement() {
   const getSeverityBadge = (severity: string): string => {
     switch (severity.toLowerCase()) {
       case 'mild':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-200 text-yellow-900 border-yellow-400 font-semibold';
       case 'moderate':
-        return 'bg-orange-100 text-orange-800';
+        return 'bg-orange-200 text-orange-900 border-orange-400 font-semibold';
       case 'severe':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-200 text-red-900 border-red-400 font-semibold';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-200 text-gray-900 border-gray-400 font-semibold';
     }
   };
 
@@ -506,6 +551,36 @@ export function IndividualAthletesManagement() {
         return 'Grave';
       default:
         return severity;
+    }
+  };
+
+  const mapStatusLabel = (status: string): string => {
+    switch (status.toLowerCase()) {
+      case 'active':
+        return 'Activa';
+      case 'undertreatment':
+        return 'En Tratamiento';
+      case 'recovered':
+        return 'Recuperada';
+      case 'cancelled':
+        return 'Cancelada';
+      default:
+        return status;
+    }
+  };
+
+  const getStatusBadge = (status: string): string => {
+    switch (status.toLowerCase()) {
+      case 'active':
+        return 'bg-red-200 text-red-900 border-red-400 font-semibold';
+      case 'undertreatment':
+        return 'bg-orange-200 text-orange-900 border-orange-400 font-semibold';
+      case 'recovered':
+        return 'bg-green-200 text-green-900 border-green-400 font-semibold';
+      case 'cancelled':
+        return 'bg-gray-200 text-gray-900 border-gray-400 font-semibold';
+      default:
+        return 'bg-gray-200 text-gray-900 border-gray-400 font-semibold';
     }
   };
 
@@ -1032,13 +1107,29 @@ export function IndividualAthletesManagement() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Proveedor:</span>
-                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.provider}</span>
+                        <span className="text-muted-foreground">Tiene prepaga/obra social:</span>
+                        <Badge className={athleteForDetails.medicalInfo.healthInsurance.hasInsurance 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-gray-100 text-gray-800'}>
+                          {athleteForDetails.medicalInfo.healthInsurance.hasInsurance ? 'Sí' : 'No'}
+                        </Badge>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">N° de Afiliado:</span>
-                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.memberNumber}</span>
-                      </div>
+                      {athleteForDetails.medicalInfo.healthInsurance.hasInsurance && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Proveedor:</span>
+                            <span className="font-medium">
+                              {athleteForDetails.medicalInfo.healthInsurance.provider || 'No especificado'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">N° de Afiliado:</span>
+                            <span className="font-medium">
+                              {athleteForDetails.medicalInfo.healthInsurance.memberNumber || 'No especificado'}
+                            </span>
+                          </div>
+                        </>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -1064,32 +1155,6 @@ export function IndividualAthletesManagement() {
                           {athleteForDetails.medicalInfo.medicalClearance.hasValidClearance ? 'Vigente' : 'No Vigente'}
                         </Badge>
                       </div>
-                      {athleteForDetails.medicalInfo.medicalClearance.certificateFile && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Certificado:</span>
-                          <span className="font-medium text-xs">
-                            {athleteForDetails.medicalInfo.medicalClearance.certificateFileName || 'Subido'}
-                          </span>
-                        </div>
-                      )}
-                      {athleteForDetails.medicalInfo.medicalClearance.uploadDate && (
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Fecha de carga:</span>
-                          <span className="font-medium">
-                            {formatDate(athleteForDetails.medicalInfo.medicalClearance.uploadDate)}
-                          </span>
-                        </div>
-                      )}
-                      <Button
-                        className="w-full mt-3"
-                        variant="outline"
-                        onClick={() => handleManageMedicalClearance(athleteForDetails)}
-                      >
-                        {athleteForDetails.medicalInfo.medicalClearance.certificateFile 
-                          ? 'Ver/Actualizar Certificado'
-                          : 'Subir Certificado'
-                        }
-                      </Button>
                       {athleteForDetails.medicalInfo.medicalClearance.lastCheckupDate && (
                         <div className="flex justify-between">
                           <span className="text-muted-foreground">Último control:</span>
@@ -1113,6 +1178,92 @@ export function IndividualAthletesManagement() {
                     </CardContent>
                   </Card>
                 </div>
+                
+                {/* Condiciones Médicas */}
+                {athleteForDetails.medicalInfo.medicalConditions && athleteForDetails.medicalInfo.medicalConditions.length > 0 && (
+                  <Card className="mt-6">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <Shield className="w-4 h-4 text-orange-500" />
+                        Condiciones Médicas
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <ul className="space-y-2">
+                        {athleteForDetails.medicalInfo.medicalConditions.map((condition, index) => (
+                          <li key={index} className="text-sm text-muted-foreground">
+                            • {condition}
+                          </li>
+                        ))}
+                      </ul>
+                    </CardContent>
+                  </Card>
+                )}
+
+                {/* Lesiones Recientes */}
+                {isLoadingAthleteInjuries ? (
+                  <Card className="mt-6">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-500" />
+                        Lesiones Recientes
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="flex items-center justify-center py-4">
+                        <Loader2 className="w-4 h-4 animate-spin text-muted-foreground mr-2" />
+                        <span className="text-sm text-muted-foreground">Cargando lesiones...</span>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : athleteInjuries.length > 0 ? (
+                  <Card className="mt-6">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base flex items-center gap-2">
+                        <AlertCircle className="w-4 h-4 text-red-500" />
+                        Lesiones Recientes
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="space-y-4">
+                        {athleteInjuries.map((injury) => (
+                          <div key={injury.injuryId} className="border rounded-lg p-4 space-y-2">
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-foreground">{injury.title}</h4>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Diagnóstico: {new Date(injury.diagnosisDate).toLocaleDateString('es-ES')}
+                                  </p>
+                                </div>
+                                <Badge className={`${getSeverityBadge(injury.severity)} border-2`}>
+                                  {mapSeverityLabel(injury.severity)}
+                                </Badge>
+                              </div>
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                <Badge className={`${getStatusBadge(injury.status)} border-2 text-xs`}>
+                                  Estado: {mapStatusLabel(injury.status)}
+                                </Badge>
+                                {injury.impactOnTraining && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Impacto: {mapImpactLabel(injury.impactOnTraining)}
+                                  </Badge>
+                                )}
+                              </div>
+                            {injury.recoveryDate ? (
+                              <p className="text-xs text-green-600 font-medium">
+                                ✓ Recuperado el: {new Date(injury.recoveryDate).toLocaleDateString('es-ES')}
+                              </p>
+                            ) : injury.recoveryEstimateDate && (
+                              <p className="text-xs text-muted-foreground">
+                                Recuperación estimada: {new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES')}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </CardContent>
+                  </Card>
+                ) : null}
               </div>
             </div>
           )}

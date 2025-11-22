@@ -40,6 +40,17 @@ export interface AthleteResponseDto {
   vo2Max?: string; // Velocidad máxima por km en formato mm:ss (ejemplo: "03:30")
   vO2Max?: string; // Alias para compatibilidad con backend (camelCase)
   birthDate?: string; // Fecha de nacimiento completa (formato ISO)
+  height?: number;
+  weight?: number;
+  emergencyContactName?: string;
+  emergencyContactPhone?: string;
+  emergencyContactRelationship?: string;
+  hasHealthInsurance?: boolean;
+  healthInsuranceProvider?: string;
+  healthInsuranceMemberNumber?: string;
+  lastCheckupDate?: string;
+  medicalClearanceExpiryDate?: string;
+  medicalConditions?: string[];
 }
 
 export interface CoachResponseDto {

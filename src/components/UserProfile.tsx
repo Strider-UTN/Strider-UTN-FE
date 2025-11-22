@@ -58,6 +58,7 @@ interface User {
   lastName?: string;
   phone?: string;
   dateOfBirth?: string;
+  gender?: 'masculino' | 'femenino' | 'no-especifica' | string | number;
   location?: string;
   bio?: string;
   profileImage?: string;
@@ -95,6 +96,7 @@ interface User {
     };
     medicalInfo: {
       healthInsurance?: {
+        hasInsurance: boolean;
         provider: string;
         memberNumber: string;
       };
@@ -108,6 +110,7 @@ interface User {
         uploadDate?: string;
       };
     };
+    medicalConditions?: string[]; // Lista de condiciones médicas
   };
 }
 
@@ -220,6 +223,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
       },
       medicalInfo: {
         healthInsurance: {
+          hasInsurance: false,
           provider: '',
           memberNumber: ''
         },
@@ -346,6 +350,16 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
         location: profileData.address,
         profileImage: profileData.profilePictureUrl,
         dateOfBirth: formattedBirthDate,
+        gender: profileData.gender !== undefined && profileData.gender !== null
+          ? (typeof profileData.gender === 'number'
+              ? (profileData.gender === 0 ? 'masculino' : profileData.gender === 1 ? 'femenino' : 'no-especifica')
+              : typeof profileData.gender === 'string'
+              ? (profileData.gender.toLowerCase() === 'male' ? 'masculino' 
+                  : profileData.gender.toLowerCase() === 'female' ? 'femenino' 
+                  : profileData.gender.toLowerCase() === 'other' ? 'no-especifica'
+                  : profileData.gender)
+              : profileData.gender)
+          : undefined,
         bio: profileData.bio || '',
         preferences: {
           theme: mappedTheme,
@@ -355,27 +369,31 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
           }
         },
         physicalProfile: mappedUserType === 'athlete' ? {
-          height: profileData.height,
-          weight: profileData.weight,
+          height: profileData.height !== undefined && profileData.height !== null ? Number(profileData.height) : undefined,
+          weight: profileData.weight !== undefined && profileData.weight !== null ? Number(profileData.weight) : undefined,
           vo2Max: (profileData as any).vO2Max || profileData.vo2Max, // Backend retorna vO2Max (camelCase)
           yearsOfExperience: profileData.yearsOfExperience,
           trainingStartDate: profileData.trainingStartDate || '',
           trainingVolume: mappedTrainingVolume,
           emergencyContact: {
-            name: profileData.emergencyContactName || '',
-            phone: profileData.emergencyContactPhone || '',
-            relationship: profileData.emergencyContactRelationship || ''
+            name: profileData.emergencyContactName?.trim() || '',
+            phone: profileData.emergencyContactPhone?.trim() || '',
+            relationship: profileData.emergencyContactRelationship?.trim() || ''
           },
           medicalInfo: {
             healthInsurance: {
-              provider: '',
-              memberNumber: ''
+              hasInsurance: (profileData as any).hasHealthInsurance || false,
+              provider: (profileData as any).healthInsuranceProvider || '',
+              memberNumber: (profileData as any).healthInsuranceMemberNumber || ''
             },
             medicalClearance: {
-              hasValidClearance: false,
-              isExpired: false
+              hasValidClearance: (profileData as any).lastCheckupDate ? true : false,
+              lastCheckupDate: (profileData as any).lastCheckupDate ? new Date((profileData as any).lastCheckupDate).toISOString().split('T')[0] : '',
+              expiryDate: (profileData as any).medicalClearanceExpiryDate ? new Date((profileData as any).medicalClearanceExpiryDate).toISOString().split('T')[0] : '',
+              isExpired: (profileData as any).medicalClearanceExpiryDate ? new Date((profileData as any).medicalClearanceExpiryDate) < new Date() : false
             }
-          }
+          },
+          medicalConditions: profileData.medicalConditions || []
         } : undefined
       };
 
@@ -418,6 +436,15 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
         address: formData.location,
         profilePictureUrl: formData.profileImage,
         birthDate: formData.dateOfBirth || undefined,
+        gender: formData.gender !== undefined && formData.gender !== null
+          ? (typeof formData.gender === 'number'
+              ? formData.gender
+              : typeof formData.gender === 'string'
+              ? (formData.gender === 'masculino' || formData.gender.toLowerCase() === 'male' ? 0
+                  : formData.gender === 'femenino' || formData.gender.toLowerCase() === 'female' ? 1
+                  : 2)
+              : undefined)
+          : undefined,
         bio: formData.bio
       };
 
@@ -429,14 +456,37 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
         if (formData.physicalProfile.weight !== undefined) {
           updateDto.weight = formData.physicalProfile.weight;
         }
-        updateDto.emergencyContactName = formData.physicalProfile.emergencyContact.name;
-        updateDto.emergencyContactPhone = formData.physicalProfile.emergencyContact.phone;
-        updateDto.emergencyContactRelationship = formData.physicalProfile.emergencyContact.relationship;
+        // Enviar contacto de emergencia (trim para limpiar espacios en blanco)
+        updateDto.emergencyContactName = formData.physicalProfile.emergencyContact?.name?.trim() || '';
+        updateDto.emergencyContactPhone = formData.physicalProfile.emergencyContact?.phone?.trim() || '';
+        updateDto.emergencyContactRelationship = formData.physicalProfile.emergencyContact?.relationship?.trim() || '';
         updateDto.country = formData.location;
         updateDto.vo2Max = formData.physicalProfile.vo2Max;
         updateDto.trainingStartDate = formData.physicalProfile.trainingStartDate;
         updateDto.trainingVolumeType = formData.physicalProfile.trainingVolume.weekly ? 'Weekly' : 'Monthly';
         updateDto.trainingVolumeKm = formData.physicalProfile.trainingVolume.weekly || formData.physicalProfile.trainingVolume.monthly || 0;
+        
+        // Información médica
+        updateDto.hasHealthInsurance = formData.physicalProfile.medicalInfo.healthInsurance?.hasInsurance || false;
+        updateDto.healthInsuranceProvider = formData.physicalProfile.medicalInfo.healthInsurance?.provider?.trim() || '';
+        updateDto.healthInsuranceMemberNumber = formData.physicalProfile.medicalInfo.healthInsurance?.memberNumber?.trim() || '';
+        
+        // Fecha del último chequeo (convertir de YYYY-MM-DD a ISO string para el backend)
+        if (formData.physicalProfile.medicalInfo.medicalClearance.lastCheckupDate) {
+          const checkupDate = new Date(formData.physicalProfile.medicalInfo.medicalClearance.lastCheckupDate);
+          updateDto.lastCheckupDate = checkupDate.toISOString();
+        }
+        
+        // Fecha de expiración (el backend la calcula automáticamente, pero la enviamos por si acaso)
+        if (formData.physicalProfile.medicalInfo.medicalClearance.expiryDate) {
+          const expiryDate = new Date(formData.physicalProfile.medicalInfo.medicalClearance.expiryDate);
+          updateDto.medicalClearanceExpiryDate = expiryDate.toISOString();
+        }
+        
+        // Condiciones médicas (filtrar condiciones vacías)
+        if (formData.physicalProfile.medicalConditions) {
+          updateDto.medicalConditions = formData.physicalProfile.medicalConditions.filter(c => c.trim() !== '');
+        }
       }
 
       // Llamar al servicio del backend
@@ -941,6 +991,35 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                     )}
                   </div>
 
+                  <div className="space-y-2">
+                    <Label htmlFor="gender">Género</Label>
+                    <Select
+                      value={
+                        typeof formData.gender === 'number'
+                          ? formData.gender === 0 ? 'masculino' : formData.gender === 1 ? 'femenino' : 'no-especifica'
+                          : typeof formData.gender === 'string'
+                          ? (formData.gender.toLowerCase() === 'male' || formData.gender === 'masculino' ? 'masculino'
+                              : formData.gender.toLowerCase() === 'female' || formData.gender === 'femenino' ? 'femenino'
+                              : formData.gender.toLowerCase() === 'other' || formData.gender === 'no-especifica' ? 'no-especifica'
+                              : '')
+                          : ''
+                      }
+                      onValueChange={(value: 'masculino' | 'femenino' | 'no-especifica') => {
+                        setFormData(prev => ({ ...prev, gender: value }));
+                      }}
+                      disabled={!isEditing}
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Selecciona tu género" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="masculino">Masculino</SelectItem>
+                        <SelectItem value="femenino">Femenino</SelectItem>
+                        <SelectItem value="no-especifica">Prefiero no especificar</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
                   <div className="space-y-2 md:col-span-2">
                     <Label htmlFor="location">Ubicación</Label>
                     <Input
@@ -961,7 +1040,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           id="height"
                           type="number"
                           min="0"
-                          value={formData.physicalProfile?.height || ''}
+                          value={formData.physicalProfile?.height !== undefined && formData.physicalProfile?.height !== null && formData.physicalProfile.height > 0 ? formData.physicalProfile.height : ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
@@ -981,7 +1060,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                           type="number"
                           min="0"
                           step="0.1"
-                          value={formData.physicalProfile?.weight || ''}
+                          value={formData.physicalProfile?.weight !== undefined && formData.physicalProfile?.weight !== null && formData.physicalProfile.weight > 0 ? formData.physicalProfile.weight : ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
@@ -1047,90 +1126,133 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                                   : 'Seleccionar mes y año'}
                               </Button>
                             </PopoverTrigger>
-                            <PopoverContent className="w-[320px] p-3" align="start">
-                              {/* Controles de mes/año (sin calendario de días) */}
-                              <div className="flex items-center gap-2">
-                                <Select
-                                  value={(trainingVisibleMonth ? (trainingVisibleMonth.getMonth()+1).toString() : (new Date().getMonth()+1).toString())}
-                                  onValueChange={(val) => {
-                                    setTrainingVisibleMonth(prev => {
-                                      const base = prev ?? new Date();
-                                      const y = base.getFullYear();
-                                      const m = parseInt(val) - 1;
-                                      const next = new Date(y, m, 1);
-                                      // Persistir inmediatamente YYYY-MM y años
-                                      const ym = `${y}-${(m+1).toString().padStart(2,'0')}`;
-                                      setFormData(prevForm => {
-                                        const updated = {
-                                          ...prevForm,
-                                          physicalProfile: {
-                                            ...prevForm.physicalProfile!,
-                                            trainingStartDate: ym
+                            <PopoverContent className="w-[320px] p-4" align="start">
+                              <div className="flex flex-col gap-3">
+                                <div className="flex items-center gap-2">
+                                  <Select
+                                    value={(trainingVisibleMonth ? (trainingVisibleMonth.getMonth()+1).toString() : (new Date().getMonth()+1).toString())}
+                                    onValueChange={(val) => {
+                                      setTrainingVisibleMonth(prev => {
+                                        const base = prev ?? new Date();
+                                        const y = base.getFullYear();
+                                        const m = parseInt(val) - 1;
+                                        const next = new Date(y, m, 1);
+                                        // Persistir inmediatamente YYYY-MM y años
+                                        const ym = `${y}-${(m+1).toString().padStart(2,'0')}`;
+                                        setFormData(prevForm => {
+                                          const updated = {
+                                            ...prevForm,
+                                            physicalProfile: {
+                                              ...prevForm.physicalProfile!,
+                                              trainingStartDate: ym
+                                            }
+                                          };
+                                          // Calcular años
+                                          const today = new Date();
+                                          let years = today.getFullYear() - y;
+                                          const monthDiff = today.getMonth() - m;
+                                          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < 1)) {
+                                            years--;
                                           }
-                                        };
-                                        // Calcular años
-                                        const today = new Date();
-                                        let years = today.getFullYear() - y;
-                                        const monthDiff = today.getMonth() - m;
-                                        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < 1)) {
-                                          years--;
-                                        }
-                                        updated.physicalProfile!.yearsOfExperience = Math.max(0, years);
-                                        return updated;
+                                          updated.physicalProfile!.yearsOfExperience = Math.max(0, years);
+                                          return updated;
+                                        });
+                                        return next;
                                       });
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  <SelectTrigger className="w-[160px]">
-                                    <SelectValue placeholder="Mes" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {monthNamesEs.map((mName, idx) => (
-                                      <SelectItem key={mName} value={(idx+1).toString()}>{mName.charAt(0).toUpperCase()+mName.slice(1)}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
-                                <Select
-                                  value={(trainingVisibleMonth ? trainingVisibleMonth.getFullYear() : new Date().getFullYear()).toString()}
-                                  onValueChange={(val) => {
-                                    setTrainingVisibleMonth(prev => {
-                                      const base = prev ?? new Date();
-                                      const y = parseInt(val);
-                                      const m = base.getMonth();
-                                      const next = new Date(y, m, 1);
-                                      // Persistir inmediatamente YYYY-MM y años
-                                      const ym = `${y}-${(m+1).toString().padStart(2,'0')}`;
-                                      setFormData(prevForm => {
-                                        const updated = {
-                                          ...prevForm,
-                                          physicalProfile: {
-                                            ...prevForm.physicalProfile!,
-                                            trainingStartDate: ym
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-[180px]">
+                                      <SelectValue placeholder="Mes" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {monthNamesEs.map((mName, idx) => (
+                                        <SelectItem key={mName} value={(idx+1).toString()}>
+                                          {mName.charAt(0).toUpperCase() + mName.slice(1)}
+                                        </SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  <Select
+                                    value={(trainingVisibleMonth ? trainingVisibleMonth.getFullYear() : new Date().getFullYear()).toString()}
+                                    onValueChange={(val) => {
+                                      setTrainingVisibleMonth(prev => {
+                                        const base = prev ?? new Date();
+                                        const y = parseInt(val);
+                                        const m = base.getMonth();
+                                        const next = new Date(y, m, 1);
+                                        // Persistir inmediatamente YYYY-MM y años
+                                        const ym = `${y}-${(m+1).toString().padStart(2,'0')}`;
+                                        setFormData(prevForm => {
+                                          const updated = {
+                                            ...prevForm,
+                                            physicalProfile: {
+                                              ...prevForm.physicalProfile!,
+                                              trainingStartDate: ym
+                                            }
+                                          };
+                                          const today = new Date();
+                                          let years = today.getFullYear() - y;
+                                          const monthDiff = today.getMonth() - m;
+                                          if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < 1)) {
+                                            years--;
                                           }
-                                        };
-                                        const today = new Date();
-                                        let years = today.getFullYear() - y;
-                                        const monthDiff = today.getMonth() - m;
-                                        if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < 1)) {
-                                          years--;
-                                        }
-                                        updated.physicalProfile!.yearsOfExperience = Math.max(0, years);
-                                        return updated;
+                                          updated.physicalProfile!.yearsOfExperience = Math.max(0, years);
+                                          return updated;
+                                        });
+                                        return next;
                                       });
-                                      return next;
-                                    });
-                                  }}
-                                >
-                                  <SelectTrigger className="w-[120px]">
-                                    <SelectValue placeholder="Año" />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    {buildYearRange(1970, new Date().getFullYear()).map(y => (
-                                      <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-[120px]">
+                                      <SelectValue placeholder="Año" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {buildYearRange(1970, new Date().getFullYear()).map(y => (
+                                        <SelectItem key={y} value={y.toString()}>{y}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                {formData.physicalProfile?.trainingStartDate && (() => {
+                                  try {
+                                    const [year, month] = formData.physicalProfile.trainingStartDate.split('-').map(Number);
+                                    const startDate = new Date(year, month - 1, 1);
+                                    const today = new Date();
+                                    
+                                    // Calcular años completos
+                                    let years = today.getFullYear() - startDate.getFullYear();
+                                    let months = today.getMonth() - startDate.getMonth();
+                                    
+                                    // Ajustar si aún no se ha cumplido un año completo
+                                    if (months < 0 || (months === 0 && today.getDate() < startDate.getDate())) {
+                                      years--;
+                                      months += 12;
+                                    }
+                                    
+                                    // Asegurar que no sea negativo
+                                    years = Math.max(0, years);
+                                    months = Math.max(0, months);
+                                    
+                                    // Formatear el mensaje
+                                    const parts: string[] = [];
+                                    if (years > 0) {
+                                      parts.push(`${years} ${years === 1 ? 'año' : 'años'}`);
+                                    }
+                                    if (months > 0) {
+                                      parts.push(`${months} ${months === 1 ? 'mes' : 'meses'}`);
+                                    }
+                                    
+                                    const experienceText = parts.length > 0 ? parts.join(' y ') : 'Sin Experiencia';
+                                    
+                                    return (
+                                      <p className="text-sm text-muted-foreground pt-2 border-t">
+                                        Experiencia aproximada: <span className="font-semibold text-foreground">{experienceText}</span>
+                                      </p>
+                                    );
+                                  } catch {
+                                    return null;
+                                  }
+                                })()}
                               </div>
                             </PopoverContent>
                           </Popover>
@@ -1227,51 +1349,6 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                         </p>
                       </div>
 
-                      {formData.physicalProfile?.trainingVolume.weekly ? (
-                        <div className="space-y-2">
-                          <Label htmlFor="trainingVolumeWeekly">Volumen Semanal (km)</Label>
-                          <Input
-                            id="trainingVolumeWeekly"
-                            type="number"
-                            min="0"
-                            value={formData.physicalProfile?.trainingVolume.weekly || 0}
-                            onChange={(e) => setFormData(prev => ({
-                              ...prev,
-                              physicalProfile: {
-                                ...prev.physicalProfile!,
-                                trainingVolume: {
-                                  ...prev.physicalProfile!.trainingVolume,
-                                  weekly: parseInt(e.target.value) || 0
-                                }
-                              }
-                            }))}
-                            disabled={!isEditing}
-                            placeholder="Kilómetros por semana"
-                          />
-                        </div>
-                      ) : (
-                        <div className="space-y-2">
-                          <Label htmlFor="trainingVolumeMonthly">Volumen Mensual (km)</Label>
-                          <Input
-                            id="trainingVolumeMonthly"
-                            type="number"
-                            min="0"
-                            value={formData.physicalProfile?.trainingVolume.monthly || 0}
-                            onChange={(e) => setFormData(prev => ({
-                              ...prev,
-                              physicalProfile: {
-                                ...prev.physicalProfile!,
-                                trainingVolume: {
-                                  ...prev.physicalProfile!.trainingVolume,
-                                  monthly: parseInt(e.target.value) || 0
-                                }
-                              }
-                            }))}
-                            disabled={!isEditing}
-                            placeholder="Kilómetros por mes"
-                          />
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -1288,14 +1365,15 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                         <Label htmlFor="emergencyContactName">Nombre Completo</Label>
                         <Input
                           id="emergencyContactName"
-                          value={formData.physicalProfile?.emergencyContact.name || ''}
+                          value={formData.physicalProfile?.emergencyContact?.name || ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
                               ...prev.physicalProfile!,
                               emergencyContact: {
-                                ...prev.physicalProfile!.emergencyContact,
-                                name: e.target.value
+                                name: e.target.value,
+                                phone: prev.physicalProfile?.emergencyContact?.phone || '',
+                                relationship: prev.physicalProfile?.emergencyContact?.relationship || ''
                               }
                             }
                           }))}
@@ -1309,14 +1387,15 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                         <Input
                           id="emergencyContactPhone"
                           type="tel"
-                          value={formData.physicalProfile?.emergencyContact.phone || ''}
+                          value={formData.physicalProfile?.emergencyContact?.phone || ''}
                           onChange={(e) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
                               ...prev.physicalProfile!,
                               emergencyContact: {
-                                ...prev.physicalProfile!.emergencyContact,
-                                phone: e.target.value
+                                name: prev.physicalProfile?.emergencyContact?.name || '',
+                                phone: e.target.value,
+                                relationship: prev.physicalProfile?.emergencyContact?.relationship || ''
                               }
                             }
                           }))}
@@ -1328,13 +1407,14 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                       <div className="space-y-2">
                         <Label htmlFor="emergencyContactRelationship">Relación</Label>
                         <Select
-                          value={formData.physicalProfile?.emergencyContact.relationship || ''}
+                          value={formData.physicalProfile?.emergencyContact?.relationship || ''}
                           onValueChange={(value) => setFormData(prev => ({
                             ...prev,
                             physicalProfile: {
                               ...prev.physicalProfile!,
                               emergencyContact: {
-                                ...prev.physicalProfile!.emergencyContact,
+                                name: prev.physicalProfile?.emergencyContact?.name || '',
+                                phone: prev.physicalProfile?.emergencyContact?.phone || '',
                                 relationship: value
                               }
                             }
@@ -1361,7 +1441,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                   <Separator />
 
                   {/* Información Médica */}
-                  <div>
+                  <div className="pt-6">
                     <h4 className="flex items-center mb-4">
                       <Shield className="w-4 h-4 mr-2" />
                       Información Médica
@@ -1369,56 +1449,90 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                     
                     {/* Obra Social / Prepaga */}
                     <div className="space-y-4">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label htmlFor="healthInsuranceProvider">Prepaga / Obra Social</Label>
-                          <Input
-                            id="healthInsuranceProvider"
-                            value={formData.physicalProfile?.medicalInfo.healthInsurance?.provider || ''}
-                            onChange={(e) => setFormData(prev => ({
-                              ...prev,
-                              physicalProfile: {
-                                ...prev.physicalProfile!,
-                                medicalInfo: {
-                                  ...prev.physicalProfile!.medicalInfo,
-                                  healthInsurance: {
-                                    ...prev.physicalProfile!.medicalInfo.healthInsurance,
-                                    provider: e.target.value
-                                  }
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          id="hasHealthInsurance"
+                          checked={formData.physicalProfile?.medicalInfo.healthInsurance?.hasInsurance || false}
+                          onChange={(e) => setFormData(prev => ({
+                            ...prev,
+                            physicalProfile: {
+                              ...prev.physicalProfile!,
+                              medicalInfo: {
+                                ...prev.physicalProfile!.medicalInfo,
+                                healthInsurance: {
+                                  hasInsurance: e.target.checked,
+                                  provider: e.target.checked ? (prev.physicalProfile?.medicalInfo.healthInsurance?.provider || '') : '',
+                                  memberNumber: e.target.checked ? (prev.physicalProfile?.medicalInfo.healthInsurance?.memberNumber || '') : ''
                                 }
                               }
-                            }))}
-                            disabled={!isEditing}
-                            placeholder="Nombre de la prepaga/obra social"
-                          />
-                        </div>
-
-                        <div className="space-y-2">
-                          <Label htmlFor="healthInsuranceMemberNumber">Número de Afiliado</Label>
-                          <Input
-                            id="healthInsuranceMemberNumber"
-                            value={formData.physicalProfile?.medicalInfo.healthInsurance?.memberNumber || ''}
-                            onChange={(e) => setFormData(prev => ({
-                              ...prev,
-                              physicalProfile: {
-                                ...prev.physicalProfile!,
-                                medicalInfo: {
-                                  ...prev.physicalProfile!.medicalInfo,
-                                  healthInsurance: {
-                                    ...prev.physicalProfile!.medicalInfo.healthInsurance,
-                                    memberNumber: e.target.value
-                                  }
-                                }
-                              }
-                            }))}
-                            disabled={!isEditing}
-                            placeholder="Número de afiliado"
-                          />
-                        </div>
+                            }
+                          }))}
+                          disabled={!isEditing}
+                          className="h-4 w-4 rounded border-gray-300"
+                        />
+                        <Label htmlFor="hasHealthInsurance" className="font-normal cursor-pointer">
+                          Tengo prepaga/obra social
+                        </Label>
                       </div>
 
-                      {/* Apto Físico */}
-                      <div className="space-y-4">
+                      {formData.physicalProfile?.medicalInfo.healthInsurance?.hasInsurance && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="healthInsuranceProvider">Prepaga / Obra Social</Label>
+                            <Input
+                              id="healthInsuranceProvider"
+                              value={formData.physicalProfile?.medicalInfo.healthInsurance?.provider || ''}
+                              onChange={(e) => setFormData(prev => ({
+                                ...prev,
+                                physicalProfile: {
+                                  ...prev.physicalProfile!,
+                                  medicalInfo: {
+                                    ...prev.physicalProfile!.medicalInfo,
+                                    healthInsurance: {
+                                      hasInsurance: true,
+                                      provider: e.target.value,
+                                      memberNumber: prev.physicalProfile?.medicalInfo.healthInsurance?.memberNumber || ''
+                                    }
+                                  }
+                                }
+                              }))}
+                              disabled={!isEditing}
+                              placeholder="Nombre de la prepaga/obra social"
+                            />
+                          </div>
+
+                          <div className="space-y-2">
+                            <Label htmlFor="healthInsuranceMemberNumber">Número de Afiliado</Label>
+                            <Input
+                              id="healthInsuranceMemberNumber"
+                              value={formData.physicalProfile?.medicalInfo.healthInsurance?.memberNumber || ''}
+                              onChange={(e) => setFormData(prev => ({
+                                ...prev,
+                                physicalProfile: {
+                                  ...prev.physicalProfile!,
+                                  medicalInfo: {
+                                    ...prev.physicalProfile!.medicalInfo,
+                                    healthInsurance: {
+                                      hasInsurance: true,
+                                      provider: prev.physicalProfile?.medicalInfo.healthInsurance?.provider || '',
+                                      memberNumber: e.target.value
+                                    }
+                                  }
+                                }
+                              }))}
+                              disabled={!isEditing}
+                              placeholder="Número de afiliado"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <Separator className="my-6" />
+
+                    {/* Apto Físico */}
+                    <div className="space-y-4">
                         <h5 className="flex items-center">
                           <Heart className="w-4 h-4 mr-2" />
                           Apto Físico (Anual)
@@ -1549,20 +1663,34 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                               id="lastCheckupDate"
                               type="date"
                               value={formData.physicalProfile?.medicalInfo.medicalClearance.lastCheckupDate || ''}
-                              onChange={(e) => setFormData(prev => ({
-                                ...prev,
-                                physicalProfile: {
-                                  ...prev.physicalProfile!,
-                                  medicalInfo: {
-                                    ...prev.physicalProfile!.medicalInfo,
-                                    medicalClearance: {
-                                      ...prev.physicalProfile!.medicalInfo.medicalClearance,
-                                      lastCheckupDate: e.target.value,
-                                      hasValidClearance: e.target.value ? true : false
+                              onChange={(e) => {
+                                const checkupDate = e.target.value;
+                                let expiryDate = '';
+                                
+                                // Calcular automáticamente la fecha de expiración (1 año después)
+                                if (checkupDate) {
+                                  const date = new Date(checkupDate);
+                                  date.setFullYear(date.getFullYear() + 1);
+                                  expiryDate = date.toISOString().split('T')[0];
+                                }
+                                
+                                setFormData(prev => ({
+                                  ...prev,
+                                  physicalProfile: {
+                                    ...prev.physicalProfile!,
+                                    medicalInfo: {
+                                      ...prev.physicalProfile!.medicalInfo,
+                                      medicalClearance: {
+                                        ...prev.physicalProfile!.medicalInfo.medicalClearance,
+                                        lastCheckupDate: checkupDate,
+                                        expiryDate: expiryDate,
+                                        hasValidClearance: checkupDate ? true : false,
+                                        isExpired: expiryDate ? new Date(expiryDate) < new Date() : false
+                                      }
                                     }
                                   }
-                                }
-                              }))}
+                                }));
+                              }}
                               disabled={!isEditing}
                             />
                           </div>
@@ -1573,26 +1701,90 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                               id="expiryDate"
                               type="date"
                               value={formData.physicalProfile?.medicalInfo.medicalClearance.expiryDate || ''}
-                              onChange={(e) => setFormData(prev => ({
-                                ...prev,
-                                physicalProfile: {
-                                  ...prev.physicalProfile!,
-                                  medicalInfo: {
-                                    ...prev.physicalProfile!.medicalInfo,
-                                    medicalClearance: {
-                                      ...prev.physicalProfile!.medicalInfo.medicalClearance,
-                                      expiryDate: e.target.value,
-                                      isExpired: e.target.value ? new Date(e.target.value) < new Date() : false
-                                    }
-                                  }
-                                }
-                              }))}
-                              disabled={!isEditing}
+                              readOnly
+                              disabled
+                              className="bg-muted cursor-not-allowed"
                             />
+                            <p className="text-xs text-muted-foreground">
+                              Se calcula automáticamente como 1 año después de la fecha del último chequeo
+                            </p>
                           </div>
                         </div>
                       </div>
-                    </div>
+
+                      <Separator className="my-6" />
+
+                      {/* Condiciones Médicas */}
+                      <div className="space-y-4">
+                        <h5 className="flex items-center">
+                          <AlertTriangle className="w-4 h-4 mr-2" />
+                          Condiciones Médicas o de Salud
+                        </h5>
+                        <div className="space-y-3">
+                          {(formData.physicalProfile?.medicalConditions || []).map((condition, index) => (
+                            <div key={index} className="flex items-center gap-2">
+                              <Input
+                                value={condition}
+                                onChange={(e) => {
+                                  const updated = [...(formData.physicalProfile?.medicalConditions || [])];
+                                  updated[index] = e.target.value;
+                                  setFormData(prev => ({
+                                    ...prev,
+                                    physicalProfile: {
+                                      ...prev.physicalProfile!,
+                                      medicalConditions: updated
+                                    }
+                                  }));
+                                }}
+                                disabled={!isEditing}
+                                placeholder="Ej: Asma, Alergia a medicamentos, Lesión de rodilla previa"
+                                className="flex-1"
+                              />
+                              {isEditing && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon"
+                                  onClick={() => {
+                                    const updated = (formData.physicalProfile?.medicalConditions || []).filter((_, i) => i !== index);
+                                    setFormData(prev => ({
+                                      ...prev,
+                                      physicalProfile: {
+                                        ...prev.physicalProfile!,
+                                        medicalConditions: updated
+                                      }
+                                    }));
+                                  }}
+                                  className="h-9 w-9"
+                                >
+                                  <X className="h-4 w-4" />
+                                </Button>
+                              )}
+                            </div>
+                          ))}
+                          {isEditing && (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setFormData(prev => ({
+                                  ...prev,
+                                  physicalProfile: {
+                                    ...prev.physicalProfile!,
+                                    medicalConditions: [...(prev.physicalProfile?.medicalConditions || []), '']
+                                  }
+                                }));
+                              }}
+                              className="w-full"
+                            >
+                              + Agregar Condición
+                            </Button>
+                          )}
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Describe cualquier enfermedad, lesión previa, condición física o tratamiento médico que pueda afectar tu rendimiento deportivo o representar un riesgo durante el entrenamiento.
+                        </p>
+                      </div>
                   </div>
                 </CardContent>
               </Card>
@@ -1754,57 +1946,6 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                     </div>
                   </div>
 
-                  <Separator />
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label>Unidades de Medida</Label>
-                      <p className="text-sm text-muted-foreground">
-                        Tu sistema de medición preferido
-                      </p>
-                    </div>
-                    <Select
-                      value={formData.preferences?.units || 'metric'}
-                      onValueChange={(value: 'metric' | 'imperial') => setFormData(prev => ({
-                        ...prev,
-                        preferences: { ...prev.preferences!, units: value }
-                      }))}
-                      disabled={!isEditing}
-                    >
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="metric">Métrico</SelectItem>
-                        <SelectItem value="imperial">Imperial</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <Separator />
-
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <Label className="flex items-center">
-                        <Bell className="w-4 h-4 mr-2" />
-                        Notificaciones por Email
-                      </Label>
-                      <p className="text-sm text-muted-foreground">
-                        Mantente al día con las novedades de Strider
-                      </p>
-                    </div>
-                    <Switch
-                      checked={formData.preferences?.notifications?.email || false}
-                      onCheckedChange={(checked) => setFormData(prev => ({
-                        ...prev,
-                        preferences: {
-                          ...prev.preferences!,
-                          notifications: { email: checked }
-                        }
-                      }))}
-                      disabled={!isEditing}
-                    />
-                  </div>
                 </div>
               </CardContent>
             </Card>

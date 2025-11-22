@@ -134,6 +134,14 @@ export default function App() {
     setSocialUser(null); // Limpiar datos sociales temporales
   };
 
+  const handleSuccessfulSignUp = (userData: User) => {
+    // Después de un registro exitoso, redirigir al login
+    // No autenticar automáticamente, el usuario debe hacer login
+    setSocialUser(null); // Limpiar datos sociales temporales
+    // El mensaje de éxito ya se muestra en SignUpForm antes de llamar a este handler
+    switchToSignIn();
+  };
+
   const handleSocialSignUp = (partialUserData: Partial<User>) => {
     if (partialUserData.userType === 'athlete') {
       // Para atletas, pasar al formulario de perfil físico
@@ -274,13 +282,13 @@ export default function App() {
             ) : authMode === 'signup' ? (
               <SignUpForm 
                 onSwitchToSignIn={switchToSignIn}
-                onSuccessfulSignUp={handleSuccessfulAuth}
+                onSuccessfulSignUp={handleSuccessfulSignUp}
                 onSocialSignUp={handleSocialSignUp}
               />
             ) : authMode === 'social-profile' && socialUser ? (
               <SignUpForm 
                 onSwitchToSignIn={switchToSignIn}
-                onSuccessfulSignUp={handleSuccessfulAuth}
+                onSuccessfulSignUp={handleSuccessfulSignUp}
                 onSocialSignUp={handleSocialSignUp}
                 socialUser={socialUser}
                 skipToPhysicalProfile={true}
