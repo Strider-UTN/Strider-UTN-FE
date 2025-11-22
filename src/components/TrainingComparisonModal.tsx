@@ -67,8 +67,10 @@ export function TrainingComparisonModal({
   const actualPaceSeconds = convertPaceToSeconds(completedTraining.avgPace);
 
   // Calcular desviaciones
+  // completedTraining.distance está en metros, convertir a km para comparar con plannedDistance (km)
+  const completedDistanceKm = completedTraining.distance / 1000;
   const durationDeviation = ((completedTraining.duration - plannedSession.plannedDuration) / plannedSession.plannedDuration) * 100;
-  const distanceDeviation = ((completedTraining.distance - plannedSession.plannedDistance) / plannedSession.plannedDistance) * 100;
+  const distanceDeviation = ((completedDistanceKm - plannedSession.plannedDistance) / plannedSession.plannedDistance) * 100;
   const paceDeviation = ((actualPaceSeconds - plannedPaceSeconds) / plannedPaceSeconds) * 100;
 
   // Calcular score de cumplimiento
@@ -238,9 +240,9 @@ export function TrainingComparisonModal({
 
                 {/* Distancia con gráfico circular */}
                 {renderCompletionCircle(
-                  getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance),
+                  getCompletionPercentage(plannedSession.plannedDistance, completedDistanceKm),
                   'Distancia',
-                  `${completedTraining.distance / 1000} km`,
+                  `${completedDistanceKm.toFixed(2)} km`,
                   `${plannedSession.plannedDistance} km`
                 )}
 
@@ -347,18 +349,18 @@ export function TrainingComparisonModal({
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-muted-foreground">Realizado:</span>
-                      <span className={`font-medium ${getCompletionColor(getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance))}`}>
-                        {completedTraining.distance} km
+                      <span className={`font-medium ${getCompletionColor(getCompletionPercentage(plannedSession.plannedDistance, completedDistanceKm))}`}>
+                        {completedDistanceKm.toFixed(2)} km
                       </span>
                     </div>
                     <div className="relative">
                       <Progress 
-                        value={getProgressValue(plannedSession.plannedDistance, completedTraining.distance)} 
+                        value={getProgressValue(plannedSession.plannedDistance, completedDistanceKm)} 
                         className="h-3"
                       />
                       <div className="absolute inset-0 flex items-center justify-center">
                         <span className="text-xs font-medium text-white drop-shadow-sm">
-                          {getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance)}%
+                          {getCompletionPercentage(plannedSession.plannedDistance, completedDistanceKm)}%
                         </span>
                       </div>
                     </div>
@@ -657,8 +659,8 @@ export function TrainingComparisonModal({
                       <Target className="w-5 h-5 text-muted-foreground mr-2" />
                       <span className="font-medium">Distancia</span>
                     </div>
-                    <div className={`text-2xl font-bold ${getCompletionColor(getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance))}`}>
-                      {getCompletionPercentage(plannedSession.plannedDistance, completedTraining.distance)}%
+                    <div className={`text-2xl font-bold ${getCompletionColor(getCompletionPercentage(plannedSession.plannedDistance, completedDistanceKm))}`}>
+                      {getCompletionPercentage(plannedSession.plannedDistance, completedDistanceKm)}%
                     </div>
                     <div className="text-sm text-muted-foreground mt-1">
                       {formatDeviation(distanceDeviation)} desviación

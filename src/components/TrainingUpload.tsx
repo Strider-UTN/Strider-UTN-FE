@@ -2108,7 +2108,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                                   <div>
                                     <p className="text-muted-foreground">Distancia</p>
-                                    <p className="font-medium">{existingWorkout.distance} km</p>
+                                    <p className="font-medium">{(existingWorkout.distance / 1000).toFixed(2)} km</p>
                                   </div>
                                   <div>
                                     <p className="text-muted-foreground">Duración</p>
@@ -3005,7 +3005,7 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Distancia</span>
-                      <span className="font-medium">{completedTraining.distance.toLocaleString()} km</span>
+                      <span className="font-medium">{completedTraining.distance.toFixed(2)} km</span>
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-sm text-muted-foreground">Duración</span>
@@ -3016,9 +3016,11 @@ export function TrainingUpload({ initialDate, initialSessionId }: TrainingUpload
                       <span className="font-medium">
                         {(() => {
                           // Calcular ritmo promedio desde distancia y duración
+                          // completedTraining.distance está en km, duration está en segundos
                           if (completedTraining.distance > 0 && completedTraining.duration > 0) {
-                            const durationSeconds = completedTraining.duration; // convertir minutos a segundos
-                            const paceSecondsPerKm = durationSeconds / completedTraining.distance;
+                            const durationSeconds = completedTraining.duration; // ya está en segundos
+                            const distanceKm = completedTraining.distance; // ya está en km
+                            const paceSecondsPerKm = durationSeconds / distanceKm;
                             return formatSecondsToMMSS(paceSecondsPerKm);
                           }
                           return completedTraining.avgPace || 'N/A';
