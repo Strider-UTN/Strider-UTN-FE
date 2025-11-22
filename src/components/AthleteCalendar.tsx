@@ -1501,7 +1501,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                     <div>
                       <p className="text-sm text-muted-foreground">Distancia</p>
-                      <p className="text-lg font-semibold">{completedWorkout.distance} km</p>
+                      <p className="text-lg font-semibold">{(completedWorkout.distance / 1000).toFixed(2)} km</p>
                     </div>
                     <div>
                       <p className="text-sm text-muted-foreground">Duración</p>
@@ -1522,7 +1522,9 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
                       <p className="text-lg font-semibold">
                         {(() => {
                           if (completedWorkout.distance > 0 && completedWorkout.duration > 0) {
-                            const paceSecondsPerKm = completedWorkout.duration / completedWorkout.distance;
+                            // distance está en metros, convertir a km para calcular el ritmo
+                            const distanceKm = completedWorkout.distance / 1000;
+                            const paceSecondsPerKm = completedWorkout.duration / distanceKm;
                             const mins = Math.floor(paceSecondsPerKm / 60);
                             const secs = Math.round(paceSecondsPerKm % 60);
                             return `${mins}:${secs.toString().padStart(2, '0')}/km`;
@@ -1581,7 +1583,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
                           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm">
                             <div>
                               <p className="text-muted-foreground">Vuelta #{lap.index}</p>
-                              <p className="font-medium">{lap.distance} km</p>
+                              <p className="font-medium">{(lap.distance / 1000).toFixed(2)} km</p>
                             </div>
                             <div>
                               <p className="text-muted-foreground">Duración</p>
