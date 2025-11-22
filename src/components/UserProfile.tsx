@@ -1945,6 +1945,7 @@ export function UserProfile({ isOpen, onClose, user, onUpdateUser, theme = 'ligh
                       <Moon className="w-4 h-4 text-muted-foreground" />
                     </div>
                   </div>
+
                 </div>
               </CardContent>
             </Card>

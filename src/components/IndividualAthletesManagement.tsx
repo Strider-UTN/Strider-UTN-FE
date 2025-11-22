@@ -863,30 +863,6 @@ export function IndividualAthletesManagement() {
                             </p>
                           </div>
                         </div>
-
-                        <div className="flex items-center gap-2">
-                          <Heart className="w-4 h-4 text-red-500" />
-                          <div>
-                            <p className="text-muted-foreground">VO₂ Max</p>
-                            <p className="font-medium">{athlete.vo2Max || '-'}</p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center gap-2">
-                          <Calendar className="w-4 h-4 text-muted-foreground" />
-                          <div>
-                            <p className="text-muted-foreground">Días desde último entrenamiento</p>
-                            <p className={`font-medium ${
-                              athlete.daysSinceLastWorkout != null && athlete.daysSinceLastWorkout > 5
-                                ? 'text-orange-600 dark:text-orange-400 font-semibold'
-                                : ''
-                            }`}>
-                              {athlete.daysSinceLastWorkout != null 
-                                ? `${athlete.daysSinceLastWorkout} ${athlete.daysSinceLastWorkout === 1 ? 'día' : 'días'}`
-                                : '-'}
-                            </p>
-                          </div>
-                        </div>
                       </div>
                     </div>
                   </div>
