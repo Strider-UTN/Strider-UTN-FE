@@ -537,13 +537,13 @@ export function IndividualAthletesManagement() {
   const getSeverityBadge = (severity: string): string => {
     switch (severity.toLowerCase()) {
       case 'mild':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'bg-yellow-200 text-yellow-900 border-yellow-400 font-semibold';
       case 'moderate':
-        return 'bg-orange-100 text-orange-800';
+        return 'bg-orange-200 text-orange-900 border-orange-400 font-semibold';
       case 'severe':
-        return 'bg-red-100 text-red-800';
+        return 'bg-red-200 text-red-900 border-red-400 font-semibold';
       default:
-        return 'bg-gray-100 text-gray-800';
+        return 'bg-gray-200 text-gray-900 border-gray-400 font-semibold';
     }
   };
 
@@ -1137,13 +1137,29 @@ export function IndividualAthletesManagement() {
                     </CardHeader>
                     <CardContent className="space-y-3">
                       <div className="flex justify-between">
-                        <span className="text-muted-foreground">Proveedor:</span>
-                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.provider}</span>
+                        <span className="text-muted-foreground">Tiene prepaga/obra social:</span>
+                        <Badge className={athleteForDetails.medicalInfo.healthInsurance.hasInsurance 
+                          ? 'bg-green-100 text-green-800' 
+                          : 'bg-gray-100 text-gray-800'}>
+                          {athleteForDetails.medicalInfo.healthInsurance.hasInsurance ? 'Sí' : 'No'}
+                        </Badge>
                       </div>
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">N° de Afiliado:</span>
-                        <span className="font-medium">{athleteForDetails.medicalInfo.healthInsurance.memberNumber}</span>
-                      </div>
+                      {athleteForDetails.medicalInfo.healthInsurance.hasInsurance && (
+                        <>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Proveedor:</span>
+                            <span className="font-medium">
+                              {athleteForDetails.medicalInfo.healthInsurance.provider || 'No especificado'}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">N° de Afiliado:</span>
+                            <span className="font-medium">
+                              {athleteForDetails.medicalInfo.healthInsurance.memberNumber || 'No especificado'}
+                            </span>
+                          </div>
+                        </>
+                      )}
                     </CardContent>
                   </Card>
 
@@ -1242,27 +1258,27 @@ export function IndividualAthletesManagement() {
                       <div className="space-y-4">
                         {athleteInjuries.map((injury) => (
                           <div key={injury.injuryId} className="border rounded-lg p-4 space-y-2">
-                            <div className="flex items-start justify-between">
-                              <div className="flex-1">
-                                <h4 className="font-semibold text-foreground">{injury.title}</h4>
-                                <p className="text-xs text-muted-foreground mt-1">
-                                  Diagnóstico: {new Date(injury.diagnosisDate).toLocaleDateString('es-ES')}
-                                </p>
-                              </div>
-                              <Badge className={`${getSeverityBadge(injury.severity)} border-2`}>
-                                {mapSeverityLabel(injury.severity)}
-                              </Badge>
-                            </div>
-                            <div className="flex flex-wrap gap-2 mt-3">
-                              <Badge className={`${getStatusBadge(injury.status)} border-2 text-xs`}>
-                                Estado: {mapStatusLabel(injury.status)}
-                              </Badge>
-                              {injury.impactOnTraining && (
-                                <Badge variant="outline" className="text-xs">
-                                  Impacto: {mapImpactLabel(injury.impactOnTraining)}
+                              <div className="flex items-start justify-between">
+                                <div className="flex-1">
+                                  <h4 className="font-semibold text-foreground">{injury.title}</h4>
+                                  <p className="text-xs text-muted-foreground mt-1">
+                                    Diagnóstico: {new Date(injury.diagnosisDate).toLocaleDateString('es-ES')}
+                                  </p>
+                                </div>
+                                <Badge className={`${getSeverityBadge(injury.severity)} border-2`}>
+                                  {mapSeverityLabel(injury.severity)}
                                 </Badge>
-                              )}
-                            </div>
+                              </div>
+                              <div className="flex flex-wrap gap-2 mt-3">
+                                <Badge className={`${getStatusBadge(injury.status)} border-2 text-xs`}>
+                                  Estado: {mapStatusLabel(injury.status)}
+                                </Badge>
+                                {injury.impactOnTraining && (
+                                  <Badge variant="outline" className="text-xs">
+                                    Impacto: {mapImpactLabel(injury.impactOnTraining)}
+                                  </Badge>
+                                )}
+                              </div>
                             {injury.recoveryDate ? (
                               <p className="text-xs text-green-600 font-medium">
                                 ✓ Recuperado el: {new Date(injury.recoveryDate).toLocaleDateString('es-ES')}

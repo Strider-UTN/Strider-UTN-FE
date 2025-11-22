@@ -353,6 +353,7 @@ export class AuthService {
     birthDate: Date;
     address: string;
     gender: 'masculino' | 'femenino' | 'no-especifica';
+    phoneNumber?: string;
   }): Promise<void> {
     try {
       // Mapear gender a número según el enum del backend
@@ -370,12 +371,83 @@ export class AuthService {
         Password: coachData.password,
         BirthDate: coachData.birthDate.toISOString(),
         Address: coachData.address,
-        Gender: genderMap[coachData.gender] ?? 2
+        Gender: genderMap[coachData.gender] ?? 2,
+        PhoneNumber: coachData.phoneNumber
       };
 
       await apiClient.post('/api/User/Coach', dto);
       
       toast.success('Coach registrado exitosamente');
+    } catch (error) {
+      // El error ya se maneja automáticamente en apiClient.ts
+      throw error;
+    }
+  }
+
+  /**
+   * Registra un nuevo atleta en el backend
+   * @param athleteData - Datos del atleta a registrar
+   * @returns Promise que se resuelve cuando el atleta es creado exitosamente
+   */
+  static async createAthlete(athleteData: {
+    username: string;
+    fullName: string;
+    email: string;
+    password: string;
+    birthDate: Date;
+    address: string;
+    gender: 'masculino' | 'femenino' | 'no-especifica';
+    phoneNumber?: string;
+    heightCm: number;
+    weightKg: number;
+    country: string;
+    trainingStartDate?: string; // Formato: YYYY-MM
+    emergencyContactName: string;
+    emergencyContactPhone: string;
+    emergencyContactRelationship: string;
+    // Información médica
+    hasHealthInsurance?: boolean;
+    healthInsuranceProvider?: string;
+    healthInsuranceMemberNumber?: string;
+    lastCheckupDate?: Date;
+    medicalConditions?: string[];
+  }): Promise<void> {
+    try {
+      // Mapear gender a número según el enum del backend
+      const genderMap: Record<string, number> = {
+        'masculino': 0,
+        'femenino': 1,
+        'no-especifica': 2
+      };
+
+      const dto = {
+        Username: athleteData.username,
+        FullName: athleteData.fullName,
+        Email: athleteData.email,
+        Password: athleteData.password,
+        BirthDate: athleteData.birthDate.toISOString(),
+        Address: athleteData.address,
+        Gender: genderMap[athleteData.gender] ?? 2,
+        PhoneNumber: athleteData.phoneNumber || '',
+        HeightCm: athleteData.heightCm,
+        WeightKg: athleteData.weightKg,
+        Country: athleteData.country,
+        VolumeType: 0, // Weekly por defecto (0 = Weekly, 1 = Monthly)
+        TrainingVolumeKm: 0, // Ya no se usa, pero el backend lo requiere
+        EmergencyContactName: athleteData.emergencyContactName,
+        EmergencyContactPhone: athleteData.emergencyContactPhone,
+        EmergencyContactRelationship: athleteData.emergencyContactRelationship,
+        // Información médica
+        HasHealthInsurance: athleteData.hasHealthInsurance || false,
+        HealthInsuranceProvider: athleteData.healthInsuranceProvider || '',
+        HealthInsuranceMemberNumber: athleteData.healthInsuranceMemberNumber || '',
+        LastCheckupDate: athleteData.lastCheckupDate ? athleteData.lastCheckupDate.toISOString() : undefined,
+        MedicalConditions: athleteData.medicalConditions?.filter(c => c.trim() !== '') || []
+      };
+
+      await apiClient.post('/api/User/Athlete', dto);
+      
+      toast.success('Atleta registrado exitosamente');
     } catch (error) {
       // El error ya se maneja automáticamente en apiClient.ts
       throw error;
