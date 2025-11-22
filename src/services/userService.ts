@@ -35,7 +35,6 @@ export interface UpdateUserProfileDto {
 
 export interface UserProfileResponseDto {
   id: number;
-  username: string;
   fullName: string;
   email: string;
   phoneNumber?: string;

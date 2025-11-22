@@ -143,14 +143,9 @@ export function AthleteTrainingHistory({ athlete, onBack, showFeedbackInitially 
   };
 
   const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    }
-    return `${minutes}m`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${minutes}:${secs.toString().padStart(2, '0')}`;
   };
 
   const formatDurationWithSeconds = (seconds: number) => {

@@ -11,6 +11,7 @@ import { Calendar as CalendarComponent } from './ui/calendar';
 import { format } from 'date-fns';
 import { es } from 'date-fns/locale';
 import { ChevronLeft, ChevronRight, User, UserCheck, Activity, Shield, Phone, CalendarIcon, X } from 'lucide-react';
+import { Checkbox } from './ui/checkbox';
 import { SocialProfileCompletion } from './SocialProfileCompletion';
 import { AuthService } from '../services/authService';
 import { toast } from 'sonner';
@@ -46,6 +47,7 @@ interface AthleteFormData {
   healthInsuranceMemberNumber: string;
   lastCheckupDate: string;
   medicalConditions: string[]; // Lista de condiciones médicas
+  hasMedicalConsent?: boolean; // Consentimiento para compartir condiciones médicas
   notifications: boolean;
 }
 
@@ -229,6 +231,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     healthInsuranceMemberNumber: '',
     lastCheckupDate: '',
     medicalConditions: [],
+    hasMedicalConsent: false,
     notifications: true
   });
   
@@ -266,7 +269,7 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
     }
   }, [socialUser, skipToPhysicalProfile, userType]);
 
-  const updateAthleteFormData = (field: keyof AthleteFormData, value: string | boolean) => {
+  const updateAthleteFormData = (field: keyof AthleteFormData, value: string | boolean | string[]) => {
     setAthleteFormData(prev => ({ ...prev, [field]: value }));
   };
 
@@ -613,7 +616,6 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
 
         // Llamar al backend para crear el atleta
         await AuthService.createAthlete({
-          username: currentFormData.email.split('@')[0] || 'usuario',
           fullName: currentFormData.realName,
           email: currentFormData.email,
           password: currentFormData.password,
@@ -677,7 +679,6 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
 
         // Registrar el coach en el backend
         await AuthService.createCoach({
-          username: coachFormData.email.split('@')[0] || coachFormData.email,
           fullName: coachFormData.realName,
           email: coachFormData.email,
           password: coachFormData.password,
@@ -1661,8 +1662,31 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
                 <Label>
                   Condiciones Médicas o de Salud
                 </Label>
-                <div className="space-y-3">
-                  {athleteFormData.medicalConditions.map((condition, index) => (
+                
+                {/* Checkbox de consentimiento - solo mostrar si no hay condiciones médicas */}
+                {athleteFormData.medicalConditions.length === 0 && (
+                  <div className="flex items-start space-x-2 p-4 bg-muted/50 rounded-lg border">
+                    <Checkbox
+                      id="medical-consent"
+                      checked={athleteFormData.hasMedicalConsent || false}
+                      onCheckedChange={(checked) => {
+                        updateAthleteFormData('hasMedicalConsent', checked === true);
+                      }}
+                      className="mt-1"
+                    />
+                    <Label
+                      htmlFor="medical-consent"
+                      className="text-sm font-normal leading-relaxed cursor-pointer"
+                    >
+                      Autorizo a compartir información sobre condiciones médicas o de salud con mi entrenador asignado para personalizar mi plan de entrenamiento de manera segura.
+                    </Label>
+                  </div>
+                )}
+                
+                {/* Solo mostrar la sección de condiciones médicas si hay consentimiento o si ya hay condiciones */}
+                {(athleteFormData.hasMedicalConsent || athleteFormData.medicalConditions.length > 0) && (
+                  <div className="space-y-3">
+                    {athleteFormData.medicalConditions.map((condition, index) => (
                     <div key={index} className="flex items-center gap-2">
                       <Input
                         value={condition}
@@ -1698,7 +1722,8 @@ export function SignUpForm({ onSwitchToSignIn, onSuccessfulSignUp, onSocialSignU
                   >
                     + Agregar Condición
                   </Button>
-                </div>
+                  </div>
+                )}
                 <p className="text-xs text-muted-foreground">
                   Esta información es confidencial y solo será compartida con tu entrenador asignado para personalizar tu plan de entrenamiento de manera segura.
                 </p>

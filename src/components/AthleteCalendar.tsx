@@ -1106,7 +1106,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
                 {selectedSession.name}
               </DialogTitle>
               <DialogDescription>
-                {formatSessionDate(selectedSession.date)} • {selectedSession.time || '--:--'}
+                {formatSessionDate(selectedSession.date)}
                 {selectedSession.location ? ` • ${selectedSession.location}` : ''}
               </DialogDescription>
             </DialogHeader>

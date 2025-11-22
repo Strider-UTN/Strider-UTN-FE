@@ -757,9 +757,9 @@ export function SessionRetroalimentacionModal({
                           <span className="text-muted-foreground">Duración:</span>
                           <p className="font-medium">
                             {plannedSessionData.estimatedWorkSeconds 
-                              ? `${Math.floor(plannedSessionData.estimatedWorkSeconds / 60)} min`
+                              ? formatDuration(plannedSessionData.estimatedWorkSeconds)
                               : plannedSession.plannedDuration 
-                              ? `${plannedSession.plannedDuration} min`
+                              ? formatDuration(plannedSession.plannedDuration * 60)
                               : 'N/A'}
                           </p>
                         </div>
@@ -904,7 +904,7 @@ export function SessionRetroalimentacionModal({
                         </div>
                         <div>
                           <span className="text-muted-foreground">Duración:</span>
-                          <p className="font-medium">{Math.floor(actualSession.actualDuration)} min</p>
+                          <p className="font-medium">{formatDuration(actualSession.actualDuration * 60)}</p>
                         </div>
                         <div>
                           <span className="text-muted-foreground">Ritmo:</span>
@@ -961,7 +961,7 @@ export function SessionRetroalimentacionModal({
                     </div>
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Duración</p>
-                      <p className="font-medium">{Math.floor(calculateActualDuration())} min</p>
+                      <p className="font-medium">{formatDuration(calculateActualDuration() * 60)}</p>
                     </div>
                     <div className="bg-card rounded-lg p-3 border border-border">
                       <p className="text-xs text-muted-foreground mb-1">Esfuerzo Percibido</p>
