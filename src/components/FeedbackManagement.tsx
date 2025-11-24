@@ -126,9 +126,13 @@ interface AthleteWeekData {
 
 export function FeedbackManagement() {
   // Filtros simplificados: solo fecha y atleta
+  // Por defecto: última semana (hace 7 días hasta hoy)
+  const defaultDateTo = new Date();
+  const defaultDateFrom = subDays(defaultDateTo, 7);
+  
   const [selectedAthlete, setSelectedAthlete] = useState('all');
-  const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
-  const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
+  const [dateFrom, setDateFrom] = useState<Date | undefined>(defaultDateFrom);
+  const [dateTo, setDateTo] = useState<Date | undefined>(defaultDateTo);
   const [isFromDateOpen, setIsFromDateOpen] = useState(false);
   const [isToDateOpen, setIsToDateOpen] = useState(false);
   
@@ -160,6 +164,44 @@ export function FeedbackManagement() {
   const [availableAthletes, setAvailableAthletes] = useState<Array<{id: number, name: string}>>([]);
   const [isLoadingAthletes, setIsLoadingAthletes] = useState(false);
   const [totalSessionsByAthlete, setTotalSessionsByAthlete] = useState<Record<number, number>>({});
+  const [totalSessionsEvaluatedByAthlete, setTotalSessionsEvaluatedByAthlete] = useState<Record<number, number>>({});
+  const [trainingSessionsMap, setTrainingSessionsMap] = useState<Map<number, number>>(new Map());
+
+  // Cargar volúmenes planificados de las sesiones de entrenamiento
+  useEffect(() => {
+    const loadTrainingSessions = async () => {
+      const sessionIds = new Set<number>();
+      workoutsGrouped.forEach(group => {
+        group.workouts.forEach(workout => {
+          if (workout.trainingSessionId) {
+            sessionIds.add(workout.trainingSessionId);
+          }
+        });
+      });
+
+      if (sessionIds.size === 0) return;
+
+      const volumesMap = new Map<number, number>();
+      // Cargar sesiones en paralelo
+      const promises = Array.from(sessionIds).map(async (sessionId) => {
+        try {
+          const session = await TrainingSessionService.getTrainingSessionById(sessionId);
+          if (session && session.volume !== undefined) {
+            volumesMap.set(sessionId, session.volume);
+          }
+        } catch (error) {
+          console.error(`Error loading training session ${sessionId}:`, error);
+        }
+      });
+
+      await Promise.all(promises);
+      setTrainingSessionsMap(volumesMap);
+    };
+
+    if (workoutsGrouped.length > 0) {
+      loadTrainingSessions();
+    }
+  }, [workoutsGrouped]);
 
   // Cargar atletas al montar
   useEffect(() => {
@@ -168,10 +210,10 @@ export function FeedbackManagement() {
       try {
         const athletesData = await CoachAthleteRelationshipService.getMyAthletes('Accepted');
         setAvailableAthletes(athletesData
-          .filter(a => a.athleteId)
+          .filter(a => a.id)
           .map(a => ({
-            id: a.athleteId!,
-            name: a.athleteName
+            id: a.id,
+            name: a.name
           })));
       } catch (error) {
         console.error('Error al cargar atletas:', error);
@@ -392,7 +434,11 @@ export function FeedbackManagement() {
   const athleteDataFromBackend = useMemo(() => {
     const currentWorkouts = activeView === 'pending' ? workoutsPending : workoutsEvaluated;
     return currentWorkouts.map(group => {
-      const sessions = group.workouts.map(workout => ({
+      const sessions = group.workouts.map(workout => {
+        // Obtener volumen planificado de la sesión de entrenamiento (en km)
+        const plannedVolumeKm = trainingSessionsMap.get(workout.trainingSessionId) || 0;
+        
+        return {
         workoutId: workout.id, // Guardar el ID del CompletedWorkout
         trainingSessionId: workout.trainingSessionId, // Guardar el ID de la sesión planificada
         plan: {
@@ -402,10 +448,10 @@ export function FeedbackManagement() {
           type: workout.name.includes('Intervalo') ? 'Intervalos' as const : 
                 workout.name.includes('Tempo') ? 'Tempo' as const :
                 workout.name.includes('Fondo') ? 'Continuo' as const : 'Continuo' as const,
-          plannedDistance: workout.distance, // Usar distancia real como aproximación
+          plannedDistance: plannedVolumeKm, // Usar volumen planificado de la sesión (ya en km)
           plannedDuration: workout.duration / 60, // Convertir segundos a minutos
           plannedIntensity: workout.averageHR > 170 ? 90 : workout.averageHR > 150 ? 75 : 60,
-          plannedPace: calculatePace(workout.distance, workout.duration),
+          plannedPace: plannedVolumeKm > 0 ? calculatePace(plannedVolumeKm, workout.duration) : 'N/A', // calculatePace espera km
           intervals: workout.laps.map((lap, idx) => ({
             type: 'work' as const,
             distance: lap.distance,
@@ -421,9 +467,9 @@ export function FeedbackManagement() {
         actual: {
           id: workout.id.toString(),
           sessionId: workout.trainingSessionId.toString(),
-          actualDistance: workout.distance,
+          actualDistance: workout.distance, // En metros
           actualDuration: workout.duration / 60,
-          actualPace: calculatePace(workout.distance, workout.duration),
+          actualPace: calculatePace(workout.distance / 1000, workout.duration), // calculatePace espera km
           heartRate: {
             avg: workout.averageHR,
             max: workout.averageHR + 10 // Aproximación
@@ -464,7 +510,8 @@ export function FeedbackManagement() {
           createdAt: workout.feedback.createdAt,
           updatedAt: workout.feedback.updatedAt
         } : undefined
-      }));
+      };
+      });
 
       return {
         athleteId: group.athleteId.toString(),
@@ -473,7 +520,7 @@ export function FeedbackManagement() {
         sessions,
         weeklyStats: {
           plannedVolume: sessions.reduce((sum, s) => sum + (s.plan.plannedDistance || 0), 0),
-          actualVolume: sessions.reduce((sum, s) => sum + (s.actual?.actualDistance || 0), 0),
+          actualVolume: sessions.reduce((sum, s) => sum + ((s.actual?.actualDistance || 0) / 1000), 0), // Convertir de metros a km
           completionRate: 100,
           avgIntensityCompliance: 85,
           avgPerceivedExertion: sessions.reduce((sum, s) => sum + (s.actual?.perceivedExertion || 0), 0) / sessions.length || 0,
@@ -481,7 +528,7 @@ export function FeedbackManagement() {
         }
       };
     });
-  }, [workoutsPending, workoutsEvaluated, activeView]);
+  }, [workoutsPending, workoutsEvaluated, activeView, trainingSessionsMap]);
 
   // Datos mock eliminados - ahora se usan datos del backend
   const mockAthleteData: AthleteWeekData[] = athleteDataFromBackend;
@@ -759,15 +806,26 @@ export function FeedbackManagement() {
     
     console.log('handleViewEvaluation called:', { athleteId, cleanAthleteId, athleteIdNum });
     
-    // Cargar todos los workouts evaluados para este atleta (sin filtro de última semana)
+    // Cargar workouts evaluados para este atleta aplicando los filtros de fecha seleccionados
     try {
       const filters: {
         athleteId?: number;
         hasFeedback?: boolean;
+        startDate?: string;
+        endDate?: string;
       } = {
         athleteId: athleteIdNum,
         hasFeedback: true // Solo evaluados
       };
+
+      // Aplicar filtros de fecha si están seleccionados
+      if (dateFrom) {
+        filters.startDate = format(startOfDay(dateFrom), 'yyyy-MM-dd');
+      }
+
+      if (dateTo) {
+        filters.endDate = format(endOfDay(dateTo), 'yyyy-MM-dd');
+      }
 
       const data = await CompletedWorkoutService.getForCoachWithFiltersGroupedByAthlete(filters);
       console.log('Loaded workouts for evaluation:', data);
@@ -905,6 +963,15 @@ export function FeedbackManagement() {
     return workoutsPending.map(group => {
         const pendingWorkouts = group.workouts; // Ya vienen filtrados sin feedback
         
+        // Contar sesiones únicas con completed workout (por trainingSessionId)
+        const uniqueSessionIds = new Set<number>();
+        pendingWorkouts.forEach(workout => {
+          if (workout.trainingSessionId) {
+            uniqueSessionIds.add(workout.trainingSessionId);
+          }
+        });
+        const completedSessionsCount = uniqueSessionIds.size;
+        
         // Ordenar por fecha y obtener el rango correcto
         const sortedWorkouts = [...pendingWorkouts].sort((a, b) => {
           const dateA = new Date(a.date).getTime();
@@ -927,39 +994,120 @@ export function FeedbackManagement() {
           weekNumber: 1, // Placeholder
           startDate,
           endDate,
-          completedSessions: pendingWorkouts.length,
-          totalSessions: totalSessionsByAthlete[group.athleteId] ?? pendingWorkouts.length,
+          completedSessions: completedSessionsCount, // Sesiones únicas con completed workout
+          totalSessions: totalSessionsByAthlete[group.athleteId] ?? completedSessionsCount,
           injuryCount: pendingWorkouts.reduce((sum, w) => sum + (w.injuries?.length || 0), 0)
         };
       });
   }, [workoutsPending, totalSessionsByAthlete]);
 
+  // Cargar totales de sesiones para atletas evaluados (última semana)
+  useEffect(() => {
+    const loadTotalSessionsForEvaluated = async () => {
+      if (workoutsEvaluated.length === 0) {
+        setTotalSessionsEvaluatedByAthlete({});
+        return;
+      }
+
+      const totals: Record<number, number> = {};
+      
+      for (const group of workoutsEvaluated) {
+        try {
+          const reviewedWorkouts = group.workouts;
+          if (reviewedWorkouts.length === 0) continue;
+          
+          // Ordenar por fecha descendente
+          const sortedWorkouts = [...reviewedWorkouts].sort((a, b) => {
+            const dateA = new Date(a.date).getTime();
+            const dateB = new Date(b.date).getTime();
+            return dateB - dateA;
+          });
+          
+          // Obtener la fecha más reciente y calcular rango de última semana
+          const mostRecentDate = new Date(sortedWorkouts[0].date);
+          const weekStart = new Date(mostRecentDate);
+          weekStart.setDate(weekStart.getDate() - 6); // Últimos 7 días
+          
+          // Obtener todas las sesiones asignadas al atleta
+          const allSessions = await TrainingSessionService.getTrainingSessionsByAthleteId(group.athleteId);
+          
+          // Filtrar por rango de fechas de la última semana
+          const filteredSessions = allSessions.filter(session => {
+            const sessionDate = new Date(session.date);
+            return sessionDate >= weekStart && sessionDate <= mostRecentDate;
+          });
+          
+          totals[group.athleteId] = filteredSessions.length;
+        } catch (error) {
+          console.error(`Error al cargar sesiones para atleta ${group.athleteId}:`, error);
+          // Si falla, usar el número de workouts como fallback
+          totals[group.athleteId] = group.workouts.length;
+        }
+      }
+      
+      setTotalSessionsEvaluatedByAthlete(totals);
+    };
+
+    loadTotalSessionsForEvaluated();
+  }, [workoutsEvaluated]);
+
   const mockEvaluatedAthletes = useMemo(() => {
     return workoutsEvaluated.map(group => {
         const reviewedWorkouts = group.workouts; // Ya vienen filtrados con feedback
         
-        // Ordenar por fecha descendente y tomar solo la última semana (últimos 7 días desde la fecha más reciente)
-        const sortedWorkouts = [...reviewedWorkouts].sort((a, b) => {
+        // Filtrar workouts por el rango de fechas seleccionado (igual que en handleViewEvaluation)
+        let filteredWorkouts = reviewedWorkouts;
+        if (dateFrom || dateTo) {
+          filteredWorkouts = reviewedWorkouts.filter(w => {
+            const workoutDate = new Date(w.date);
+            if (dateFrom && workoutDate < startOfDay(dateFrom)) return false;
+            if (dateTo && workoutDate > endOfDay(dateTo)) return false;
+            return true;
+          });
+        }
+        
+        if (filteredWorkouts.length === 0) return null;
+        
+        // Contar sesiones únicas con feedback (por trainingSessionId) - esto corresponde con "Ver Evaluación"
+        const uniqueSessionIds = new Set<number>();
+        filteredWorkouts.forEach(workout => {
+          if (workout.trainingSessionId) {
+            uniqueSessionIds.add(workout.trainingSessionId);
+          }
+        });
+        const evaluatedSessionsCount = uniqueSessionIds.size;
+        
+        // Calcular promedio de calificación
+        const ratings: number[] = [];
+        filteredWorkouts.forEach(w => {
+          const rating = w.feedback?.rating || w.rating;
+          if (!rating) return;
+          const normalized = typeof rating === 'string' ? rating.toLowerCase() : '';
+          // Mapear a valores numéricos para calcular promedio
+          if (normalized === 'excellent') ratings.push(4);
+          else if (normalized === 'good') ratings.push(3);
+          else if (normalized === 'needsimprovement' || normalized === 'needs_improvement') ratings.push(2);
+          else if (normalized === 'concerning' || normalized === 'doesnotmeetobjectives') ratings.push(1);
+        });
+        
+        const averageRating = ratings.length > 0 
+          ? (ratings.reduce((sum, r) => sum + r, 0) / ratings.length).toFixed(1)
+          : null;
+        
+        // Ordenar por fecha para obtener la más reciente
+        const sortedWorkouts = [...filteredWorkouts].sort((a, b) => {
           const dateA = new Date(a.date).getTime();
           const dateB = new Date(b.date).getTime();
-          return dateB - dateA; // Descendente
+          return dateB - dateA;
         });
         
-        if (sortedWorkouts.length === 0) return null;
+        const startDate = sortedWorkouts[sortedWorkouts.length - 1]?.date 
+          ? format(new Date(sortedWorkouts[sortedWorkouts.length - 1].date), 'yyyy-MM-dd')
+          : format(new Date(), 'yyyy-MM-dd');
         
-        // Obtener la fecha más reciente
-        const mostRecentDate = new Date(sortedWorkouts[0].date);
-        const weekStart = new Date(mostRecentDate);
-        weekStart.setDate(weekStart.getDate() - 6); // Últimos 7 días
-        
-        // Filtrar workouts de la última semana
-        const lastWeekWorkouts = sortedWorkouts.filter(w => {
-          const workoutDate = new Date(w.date);
-          return workoutDate >= weekStart && workoutDate <= mostRecentDate;
-        });
-        
-        const startDate = format(weekStart, 'yyyy-MM-dd');
-        const endDate = format(mostRecentDate, 'yyyy-MM-dd');
+        const endDate = sortedWorkouts[0]?.date
+          ? format(new Date(sortedWorkouts[0].date), 'yyyy-MM-dd')
+          : format(new Date(), 'yyyy-MM-dd');
         
         return {
           id: `evaluated-${group.athleteId}`,
@@ -968,10 +1116,10 @@ export function FeedbackManagement() {
           weekNumber: 1, // Placeholder
           startDate,
           endDate,
-          completedSessions: lastWeekWorkouts.length,
-          totalSessions: totalSessionsByAthlete[group.athleteId] ?? lastWeekWorkouts.length,
-          injuryCount: lastWeekWorkouts.reduce((sum, w) => sum + (w.injuries?.length || 0), 0),
-          evaluationDate: lastWeekWorkouts[0]?.feedback?.createdAt || new Date().toISOString()
+          evaluatedSessions: evaluatedSessionsCount, // Sesiones evaluadas (corresponde con "Ver Evaluación")
+          averageRating, // Promedio de calificación
+          injuryCount: filteredWorkouts.reduce((sum, w) => sum + (w.injuries?.length || 0), 0),
+          evaluationDate: sortedWorkouts[0]?.feedback?.createdAt || new Date().toISOString()
         };
       })
       .filter(athlete => athlete !== null) as Array<{
@@ -981,12 +1129,12 @@ export function FeedbackManagement() {
         weekNumber: number;
         startDate: string;
         endDate: string;
-        completedSessions: number;
-        totalSessions: number;
+        evaluatedSessions: number;
+        averageRating: string | null;
         injuryCount: number;
         evaluationDate: string;
       }>;
-  }, [workoutsEvaluated, totalSessionsByAthlete]);
+  }, [workoutsEvaluated, dateFrom, dateTo]);
 
   // Datos mock antiguos (mantenidos temporalmente para compatibilidad)
   const mockPendingAthletesOld = [
@@ -1162,8 +1310,13 @@ export function FeedbackManagement() {
   // Los datos ya vienen filtrados del backend
   const filteredEvaluatedAthletes = useMemo(() => {
     return mockEvaluatedAthletes.filter(athlete => {
-      const matchesAthlete = selectedAthlete === 'all' || athlete.id === selectedAthlete.replace('evaluated-', '');
-      return matchesAthlete;
+      if (selectedAthlete === 'all') return true;
+      // Comparar tanto con el ID con prefijo como sin prefijo
+      const athleteIdStr = String(athlete.id);
+      const selectedIdStr = String(selectedAthlete);
+      return athleteIdStr === selectedIdStr || 
+             athleteIdStr === `evaluated-${selectedIdStr}` ||
+             athleteIdStr.replace('evaluated-', '') === selectedIdStr.replace('evaluated-', '');
     });
   }, [mockEvaluatedAthletes, selectedAthlete]);
 
@@ -1222,7 +1375,11 @@ export function FeedbackManagement() {
       : format(new Date(), 'yyyy-MM-dd');
 
     // Construir sesiones con feedback
-    const sessions = sortedWorkouts.map(workout => ({
+    const sessions = sortedWorkouts.map(workout => {
+      // Obtener volumen planificado de la sesión de entrenamiento (en km)
+      const plannedVolumeKm = trainingSessionsMap.get(workout.trainingSessionId) || 0;
+      
+      return {
       plan: {
         id: workout.trainingSessionId.toString(),
         name: workout.trainingSessionName,
@@ -1230,18 +1387,18 @@ export function FeedbackManagement() {
         type: workout.name.includes('Intervalo') ? 'Intervalos' as const : 
               workout.name.includes('Tempo') ? 'Tempo' as const :
               workout.name.includes('Fondo') ? 'Fondo' as const : 'Fondo' as const,
-        plannedDistance: workout.distance,
+        plannedDistance: plannedVolumeKm, // Usar volumen planificado de la sesión (ya en km)
         plannedDuration: workout.duration / 60,
         plannedIntensity: workout.averageHR > 170 ? 90 : workout.averageHR > 150 ? 75 : 60,
-        plannedPace: calculatePace(workout.distance, workout.duration),
+        plannedPace: plannedVolumeKm > 0 ? calculatePace(plannedVolumeKm, workout.duration) : 'N/A', // calculatePace espera km
         notes: workout.comments || undefined
       },
       actual: {
         id: workout.id.toString(),
         sessionId: workout.trainingSessionId.toString(),
-        actualDistance: workout.distance,
+        actualDistance: workout.distance, // En metros
         actualDuration: workout.duration / 60,
-        actualPace: calculatePace(workout.distance, workout.duration),
+        actualPace: calculatePace(workout.distance / 1000, workout.duration), // calculatePace espera km
         perceivedExertion: workout.sensations?.effort || 5,
         heartRate: {
           avg: workout.averageHR,
@@ -1274,7 +1431,8 @@ export function FeedbackManagement() {
         createdAt: workout.feedback.createdAt,
         updatedAt: workout.feedback.updatedAt
       } : undefined
-    }));
+    };
+    });
 
     return {
       athlete: {
@@ -1290,11 +1448,11 @@ export function FeedbackManagement() {
         endDate,
         focus: 'Evaluación de sesiones completadas',
         intensity: 'media' as const,
-        volume: sessions.reduce((sum, s) => sum + (s.actual?.actualDistance || 0), 0),
+        volume: sessions.reduce((sum, s) => sum + ((s.actual?.actualDistance || 0) / 1000), 0), // Convertir de metros a km
         sessions
       }
     };
-  }, [viewingEvaluation, workoutsForEvaluation]);
+  }, [viewingEvaluation, workoutsForEvaluation, trainingSessionsMap]);
 
   // Si estamos viendo una evaluación, mostrar el componente de retroalimentación con datos del backend
   if (viewingEvaluation && evaluationDataFromBackend) {
@@ -1603,7 +1761,7 @@ export function FeedbackManagement() {
                   </h3>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Atletas que requieren retroalimentación y evaluación del microciclo
+                  Atletas que requieren retroalimentación y evaluación entre fecha inicio y fecha fin
                 </p>
                 <div className="flex items-center gap-2 mt-3">
                   <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">
@@ -1629,7 +1787,7 @@ export function FeedbackManagement() {
                   </h3>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Atletas con retroalimentación y evaluación completa del microciclo
+                  Atletas con retroalimentación y evaluación completa entre fecha inicio y fecha fin
                 </p>
                 <div className="flex items-center gap-2 mt-3">
                   <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
@@ -1686,8 +1844,8 @@ export function FeedbackManagement() {
                             <p className="font-medium">{athlete.totalSessions > 0 ? Math.round((athlete.completedSessions / athlete.totalSessions) * 100) : 0}%</p>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Sede:</span>
-                            <p className="font-medium">{athlete.sede}</p>
+                            <span className="text-muted-foreground">Lesiones reportadas:</span>
+                            <p className="font-medium">{athlete.injuryCount}</p>
                           </div>
                         </div>
                       </div>
@@ -1743,6 +1901,18 @@ export function FeedbackManagement() {
                         
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
                           <div>
+                            <span className="text-muted-foreground">Sesiones evaluadas:</span>
+                            <p className="font-medium">{athlete.evaluatedSessions}</p>
+                          </div>
+                          <div>
+                            <span className="text-muted-foreground">Calificación promedio:</span>
+                            <p className="font-medium">
+                              {athlete.averageRating 
+                                ? `${athlete.averageRating}/4.0` 
+                                : 'Sin calificación'}
+                            </p>
+                          </div>
+                          <div>
                             <span className="text-muted-foreground">Última evaluación:</span>
                             <p className="font-medium">
                               {athlete.evaluationDate && !isNaN(parseDate(athlete.evaluationDate).getTime())
@@ -1751,16 +1921,8 @@ export function FeedbackManagement() {
                             </p>
                           </div>
                           <div>
-                            <span className="text-muted-foreground">Semana evaluada:</span>
-                            <p className="font-medium">Semana {athlete.weekNumber}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Sesiones completadas:</span>
-                            <p className="font-medium">{athlete.completedSessions}/{athlete.totalSessions}</p>
-                          </div>
-                          <div>
-                            <span className="text-muted-foreground">Sede:</span>
-                            <p className="font-medium">{athlete.sede}</p>
+                            <span className="text-muted-foreground">Molestias reportadas:</span>
+                            <p className="font-medium">{athlete.injuryCount}</p>
                           </div>
                         </div>
                       </div>

@@ -315,6 +315,137 @@ export function SessionRetroalimentacionModal({
     return `${minutes}:${seconds.toString().padStart(2, '0')}/km`;
   };
 
+  // Función helper para parsear duración en formato mm:ss o HH:mm:ss a segundos
+  const parseDurationToSeconds = (durationStr: string): number => {
+    if (!durationStr) return 0;
+    const parts = durationStr.split(':').map(Number);
+    if (parts.length === 3) {
+      // HH:mm:ss
+      return parts[0] * 3600 + parts[1] * 60 + parts[2];
+    } else if (parts.length === 2) {
+      // mm:ss
+      return parts[0] * 60 + parts[1];
+    }
+    return 0;
+  };
+
+  // Función para calcular la duración de un intervalo en segundos
+  const calculateIntervalDuration = (interval: TrainingIntervalResponseDto, athleteVO2Max?: string): number => {
+    // 1. Si tiene duration, usarlo directamente
+    if (interval.duration) {
+      const durationSeconds = parseDurationToSeconds(interval.duration);
+      if (durationSeconds > 0) {
+        return durationSeconds * (interval.repetitions || 1);
+      }
+    }
+
+    // 2. Si tiene targetTime y distance, calcular duración basado en ritmo
+    if (interval.targetTime && interval.distance && interval.distance > 0) {
+      const targetTimeSeconds = parseDurationToSeconds(interval.targetTime);
+      if (targetTimeSeconds > 0) {
+        return targetTimeSeconds * (interval.repetitions || 1);
+      }
+    }
+
+    // 3. Si tiene distance y pace (calculado), calcular duración
+    if (interval.distance && interval.distance > 0) {
+      const targetPace = determineTargetPace(interval, athleteVO2Max);
+      if (targetPace) {
+        // Parsear ritmo (formato mm:ss)
+        const paceParts = targetPace.split(':');
+        if (paceParts.length === 2) {
+          const paceMinutes = parseInt(paceParts[0], 10);
+          const paceSeconds = parseInt(paceParts[1], 10);
+          if (!isNaN(paceMinutes) && !isNaN(paceSeconds)) {
+            const paceTotalSeconds = paceMinutes * 60 + paceSeconds;
+            const distanceKm = interval.distance / 1000;
+            const intervalDuration = (paceTotalSeconds * distanceKm) * (interval.repetitions || 1);
+            return intervalDuration;
+          }
+        }
+      }
+    }
+
+    return 0;
+  };
+
+  // Función para calcular la duración planificada total de la sesión
+  const calculatePlannedDuration = (sessionData: TrainingSessionResponseDto | null, athleteVO2Max?: string): number => {
+    if (!sessionData) return 0;
+
+    // Si el backend ya calculó estimatedWorkSeconds, usarlo
+    if (sessionData.estimatedWorkSeconds) {
+      let totalSeconds = sessionData.estimatedWorkSeconds;
+      // Si también hay estimatedRecoverySeconds, sumarlo
+      if (sessionData.estimatedRecoverySeconds) {
+        totalSeconds += sessionData.estimatedRecoverySeconds;
+      }
+      return totalSeconds;
+    }
+
+    let totalSeconds = 0;
+
+    // Calcular desde series
+    if (sessionData.series && sessionData.series.length > 0) {
+      sessionData.series.forEach((series, seriesIndex) => {
+        if (series.intervals && series.intervals.length > 0) {
+          const seriesReps = series.repetitions || 1;
+          
+          // Calcular duración de UNA serie completa (sumando todos los intervalos)
+          let oneSeriesDuration = 0;
+          
+          series.intervals.forEach((interval, intervalIndex) => {
+            // Duración total del intervalo (ya incluye sus repeticiones)
+            const totalIntervalDuration = calculateIntervalDuration(interval, athleteVO2Max);
+            oneSeriesDuration += totalIntervalDuration;
+
+            // Agregar tiempo de recuperación entre repeticiones del intervalo
+            // Si hay N repeticiones, hay (N-1) recuperaciones
+            const intervalReps = interval.repetitions || 1;
+            if (interval.recoveryTime && interval.recoveryTime !== '00:00' && intervalReps > 1) {
+              const recoverySeconds = parseDurationToSeconds(interval.recoveryTime);
+              oneSeriesDuration += recoverySeconds * (intervalReps - 1);
+            }
+          });
+
+          // Multiplicar la duración de una serie por el número de repeticiones de la serie
+          totalSeconds += oneSeriesDuration * seriesReps;
+
+          // Agregar tiempo de recuperación entre repeticiones de la serie
+          // Si hay N repeticiones de la serie, hay (N-1) recuperaciones entre series
+          if (series.recoveryBetweenSets && series.recoveryBetweenSets !== '00:00' && seriesReps > 1) {
+            const recoverySeconds = parseDurationToSeconds(series.recoveryBetweenSets);
+            totalSeconds += recoverySeconds * (seriesReps - 1);
+          }
+        }
+
+        // Agregar tiempo de recuperación entre diferentes series (si hay múltiples series en la sesión)
+        if (series.recoveryBetweenSets && series.recoveryBetweenSets !== '00:00' && seriesIndex < sessionData.series!.length - 1) {
+          const recoverySeconds = parseDurationToSeconds(series.recoveryBetweenSets);
+          // Solo una recuperación entre series diferentes
+          totalSeconds += recoverySeconds;
+        }
+      });
+    }
+
+    // Calcular desde intervalos directos (si no hay series)
+    if ((!sessionData.series || sessionData.series.length === 0) && 
+        sessionData.intervals && sessionData.intervals.length > 0) {
+      sessionData.intervals.forEach((interval, intervalIndex) => {
+        const intervalDuration = calculateIntervalDuration(interval, athleteVO2Max);
+        totalSeconds += intervalDuration;
+
+        // Agregar tiempo de recuperación entre intervalos
+        if (interval.recoveryTime && interval.recoveryTime !== '00:00' && intervalIndex < sessionData.intervals!.length - 1) {
+          const recoverySeconds = parseDurationToSeconds(interval.recoveryTime);
+          totalSeconds += recoverySeconds * (interval.repetitions || 1);
+        }
+      });
+    }
+
+    return totalSeconds;
+  };
+
   // Función helper para formatear duración de segundos a mm:ss
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -362,6 +493,26 @@ export function SessionRetroalimentacionModal({
       return interval.targetSpeed;
     }
 
+    // Si hay targetTime y distance, calcular el ritmo basado en esos valores
+    if (interval.targetTime && interval.distance && interval.distance > 0) {
+      // Parsear targetTime (formato mm:ss)
+      const timeParts = interval.targetTime.split(':');
+      if (timeParts.length === 2) {
+        const minutes = parseInt(timeParts[0], 10);
+        const seconds = parseInt(timeParts[1], 10);
+        if (!isNaN(minutes) && !isNaN(seconds)) {
+          const totalSeconds = minutes * 60 + seconds;
+          const distanceKm = interval.distance / 1000;
+          if (distanceKm > 0) {
+            const secondsPerKm = totalSeconds / distanceKm;
+            const paceMinutes = Math.floor(secondsPerKm / 60);
+            const paceSeconds = Math.round(secondsPerKm % 60);
+            return `${paceMinutes.toString().padStart(2, '0')}:${paceSeconds.toString().padStart(2, '0')}`;
+          }
+        }
+      }
+    }
+
     // Si es VO2Max percentage, calcular el ritmo
     const intervalAny = interval as any;
     const paceTypeStr = String(interval.paceType || '');
@@ -376,15 +527,24 @@ export function SessionRetroalimentacionModal({
       }
     }
 
+    // Si es fixed pace, formatear el valor numérico a mm:ss
+    if (interval.paceType && (paceTypeStr.toLowerCase() === 'fixed' || paceTypeStr === 'Fixed')) {
+      if (interval.pace !== undefined && interval.pace !== null) {
+        // interval.pace está en min/km, convertir a mm:ss
+        const minutes = Math.floor(interval.pace);
+        const seconds = Math.round((interval.pace - minutes) * 60);
+        return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+      }
+    }
+
+    // Para otros tipos de paceType, mostrar el valor tal cual
     if (interval.paceType && interval.pace !== undefined && interval.pace !== null) {
-      return `${interval.pace} ${interval.paceType}`;
+      // Si no es fixed, mostrar el valor sin el tipo
+      return String(interval.pace);
     }
 
-    if (interval.targetTime) {
-      // Formatear targetTime si es necesario
-      return interval.targetTime;
-    }
-
+    // Si solo hay targetTime sin distance, no podemos calcular el ritmo
+    // No retornar targetTime como ritmo ya que sería incorrecto
     return undefined;
   };
 
@@ -756,11 +916,16 @@ export function SessionRetroalimentacionModal({
                         <div>
                           <span className="text-muted-foreground">Duración:</span>
                           <p className="font-medium">
-                            {plannedSessionData.estimatedWorkSeconds 
-                              ? formatDuration(plannedSessionData.estimatedWorkSeconds)
-                              : plannedSession.plannedDuration 
-                              ? formatDuration(plannedSession.plannedDuration * 60)
-                              : 'N/A'}
+                            {(() => {
+                              const calculatedDuration = calculatePlannedDuration(plannedSessionData, athleteVO2Max);
+                              if (calculatedDuration > 0) {
+                                return formatDuration(calculatedDuration);
+                              }
+                              if (plannedSession.plannedDuration) {
+                                return formatDuration(plannedSession.plannedDuration * 60);
+                              }
+                              return 'N/A';
+                            })()}
                           </p>
                         </div>
                       </div>
@@ -799,10 +964,10 @@ export function SessionRetroalimentacionModal({
                                             </span>
                                           )}
                                           {interval.duration && (
-                                            <span>{interval.duration}</span>
+                                            <span> {interval.duration}</span>
                                           )}
                                           {interval.targetTime && (
-                                            <span>{interval.targetTime}</span>
+                                            <span> {interval.targetTime}</span>
                                           )}
                                           {targetPace && (
                                             <span className="text-muted-foreground">
@@ -852,10 +1017,10 @@ export function SessionRetroalimentacionModal({
                                     </span>
                                   )}
                                   {interval.duration && (
-                                    <span>{interval.duration}</span>
+                                    <span> {interval.duration}</span>
                                   )}
                                   {interval.targetTime && (
-                                    <span>{interval.targetTime}</span>
+                                    <span> {interval.targetTime}</span>
                                   )}
                                   {targetPace && (
                                     <span className="text-muted-foreground">

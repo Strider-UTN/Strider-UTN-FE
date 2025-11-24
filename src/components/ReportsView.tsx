@@ -317,24 +317,50 @@ export function ReportsView({ planningId }: ReportsViewProps) {
 
   // Datos para gráfico de volumen semanal
   const weeklyVolumeData = useMemo(() => {
-    const weekMap: Record<string, { week: string; distance: number; sessions: number }> = {};
+    if (!dateRange.from || !dateRange.to) {
+      return [];
+    }
+
+    const weekMap: Record<string, { weekKey: string; week: string; distance: number; sessions: number }> = {};
     
+    // Primero, generar todas las semanas del rango de fechas
+    const startWeek = startOfWeek(dateRange.from, { weekStartsOn: 1 });
+    const endWeek = startOfWeek(dateRange.to, { weekStartsOn: 1 });
+    
+    let currentWeek = new Date(startWeek);
+    while (currentWeek <= endWeek) {
+      const weekKey = format(currentWeek, 'yyyy-MM-dd');
+      const weekLabel = format(currentWeek, 'dd MMM', { locale: es });
+      
+      if (!weekMap[weekKey]) {
+        weekMap[weekKey] = { weekKey, week: weekLabel, distance: 0, sessions: 0 };
+      }
+      
+      // Avanzar a la siguiente semana
+      currentWeek = new Date(currentWeek);
+      currentWeek.setDate(currentWeek.getDate() + 7);
+    }
+    
+    // Luego, agregar los datos de las sesiones
     filteredSessions.forEach(session => {
       const sessionDate = new Date(session.date);
       const weekStart = startOfWeek(sessionDate, { weekStartsOn: 1 });
       const weekKey = format(weekStart, 'yyyy-MM-dd');
-      const weekLabel = format(weekStart, 'dd MMM', { locale: es });
       
-      if (!weekMap[weekKey]) {
-        weekMap[weekKey] = { week: weekLabel, distance: 0, sessions: 0 };
+      if (weekMap[weekKey]) {
+        weekMap[weekKey].distance += session.distance;
+        weekMap[weekKey].sessions += 1;
       }
-      
-      weekMap[weekKey].distance += session.distance;
-      weekMap[weekKey].sessions += 1;
     });
 
-    return Object.values(weekMap).sort((a, b) => a.week.localeCompare(b.week));
-  }, [filteredSessions]);
+    // Redondear distancia a 2 decimales y ordenar por weekKey (fecha)
+    return Object.values(weekMap)
+      .map(week => ({
+        ...week,
+        distance: Math.round(week.distance * 100) / 100
+      }))
+      .sort((a, b) => a.weekKey.localeCompare(b.weekKey));
+  }, [filteredSessions, dateRange.from, dateRange.to]);
 
   // Datos para gráfico de distribución por categoría
   const categoryDistributionData = useMemo(() => {
@@ -725,7 +751,7 @@ export function ReportsView({ planningId }: ReportsViewProps) {
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="week" />
                     <YAxis label={{ value: 'km', angle: -90, position: 'insideLeft' }} />
-                    <Tooltip />
+                    <Tooltip formatter={(value: number) => `${value.toFixed(2)} km`} />
                     <Legend />
                     <Bar dataKey="distance" fill="#06b6d4" name="Distancia (km)" />
                   </BarChart>
