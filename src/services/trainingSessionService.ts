@@ -200,6 +200,17 @@ export class TrainingSessionService {
     }
   }
 
+  static async getTrainingSessionsByMesocycleId(mesocycleId: number): Promise<TrainingSessionResponseDto[]> {
+    try {
+      const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
+        `/api/TrainingSession/mesocycle/${mesocycleId}`
+      );
+      return data.map(normalizeSessionCategory);
+    } catch (error) {
+      throw error;
+    }
+  }
+
   static async getMyTrainingSessionsByDate(date: string): Promise<TrainingSessionResponseDto[]> {
     try {
       // Formatear fecha a YYYY-MM-DD si viene en otro formato

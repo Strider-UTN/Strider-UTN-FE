@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
-import { Calendar, ChevronLeft, ChevronRight, Plus, Edit, Trash2 } from 'lucide-react';
+import { Calendar, ChevronLeft, ChevronRight, Plus, Edit, Trash2, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { CreateTrainingSessionModal } from './CreateTrainingSessionModal';
 import { MicrocycleService, MicrocycleResponseDto } from '../services/microcycleService';
@@ -249,6 +249,7 @@ export function PlanningCalendar({
   const [isSessionModalOpen, setIsSessionModalOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<string>('');
   const [editingSession, setEditingSession] = useState<TrainingSession | null>(null);
+  const [isPreparingEdit, setIsPreparingEdit] = useState(false);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
   const [sessionToDelete, setSessionToDelete] = useState<TrainingSession | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -292,7 +293,30 @@ export function PlanningCalendar({
     
     setIsLoadingSessions(true);
     try {
-      const sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planningId));
+      let sessions: TrainingSessionResponseDto[];
+      
+      // OPTIMIZADO: Si hay filtro de microciclo, cargar solo esas sesiones
+      if (microcycleFilter?.id) {
+        const microcycleId = parseInt(microcycleFilter.id, 10);
+        if (!isNaN(microcycleId)) {
+          sessions = await TrainingSessionService.getTrainingSessionsByMicrocycleId(microcycleId);
+        } else {
+          sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planningId));
+        }
+      }
+      // OPTIMIZADO: Si hay filtro de mesociclo, cargar solo esas sesiones
+      else if (mesocycleFilter?.id) {
+        const mesocycleId = parseInt(mesocycleFilter.id, 10);
+        if (!isNaN(mesocycleId)) {
+          sessions = await TrainingSessionService.getTrainingSessionsByMesocycleId(mesocycleId);
+        } else {
+          sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planningId));
+        }
+      }
+      // Si no hay filtros, cargar todas las sesiones de la planificación
+      else {
+        sessions = await TrainingSessionService.getTrainingSessionsByPlanningId(Number(planningId));
+      }
       
       // Validar que sessions sea un array antes de procesar
       if (!sessions || !Array.isArray(sessions)) {
@@ -367,15 +391,8 @@ export function PlanningCalendar({
     
     setIsLoadingMicrocycles(true);
     try {
-      // Cargar mesociclos de la planificación
-      const mesocyclesData = await MesocycleService.getMesocyclesByPlanningId(Number(planningId));
-      
-      // Cargar microciclos de todos los mesociclos
-      const allMicrocycles: MicrocycleResponseDto[] = [];
-      for (const mesocycle of mesocyclesData) {
-        const microcyclesData = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycle.id);
-        allMicrocycles.push(...microcyclesData);
-      }
+      // OPTIMIZADO: Obtener todos los microciclos de la planificación en un solo llamado
+      const allMicrocycles = await MicrocycleService.getMicrocyclesByPlanningId(Number(planningId));
       
       setAvailableMicrocycles(allMicrocycles);
     } catch (error) {
@@ -386,7 +403,7 @@ export function PlanningCalendar({
     }
   };
 
-  // Cargar sesiones cuando cambia el planningId
+  // Cargar sesiones cuando cambia el planningId o los filtros
   useEffect(() => {
     if (planningId) {
       loadTrainingSessions();
@@ -396,7 +413,7 @@ export function PlanningCalendar({
       setAvailableMicrocycles([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [planningId]);
+  }, [planningId, mesocycleFilter?.id, microcycleFilter?.id]);
 
   // Cargar sesiones del mesociclo cuando hay un filtro activo
   useEffect(() => {
@@ -631,16 +648,45 @@ export function PlanningCalendar({
   };
 
   // Manejar edición de sesión
-  const handleEditSession = (session: TrainingSession) => {
+  const handleEditSession = async (session: TrainingSession) => {
     // Validar que la sesión no sea pasada
     if (isDateInPast(session.date)) {
       toast.error('No se puede editar una sesión pasada');
       return;
     }
     
+    // Establecer la sesión y fecha primero (esto disparará la carga de datos en el modal)
     setEditingSession(session);
     setSelectedDate(session.date);
-    setIsSessionModalOpen(true);
+    setIsPreparingEdit(true);
+    
+    // Esperar a que los datos se carguen antes de abrir el modal
+    // Esto evita el "pantalleo" al asegurar que los datos estén listos
+    try {
+      // Cargar los datos de la sesión antes de abrir el modal
+      const detailedSession = await TrainingSessionService.getTrainingSessionById(Number(session.id));
+      if (detailedSession) {
+        // Los datos se cargarán en el useEffect del modal
+        // Solo abrir el modal después de un pequeño delay para asegurar que el estado se actualizó
+        setTimeout(() => {
+          setIsSessionModalOpen(true);
+          setIsPreparingEdit(false);
+        }, 150);
+      } else {
+        // Si no hay sesión detallada, usar la sesión básica y abrir el modal
+        setTimeout(() => {
+          setIsSessionModalOpen(true);
+          setIsPreparingEdit(false);
+        }, 150);
+      }
+    } catch (error) {
+      console.error('Error al cargar la sesión para editar:', error);
+      // Aún así abrir el modal con los datos básicos
+      setTimeout(() => {
+        setIsSessionModalOpen(true);
+        setIsPreparingEdit(false);
+      }, 150);
+    }
   };
 
   // Manejar solicitud de eliminación de sesión (abre el modal)
@@ -1078,12 +1124,28 @@ export function PlanningCalendar({
               Vista Mensual
             </CardTitle>
             <CardDescription>
-              {totalAthletes} atletas • {trainingSessions.filter(s => s.date.startsWith(`${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}`)).length} sesiones programadas
+              {isLoadingSessions ? (
+                <span className="flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Cargando sesiones...
+                </span>
+              ) : (
+                `${totalAthletes} atletas • ${trainingSessions.filter(s => s.date.startsWith(`${currentYear}-${String(selectedMonth + 1).padStart(2, '0')}`)).length} sesiones programadas`
+              )}
             </CardDescription>
           </CardHeader>
           <CardContent>
-            {/* Encabezados de días */}
-            <div className="grid grid-cols-7 gap-2 mb-4">
+            {isLoadingSessions ? (
+              <div className="flex items-center justify-center min-h-[400px]">
+                <div className="flex flex-col items-center gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-accent" />
+                  <p className="text-sm text-muted-foreground">Cargando sesiones del calendario...</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                {/* Encabezados de días */}
+                <div className="grid grid-cols-7 gap-2 mb-4">
               {['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map(day => (
                 <div key={day} className="p-3 text-center font-medium text-muted-foreground">
                   {day}
@@ -1211,6 +1273,8 @@ export function PlanningCalendar({
                 );
               })}
             </div>
+              </>
+            )}
           </CardContent>
         </Card>
 
@@ -1237,7 +1301,7 @@ export function PlanningCalendar({
 
         {/* Modal para crear sesiones */}
         <CreateTrainingSessionModal
-          isOpen={isSessionModalOpen}
+          isOpen={isSessionModalOpen && !isPreparingEdit}
           onClose={handleCloseModal}
           onSubmit={handleSessionSubmit}
           athletes={athletes}
@@ -1341,6 +1405,14 @@ export function PlanningCalendar({
       </div>
 
       {/* Grid de meses */}
+      {isLoadingSessions ? (
+        <div className="flex items-center justify-center min-h-[400px]">
+          <div className="flex flex-col items-center gap-3">
+            <Loader2 className="h-8 w-8 animate-spin text-accent" />
+            <p className="text-sm text-muted-foreground">Cargando sesiones del calendario...</p>
+          </div>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
         {monthNames.map((monthName, index) => {
           const monthPeriod = defaultMonths.find(m => new Date(m.startDate).getMonth() === index);
@@ -1505,6 +1577,7 @@ export function PlanningCalendar({
           );
         })}
       </div>
+      )}
 
       {/* Información adicional */}
       <Card>
@@ -1607,7 +1680,7 @@ export function PlanningCalendar({
       
       {/* Modal para crear sesiones - también disponible en vista general */}
       <CreateTrainingSessionModal
-        isOpen={isSessionModalOpen}
+        isOpen={isSessionModalOpen && !isPreparingEdit}
         onClose={handleCloseModal}
         onSubmit={handleSessionSubmit}
         athletes={athletes}

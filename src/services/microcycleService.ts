@@ -77,6 +77,21 @@ export class MicrocycleService {
   }
 
   /**
+   * Obtiene todos los microciclos de una planificación (optimizado - un solo llamado)
+   * @param planningId ID de la planificación
+   */
+  static async getMicrocyclesByPlanningId(planningId: number): Promise<MicrocycleResponseDto[]> {
+    try {
+      // GET: api/Microcycle/planning/{planningId}
+      const { data } = await apiClient.get<MicrocycleResponseDto[]>(`/api/Microcycle/planning/${planningId}`);
+      return data;
+    } catch (error) {
+      console.error(`Error al obtener microciclos de la planificación ${planningId}:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Crea un microciclo para un mesociclo
    * @param mesocycleId ID del mesociclo (en el backend se usa como periodId)
    */
