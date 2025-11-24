@@ -420,7 +420,17 @@ export function CoachRetroalimentacionSystem({
 
       {/* Lista de sesiones con retroalimentación individual */}
       <div className="space-y-4">
-        <h3 className="text-lg font-semibold">Sesiones del Microciclo</h3>
+        <h3 className="text-lg font-semibold">
+          Sesiones entre {(() => {
+            try {
+              const start = typeof microcycle.startDate === 'string' ? new Date(microcycle.startDate) : microcycle.startDate;
+              const end = typeof microcycle.endDate === 'string' ? new Date(microcycle.endDate) : microcycle.endDate;
+              return `${start.toLocaleDateString('es-AR')} y ${end.toLocaleDateString('es-AR')}`;
+            } catch {
+              return 'fecha inicio y fecha fin';
+            }
+          })()}
+        </h3>
         
         {microcycle.sessions.map((session) => {
           const isExpanded = expandedSessions.has(session.plan.id);
