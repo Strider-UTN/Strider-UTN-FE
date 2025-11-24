@@ -914,8 +914,10 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
         {/* Estadísticas del Macrociclo */}
         {isLoadingPeriods ? (
           <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 animate-spin text-muted-foreground mr-2" />
-            <span className="text-muted-foreground">Cargando estadísticas...</span>
+            <div className="flex flex-col items-center gap-3">
+              <Loader2 className="w-8 h-8 animate-spin text-accent" />
+              <span className="text-muted-foreground">Cargando mesociclos y estadísticas...</span>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -1008,8 +1010,11 @@ export function MacrocycleView({ planningId, year, planningStartDate, planningEn
             <Card className="border-dashed border-2">
               <CardContent className="p-6">
                 <div className="text-center">
-                  <Loader2 className="w-8 h-8 text-muted-foreground mx-auto mb-2 animate-spin" />
-                  <h3 className="font-medium mb-1">Cargando mesociclos...</h3>
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="w-8 h-8 text-accent mx-auto animate-spin" />
+                    <h3 className="font-medium mb-1">Cargando mesociclos...</h3>
+                    <p className="text-sm text-muted-foreground">Por favor espera mientras se cargan los datos</p>
+                  </div>
                 </div>
               </CardContent>
             </Card>

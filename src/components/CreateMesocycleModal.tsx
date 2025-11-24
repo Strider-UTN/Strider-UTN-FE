@@ -363,7 +363,29 @@ export function CreateMesocycleModal({
         }
 
         // Verificar si hay superposición
-        return startKey <= mesoEndKey && endKey >= mesoStartKey;
+        // Dos mesociclos se superponen si hay solapamiento real de días
+        // Un mesociclo que termina el día X y otro que empieza el día X+1 NO se superponen (son consecutivos)
+        // Hay superposición si:
+        // - El nuevo empieza antes o durante el existente Y termina después o durante el existente
+        // - Pero NO si son consecutivos (uno termina y el otro empieza al día siguiente)
+        
+        // Caso 1: El nuevo mesociclo empieza después de que termine el existente (consecutivos)
+        if (startKey > mesoEndKey) {
+          return false;
+        }
+        
+        // Caso 2: El nuevo mesociclo termina antes de que empiece el existente (consecutivos)
+        if (endKey < mesoStartKey) {
+          return false;
+        }
+        
+        // Caso 3: Son exactamente consecutivos (uno termina y el otro empieza al día siguiente)
+        if (endKey + 1 === mesoStartKey || mesoEndKey + 1 === startKey) {
+          return false; // No hay superposición si son consecutivos
+        }
+        
+        // Si llegamos aquí, hay solapamiento real
+        return true;
       });
 
       setHasOverlap(overlapping.length > 0);

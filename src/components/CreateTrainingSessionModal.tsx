@@ -209,6 +209,9 @@ export function CreateTrainingSessionModal({
   const [isHydratingSession, setIsHydratingSession] = useState(false);
   const [showNoAthletesConfirmDialog, setShowNoAthletesConfirmDialog] = useState(false);
   
+  // Estado para controlar la carga inicial del modal (evita el "pantalleo")
+  const isInitializing = isLoadingCycles || isLoadingInjuries || isHydratingSession;
+  
   // Obtener fecha mínima (hoy)
   const getMinDate = (): string => {
     const today = new Date();
@@ -296,16 +299,14 @@ export function CreateTrainingSessionModal({
     
     setIsLoadingCycles(true);
     try {
-      // Cargar mesociclos de la planificación
-      const mesocyclesData = await MesocycleService.getMesocyclesByPlanningId(planningId);
-      setMesocycles(mesocyclesData);
+      // OPTIMIZADO: Cargar mesociclos y microciclos en paralelo
+      // Usar getMicrocyclesByPlanningId para obtener todos los microciclos en un solo llamado
+      const [mesocyclesData, allMicrocycles] = await Promise.all([
+        MesocycleService.getMesocyclesByPlanningId(planningId),
+        MicrocycleService.getMicrocyclesByPlanningId(planningId)
+      ]);
       
-      // Cargar microciclos de todos los mesociclos
-      const allMicrocycles: MicrocycleResponseDto[] = [];
-      for (const mesocycle of mesocyclesData) {
-        const microcyclesData = await MicrocycleService.getMicrocyclesByMesocycleId(mesocycle.id);
-        allMicrocycles.push(...microcyclesData);
-      }
+      setMesocycles(mesocyclesData);
       setMicrocycles(allMicrocycles);
     } catch (error) {
       console.error('Error al cargar ciclos:', error);
@@ -911,7 +912,8 @@ export function CreateTrainingSessionModal({
   };
 
   const canGoToNextStep = () => {
-    if (isHydratingSession) {
+    // No permitir avanzar si se están cargando los ciclos o hidratando la sesión
+    if (isLoadingCycles || isHydratingSession) {
       return false;
     }
 
@@ -1212,7 +1214,8 @@ export function CreateTrainingSessionModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={handleClose}>
-      <DialogContent className="max-w-5xl max-h-[95vh] overflow-y-auto">
+      <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+        
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Target className="w-5 h-5 text-accent" />
@@ -1226,12 +1229,6 @@ export function CreateTrainingSessionModal({
               </span>
             )}
           </DialogDescription>
-          {isHydratingSession && (
-            <div className="mt-2 flex items-center gap-2 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Cargando datos de la sesión...
-            </div>
-          )}
         </DialogHeader>
 
         {/* Indicador de Pasos */}
