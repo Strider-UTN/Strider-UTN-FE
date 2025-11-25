@@ -82,6 +82,19 @@ const formatCategory = (category?: string): string => {
   return 'Entrenamiento'; // Default
 };
 
+// Función para parsear fechas sin problemas de timezone
+// Si la fecha viene como string ISO (ej: "2025-10-15T00:00:00Z"), extraer solo la parte de fecha
+const parseDateString = (dateString: string): Date => {
+  // Si la fecha viene como string ISO, extraer solo la parte de fecha (YYYY-MM-DD)
+  const dateOnly = dateString.split('T')[0];
+  const [yearStr, monthStr, dayStr] = dateOnly.split('-');
+  const year = Number(yearStr) || 0;
+  const month = Number(monthStr) || 1;
+  const day = Number(dayStr) || 1;
+  // Crear fecha en zona horaria local para evitar problemas de conversión
+  return new Date(year, month - 1, day);
+};
+
 // Función para transformar workouts del backend al formato esperado
 // Siguiendo el mismo patrón que AthletePerformanceView
 const transformWorkoutToSession = (workout: CompletedWorkoutResponseDto, athleteId: string): TrainingSession => {
@@ -343,7 +356,7 @@ export function ReportsView({ planningId }: ReportsViewProps) {
     
     // Luego, agregar los datos de las sesiones
     filteredSessions.forEach(session => {
-      const sessionDate = new Date(session.date);
+      const sessionDate = parseDateString(session.date);
       const weekStart = startOfWeek(sessionDate, { weekStartsOn: 1 });
       const weekKey = format(weekStart, 'yyyy-MM-dd');
       
@@ -404,7 +417,7 @@ export function ReportsView({ planningId }: ReportsViewProps) {
     const rows = filteredSessions.map(session => {
       const athlete = athletes.find(a => a.id.toString() === session.athleteId);
       const row = [
-        format(new Date(session.date), 'yyyy-MM-dd'),
+        format(parseDateString(session.date), 'yyyy-MM-dd'),
         ...(selectedAthleteId === 'all' ? [athlete?.name || 'Desconocido'] : []),
         session.name,
         formatCategory(session.category),
@@ -490,17 +503,19 @@ export function ReportsView({ planningId }: ReportsViewProps) {
     toast.success('Reporte exportado correctamente');
   };
 
-  if (isLoadingAthletes) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 className="w-8 h-8 animate-spin text-primary" />
-        <span className="ml-3 text-muted-foreground">Cargando atletas...</span>
-      </div>
-    );
-  }
-
   return (
     <div className="space-y-6">
+      {/* Loader mientras se cargan las sesiones */}
+      {isLoading && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-12 h-12 animate-spin text-primary" />
+            <p className="text-lg font-medium">Cargando sesiones...</p>
+            <p className="text-sm text-muted-foreground">Por favor espera mientras se obtienen los datos</p>
+          </div>
+        </div>
+      )}
+
       {/* Filtros */}
       <Card>
         <CardHeader>
@@ -736,60 +751,67 @@ export function ReportsView({ planningId }: ReportsViewProps) {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4 mt-4">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Gráfico de volumen semanal */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Volumen Semanal</CardTitle>
-                <CardDescription>
-                  Kilometraje acumulado por semana
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={weeklyVolumeData}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="week" />
-                    <YAxis label={{ value: 'km', angle: -90, position: 'insideLeft' }} />
-                    <Tooltip formatter={(value: number) => `${value.toFixed(2)} km`} />
-                    <Legend />
-                    <Bar dataKey="distance" fill="#06b6d4" name="Distancia (km)" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
+          {isLoading ? (
+            <div className="flex flex-col items-center justify-center py-12">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mb-4" />
+              <p className="text-muted-foreground">Cargando datos del resumen...</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              {/* Gráfico de volumen semanal */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Volumen Semanal</CardTitle>
+                  <CardDescription>
+                    Kilometraje acumulado por semana
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={weeklyVolumeData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="week" />
+                      <YAxis label={{ value: 'km', angle: -90, position: 'insideLeft' }} />
+                      <Tooltip formatter={(value: number) => `${value.toFixed(2)} km`} />
+                      <Legend />
+                      <Bar dataKey="distance" fill="#06b6d4" name="Distancia (km)" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
 
-            {/* Gráfico de distribución por categoría */}
-            <Card>
-              <CardHeader>
-                <CardTitle>Distribución por Categoría</CardTitle>
-                <CardDescription>
-                  Sesiones según categoría: Entrenamientos, Competiciones Preparatorias y Competencias
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={categoryDistributionData}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      outerRadius={80}
-                      fill="#8884d8"
-                      dataKey="value"
-                    >
-                      {categoryDistributionData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
-                    <Tooltip />
-                  </PieChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
+              {/* Gráfico de distribución por categoría */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Distribución por Categoría</CardTitle>
+                  <CardDescription>
+                    Sesiones según categoría: Entrenamientos, Competiciones Preparatorias y Competencias
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <ResponsiveContainer width="100%" height={300}>
+                    <PieChart>
+                      <Pie
+                        data={categoryDistributionData}
+                        cx="50%"
+                        cy="50%"
+                        labelLine={false}
+                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                        outerRadius={80}
+                        fill="#8884d8"
+                        dataKey="value"
+                      >
+                        {categoryDistributionData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="detailed" className="space-y-4 mt-4">
@@ -817,22 +839,13 @@ export function ReportsView({ planningId }: ReportsViewProps) {
                     </tr>
                   </thead>
                   <tbody>
-                    {isLoading ? (
-                      <tr>
-                        <td colSpan={selectedAthleteId === 'all' ? 8 : 7} className="p-8 text-center">
-                          <div className="flex items-center justify-center gap-2">
-                            <Loader2 className="w-4 h-4 animate-spin text-primary" />
-                            <span className="text-muted-foreground">Cargando sesiones...</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : filteredSessions.length > 0 ? (
+                    {filteredSessions.length > 0 ? (
                       filteredSessions.map((session) => {
                         const athlete = athletes.find(a => a.id.toString() === session.athleteId);
                         return (
                           <tr key={session.id} className="border-b">
                             <td className="p-3">
-                              {format(new Date(session.date), 'dd MMM yyyy', { locale: es })}
+                              {format(parseDateString(session.date), 'dd MMM yyyy', { locale: es })}
                             </td>
                             {selectedAthleteId === 'all' && (
                               <td className="p-3">{athlete?.name || 'Desconocido'}</td>

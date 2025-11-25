@@ -13,6 +13,9 @@ export interface CoachRecentInjury {
   createdAt: string;
   treatment?: string | null;
   impactOnTraining?: string | null;
+  description?: string | null;
+  notes?: string | null;
+  affectedArea?: string | null;
 }
 
 export const CoachInjuryService = {
