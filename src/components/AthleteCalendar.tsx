@@ -745,7 +745,23 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
     const fetchSessions = async () => {
       setIsLoadingSessions(true);
       try {
-        const sessions = await TrainingSessionService.getTrainingSessionsByAthleteId(athleteId, planningId);
+        // Calcular el rango de fechas del mes visible (incluyendo días de semanas anteriores/posteriores)
+        // El calendario muestra 42 días (6 semanas), así que calculamos el rango completo
+        const firstDay = startOfMonth(currentMonth);
+        const startDate = new Date(firstDay);
+        const firstWeekday = firstDay.getDay();
+        startDate.setDate(firstDay.getDate() - firstWeekday); // Inicio de la semana que contiene el primer día del mes
+        
+        // Calcular el último día visible: 42 días después del startDate (6 semanas)
+        const endDate = new Date(startDate);
+        endDate.setDate(startDate.getDate() + 41); // 42 días total (0-41 = 42 días)
+        
+        const sessions = await TrainingSessionService.getTrainingSessionsByAthleteId(
+          athleteId, 
+          planningId,
+          startDate,
+          endDate
+        );
         if (!isMounted) return;
 
         const mappedSessions = sessions.map(session => mapBackendSessionToCalendar(session, athleteVO2Max));
@@ -767,7 +783,7 @@ export function AthleteCalendar({ athleteId, planningId, onNavigateToUpload }: A
     return () => {
       isMounted = false;
     };
-  }, [athleteId, planningId, athleteVO2Max]);
+  }, [athleteId, planningId, athleteVO2Max, currentMonth]);
 
   const calendarDays = useMemo(() => {
     const firstDay = startOfMonth(currentMonth);

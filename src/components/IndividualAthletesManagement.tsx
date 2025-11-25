@@ -164,6 +164,8 @@ export function IndividualAthletesManagement() {
   const [athleteForPerformance, setAthleteForPerformance] = useState<AthleteProfile | null>(null);
   const [isMedicalClearanceModalOpen, setIsMedicalClearanceModalOpen] = useState(false);
   const [athleteForMedicalClearance, setAthleteForMedicalClearance] = useState<AthleteProfile | null>(null);
+  const [selectedInjury, setSelectedInjury] = useState<CoachRecentInjury | null>(null);
+  const [isInjuryDetailsModalOpen, setIsInjuryDetailsModalOpen] = useState(false);
 
   // Cargar atletas del backend
   useEffect(() => {
@@ -611,6 +613,134 @@ export function IndividualAthletesManagement() {
     }
   };
 
+  const mapTreatmentLabel = (treatment?: string | null): string => {
+    if (!treatment) {
+      return 'No informado';
+    }
+
+    switch (treatment.toLowerCase()) {
+      case 'rest':
+        return 'Reposo';
+      case 'physiotherapy':
+        return 'Fisioterapia';
+      case 'medication':
+        return 'Medicación';
+      case 'rehabilitation':
+        return 'Rehabilitación';
+      case 'manualtherapy':
+        return 'Terapia Manual';
+      case 'specificexercises':
+        return 'Ejercicios Específicos';
+      case 'cryotherapy':
+        return 'Crioterapia';
+      case 'thermotherapy':
+        return 'Termoterapia';
+      case 'electrotherapy':
+        return 'Electroterapia';
+      case 'surgery':
+        return 'Cirugía';
+      case 'other':
+        return 'Otro';
+      default:
+        return treatment;
+    }
+  };
+
+  const mapInjuryLocationToSpanish = (location?: string | null): string => {
+    if (!location) {
+      return 'No informada';
+    }
+    
+    const normalized = location.trim();
+    
+    const mapping: Record<string, string> = {
+      'Head': 'Cabeza',
+      'head': 'Cabeza',
+      'Neck': 'Cuello',
+      'neck': 'Cuello',
+      'RightShoulder': 'Hombro Derecho',
+      'rightShoulder': 'Hombro Derecho',
+      'rightshoulder': 'Hombro Derecho',
+      'LeftShoulder': 'Hombro Izquierdo',
+      'leftShoulder': 'Hombro Izquierdo',
+      'leftshoulder': 'Hombro Izquierdo',
+      'RightArm': 'Brazo Derecho',
+      'rightArm': 'Brazo Derecho',
+      'rightarm': 'Brazo Derecho',
+      'LeftArm': 'Brazo Izquierdo',
+      'leftArm': 'Brazo Izquierdo',
+      'leftarm': 'Brazo Izquierdo',
+      'RightElbow': 'Codo Derecho',
+      'rightElbow': 'Codo Derecho',
+      'rightelbow': 'Codo Derecho',
+      'LeftElbow': 'Codo Izquierdo',
+      'leftElbow': 'Codo Izquierdo',
+      'leftelbow': 'Codo Izquierdo',
+      'RightWrist': 'Muñeca Derecha',
+      'rightWrist': 'Muñeca Derecha',
+      'rightwrist': 'Muñeca Derecha',
+      'LeftWrist': 'Muñeca Izquierda',
+      'leftWrist': 'Muñeca Izquierda',
+      'leftwrist': 'Muñeca Izquierda',
+      'RightHand': 'Mano Derecha',
+      'rightHand': 'Mano Derecha',
+      'righthand': 'Mano Derecha',
+      'LeftHand': 'Mano Izquierda',
+      'leftHand': 'Mano Izquierda',
+      'lefthand': 'Mano Izquierda',
+      'Chest': 'Pecho',
+      'chest': 'Pecho',
+      'UpperBack': 'Espalda Alta',
+      'upperBack': 'Espalda Alta',
+      'upperback': 'Espalda Alta',
+      'LowerBack': 'Espalda Baja',
+      'lowerBack': 'Espalda Baja',
+      'lowerback': 'Espalda Baja',
+      'Abdomen': 'Abdomen',
+      'abdomen': 'Abdomen',
+      'Hip': 'Cadera',
+      'hip': 'Cadera',
+      'RightThigh': 'Muslo Derecho',
+      'rightThigh': 'Muslo Derecho',
+      'rightthigh': 'Muslo Derecho',
+      'LeftThigh': 'Muslo Izquierdo',
+      'leftThigh': 'Muslo Izquierdo',
+      'leftthigh': 'Muslo Izquierdo',
+      'RightKnee': 'Rodilla Derecha',
+      'rightKnee': 'Rodilla Derecha',
+      'rightknee': 'Rodilla Derecha',
+      'LeftKnee': 'Rodilla Izquierda',
+      'leftKnee': 'Rodilla Izquierda',
+      'leftknee': 'Rodilla Izquierda',
+      'RightCalf': 'Pantorrilla Derecha',
+      'rightCalf': 'Pantorrilla Derecha',
+      'rightcalf': 'Pantorrilla Derecha',
+      'LeftCalf': 'Pantorrilla Izquierda',
+      'leftCalf': 'Pantorrilla Izquierda',
+      'leftcalf': 'Pantorrilla Izquierda',
+      'RightAnkle': 'Tobillo Derecho',
+      'rightAnkle': 'Tobillo Derecho',
+      'rightankle': 'Tobillo Derecho',
+      'LeftAnkle': 'Tobillo Izquierdo',
+      'leftAnkle': 'Tobillo Izquierdo',
+      'leftankle': 'Tobillo Izquierdo',
+      'RightFoot': 'Pie Derecho',
+      'rightFoot': 'Pie Derecho',
+      'rightfoot': 'Pie Derecho',
+      'LeftFoot': 'Pie Izquierdo',
+      'leftFoot': 'Pie Izquierdo',
+      'leftfoot': 'Pie Izquierdo',
+      'RightAchilles': 'Aquiles Derecho',
+      'rightAchilles': 'Aquiles Derecho',
+      'rightachilles': 'Aquiles Derecho',
+      'LeftAchilles': 'Aquiles Izquierdo',
+      'leftAchilles': 'Aquiles Izquierdo',
+      'leftachilles': 'Aquiles Izquierdo'
+    };
+    
+    return mapping[normalized] || location;
+  };
+
   // Si se está mostrando la vista de rendimiento, renderizar AthletePerformanceView
   if (showPerformanceView && athleteForPerformance) {
     // Calcular edad desde birthDate considerando si el cumpleaños ya pasó este año
@@ -688,7 +818,7 @@ export function IndividualAthletesManagement() {
                         key={injury.injuryId}
                         className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border rounded-lg p-4"
                       >
-                        <div>
+                        <div className="flex-1">
                           <p className="font-semibold text-foreground">
                             {injury.athleteName}
                           </p>
@@ -704,9 +834,23 @@ export function IndividualAthletesManagement() {
                             </Badge>
                           </div>
                         </div>
-                        <p className="text-sm text-muted-foreground">
-                          Recuperación estimada: {injury.recoveryEstimateDate ? new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES') : 'No informada'}
-                        </p>
+                        <div className="flex flex-col sm:items-end gap-2">
+                          <p className="text-sm text-muted-foreground">
+                            Recuperación estimada: {injury.recoveryEstimateDate ? new Date(injury.recoveryEstimateDate).toLocaleDateString('es-ES') : 'No informada'}
+                          </p>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setSelectedInjury(injury);
+                              setIsInjuryDetailsModalOpen(true);
+                            }}
+                            className="gap-2"
+                          >
+                            <Eye className="w-4 h-4" />
+                            Ver detalles
+                          </Button>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1270,6 +1414,171 @@ export function IndividualAthletesManagement() {
                     </CardContent>
                   </Card>
                 ) : null}
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Injury Details Modal */}
+      <Dialog open={isInjuryDetailsModalOpen} onOpenChange={setIsInjuryDetailsModalOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertCircle className="w-5 h-5 text-red-600" />
+              Detalles de la Lesión
+            </DialogTitle>
+            <DialogDescription>
+              Información completa de la lesión reportada
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedInjury && (
+            <div className="space-y-6">
+              {/* Información del Atleta */}
+              <div>
+                <h3 className="font-semibold text-sm text-muted-foreground mb-2">ATLETA</h3>
+                <p className="text-lg font-medium">{selectedInjury.athleteName}</p>
+              </div>
+
+              <Separator />
+
+              {/* Título y Ubicación */}
+              <div>
+                <h3 className="font-semibold text-sm text-muted-foreground mb-2">TÍTULO</h3>
+                <p className="text-base">{selectedInjury.title}</p>
+              </div>
+
+              {/* Ubicación */}
+              {selectedInjury.affectedArea && (
+                <>
+                  <Separator />
+                  <div>
+                    <h3 className="font-semibold text-sm text-muted-foreground mb-2">UBICACIÓN</h3>
+                    <Badge variant="outline" className="text-sm">
+                      {mapInjuryLocationToSpanish(selectedInjury.affectedArea)}
+                    </Badge>
+                  </div>
+                </>
+              )}
+
+              <Separator />
+
+              {/* Estado y Severidad */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-2">ESTADO</h3>
+                  <Badge variant="outline" className="text-sm">
+                    {mapStatusLabel(selectedInjury.status)}
+                  </Badge>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-2">SEVERIDAD</h3>
+                  <Badge className={getSeverityBadge(selectedInjury.severity)}>
+                    {mapSeverityLabel(selectedInjury.severity)}
+                  </Badge>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Fechas */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-2">FECHA DE DIAGNÓSTICO</h3>
+                  <p className="text-sm">
+                    {new Date(selectedInjury.diagnosisDate).toLocaleDateString('es-ES', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </p>
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-muted-foreground mb-2">RECUPERACIÓN ESTIMADA</h3>
+                  <p className="text-sm">
+                    {selectedInjury.recoveryEstimateDate
+                      ? new Date(selectedInjury.recoveryEstimateDate).toLocaleDateString('es-ES', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })
+                      : 'No informada'}
+                  </p>
+                </div>
+                {selectedInjury.recoveryDate && (
+                  <div>
+                    <h3 className="font-semibold text-sm text-muted-foreground mb-2">FECHA DE RECUPERACIÓN</h3>
+                    <p className="text-sm">
+                      {new Date(selectedInjury.recoveryDate).toLocaleDateString('es-ES', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Impacto en Entrenamiento */}
+              <div>
+                <h3 className="font-semibold text-sm text-muted-foreground mb-2">IMPACTO EN ENTRENAMIENTO</h3>
+                <Badge variant="outline" className="text-sm">
+                  {mapImpactLabel(selectedInjury.impactOnTraining)}
+                </Badge>
+              </div>
+
+              {/* Descripción */}
+              {selectedInjury.description && (
+                <>
+                  <Separator />
+                  <div>
+                    <h3 className="font-semibold text-sm text-muted-foreground mb-2">DESCRIPCIÓN</h3>
+                    <p className="text-sm whitespace-pre-wrap">{selectedInjury.description}</p>
+                  </div>
+                </>
+              )}
+
+              {/* Tratamiento */}
+              {selectedInjury.treatment && (
+                <>
+                  <Separator />
+                  <div>
+                    <h3 className="font-semibold text-sm text-muted-foreground mb-2">TRATAMIENTO</h3>
+                    <Badge variant="outline" className="text-sm">
+                      {mapTreatmentLabel(selectedInjury.treatment)}
+                    </Badge>
+                  </div>
+                </>
+              )}
+
+              {/* Notas */}
+              {selectedInjury.notes && (
+                <>
+                  <Separator />
+                  <div>
+                    <h3 className="font-semibold text-sm text-muted-foreground mb-2">NOTAS</h3>
+                    <p className="text-sm whitespace-pre-wrap">{selectedInjury.notes}</p>
+                  </div>
+                </>
+              )}
+
+              <Separator />
+
+              {/* Fecha de Registro */}
+              <div>
+                <h3 className="font-semibold text-sm text-muted-foreground mb-2">REGISTRADA EL</h3>
+                <p className="text-sm">
+                  {new Date(selectedInjury.createdAt).toLocaleDateString('es-ES', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                  })}
+                </p>
               </div>
             </div>
           )}

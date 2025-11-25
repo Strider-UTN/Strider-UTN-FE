@@ -26,26 +26,17 @@ import { format, startOfDay, endOfDay, subDays, parseISO } from 'date-fns';
 import { es } from 'date-fns/locale';
 
 // Función helper para parsear fechas correctamente evitando problemas de zona horaria
+// Si la fecha viene como string ISO (ej: "2025-10-15T00:00:00Z"), extraer solo la parte de fecha
 const parseDate = (dateString: string): Date => {
   if (!dateString) return new Date();
-  // Si la fecha viene solo como "YYYY-MM-DD", tratarla como fecha local
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateString)) {
-    const [year, month, day] = dateString.split('-').map(Number);
-    return new Date(year, month - 1, day);
-  }
-  // Si viene con hora, usar parseISO y luego ajustar a fecha local
-  try {
-    // Si la fecha tiene hora UTC (termina en Z o tiene T), extraer solo la parte de fecha
-    if (dateString.includes('T')) {
-      const dateOnly = dateString.split('T')[0];
-      const [year, month, day] = dateOnly.split('-').map(Number);
-      return new Date(year, month - 1, day);
-    }
-    const parsed = parseISO(dateString);
-    return parsed;
-  } catch {
-    return new Date(dateString);
-  }
+  // Extraer solo la parte de fecha (YYYY-MM-DD) de strings ISO
+  const dateOnly = dateString.split('T')[0];
+  const [yearStr, monthStr, dayStr] = dateOnly.split('-');
+  const year = Number(yearStr) || 0;
+  const month = Number(monthStr) || 1;
+  const day = Number(dayStr) || 1;
+  // Crear fecha en zona horaria local para evitar problemas de conversión
+  return new Date(year, month - 1, day);
 };
 
 // Tipos de datos mock

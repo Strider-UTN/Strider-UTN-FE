@@ -177,9 +177,25 @@ export class TrainingSessionService {
     }
   }
 
-  static async getTrainingSessionsByAthleteId(athleteId: number, planningId?: number): Promise<TrainingSessionResponseDto[]> {
+  static async getTrainingSessionsByAthleteId(
+    athleteId: number, 
+    planningId?: number, 
+    startDate?: Date, 
+    endDate?: Date
+  ): Promise<TrainingSessionResponseDto[]> {
     try {
-      const query = planningId ? `?planningId=${planningId}` : '';
+      const params = new URLSearchParams();
+      if (planningId) {
+        params.append('planningId', planningId.toString());
+      }
+      if (startDate) {
+        params.append('startDate', startDate.toISOString().split('T')[0]);
+      }
+      if (endDate) {
+        params.append('endDate', endDate.toISOString().split('T')[0]);
+      }
+      
+      const query = params.toString() ? `?${params.toString()}` : '';
       const { data } = await apiClient.get<TrainingSessionResponseDto[]>(
         `/api/TrainingSession/athlete/${athleteId}${query}`
       );
